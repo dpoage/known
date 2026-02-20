@@ -1,14 +1,23 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 )
+
+// ComputeContentHash returns the SHA-256 hex digest of the given content string.
+func ComputeContentHash(content string) string {
+	h := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(h[:])
+}
 
 // Entry represents a single piece of knowledge in the graph.
 type Entry struct {
 	ID             ID         `json:"id"`
 	Content        string     `json:"content"`
+	ContentHash    string     `json:"content_hash,omitempty"` // SHA-256 hex digest of content
 	Embedding      []float32  `json:"embedding,omitempty"`
 	EmbeddingDim   int        `json:"embedding_dim,omitempty"`   // dimension for mixed model support
 	EmbeddingModel string     `json:"embedding_model,omitempty"` // which model generated this
@@ -18,6 +27,7 @@ type Entry struct {
 	TTL            *Duration  `json:"ttl,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	Meta           Metadata   `json:"meta,omitempty"`
+	Version        int        `json:"version"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 
@@ -51,16 +61,18 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NewEntry creates a new entry with a generated ID and timestamps.
+// NewEntry creates a new entry with a generated ID, timestamps, and content hash.
 func NewEntry(content string, source Source) Entry {
 	now := time.Now()
 	return Entry{
-		ID:        NewID(),
-		Content:   content,
-		Source:    source,
-		Scope:     RootScope,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          NewID(),
+		Content:     content,
+		ContentHash: ComputeContentHash(content),
+		Source:      source,
+		Scope:       RootScope,
+		Version:     1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 		Confidence: Confidence{
 			Level: ConfidenceInferred,
 		},
@@ -131,9 +143,10 @@ func (e Entry) WithMeta(m Metadata) Entry {
 	return e
 }
 
-// Touch updates the UpdatedAt timestamp to now.
+// Touch updates the UpdatedAt timestamp to now and recomputes the content hash.
 func (e *Entry) Touch() {
 	e.UpdatedAt = time.Now()
+	e.ContentHash = ComputeContentHash(e.Content)
 }
 
 // HasEmbedding returns true if the entry has an embedding vector.

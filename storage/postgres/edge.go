@@ -16,15 +16,25 @@ type EdgeStore struct {
 	pool *pgxpool.Pool
 }
 
-// Create persists a new edge.
+// conn returns the transaction-aware connection for this store.
+func (s *EdgeStore) conn(ctx context.Context) DBTX {
+	return connFromContext(ctx, s.pool)
+}
+
+// Create persists a new edge. The edge type registration and edge insert are
+// performed within a single transaction for atomicity.
 func (s *EdgeStore) Create(ctx context.Context, edge *model.Edge) error {
 	metaJSON, err := marshalNullableJSON(edge.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
 	}
 
+	// If we are already inside a transaction (from ctx), both operations
+	// will use that transaction. Otherwise, we need to wrap them ourselves.
+	conn := s.conn(ctx)
+
 	// Ensure the edge type exists in the registry (insert if custom)
-	_, err = s.pool.Exec(ctx, `
+	_, err = conn.Exec(ctx, `
 		INSERT INTO edge_types (name, predefined) VALUES ($1, FALSE)
 		ON CONFLICT (name) DO NOTHING
 	`, string(edge.Type))
@@ -32,7 +42,7 @@ func (s *EdgeStore) Create(ctx context.Context, edge *model.Edge) error {
 		return fmt.Errorf("ensure edge type: %w", err)
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = conn.Exec(ctx, `
 		INSERT INTO edges (id, from_id, to_id, type, weight, meta, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`,
@@ -47,7 +57,7 @@ func (s *EdgeStore) Create(ctx context.Context, edge *model.Edge) error {
 
 // Get retrieves an edge by ID.
 func (s *EdgeStore) Get(ctx context.Context, id model.ID) (*model.Edge, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := s.conn(ctx).QueryRow(ctx, `
 		SELECT id, from_id, to_id, type, weight, meta, created_at
 		FROM edges
 		WHERE id = $1
@@ -65,7 +75,7 @@ func (s *EdgeStore) Get(ctx context.Context, id model.ID) (*model.Edge, error) {
 
 // Delete removes an edge by ID.
 func (s *EdgeStore) Delete(ctx context.Context, id model.ID) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM edges WHERE id = $1`, id.String())
+	tag, err := s.conn(ctx).Exec(ctx, `DELETE FROM edges WHERE id = $1`, id.String())
 	if err != nil {
 		return fmt.Errorf("delete edge: %w", err)
 	}
@@ -87,7 +97,7 @@ func (s *EdgeStore) EdgesTo(ctx context.Context, entryID model.ID, filter storag
 
 // EdgesBetween returns edges from source to target.
 func (s *EdgeStore) EdgesBetween(ctx context.Context, fromID, toID model.ID) ([]model.Edge, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.conn(ctx).Query(ctx, `
 		SELECT id, from_id, to_id, type, weight, meta, created_at
 		FROM edges
 		WHERE from_id = $1 AND to_id = $2
@@ -103,13 +113,13 @@ func (s *EdgeStore) EdgesBetween(ctx context.Context, fromID, toID model.ID) ([]
 
 // FindConflicts returns entries that have a "contradicts" edge involving the given entry.
 func (s *EdgeStore) FindConflicts(ctx context.Context, entryID model.ID) ([]model.Entry, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.conn(ctx).Query(ctx, `
 		SELECT DISTINCT
-			e.id, e.content, e.embedding, e.embedding_dim, e.embedding_model,
+			e.id, e.content, e.content_hash, e.embedding, e.embedding_dim, e.embedding_model,
 			e.source_type, e.source_ref, e.source_meta,
 			e.confidence, e.verified_at, e.verified_by,
 			e.scope, e.ttl_seconds, e.expires_at,
-			e.meta, e.created_at, e.updated_at
+			e.meta, e.version, e.created_at, e.updated_at
 		FROM entries e
 		INNER JOIN edges eg ON (
 			(eg.from_id = $1 AND eg.to_id = e.id)
@@ -127,7 +137,7 @@ func (s *EdgeStore) FindConflicts(ctx context.Context, entryID model.ID) ([]mode
 
 	var entries []model.Entry
 	for rows.Next() {
-		entry, err := scanEntryFromRows(rows)
+		entry, err := scanEntryFromRowsV2(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan conflict entry: %w", err)
 		}
@@ -160,7 +170,7 @@ func (s *EdgeStore) queryEdges(ctx context.Context, column string, entryID model
 		argIdx++
 	}
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.conn(ctx).Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query edges: %w", err)
 	}

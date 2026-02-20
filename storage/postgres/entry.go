@@ -18,8 +18,36 @@ type EntryStore struct {
 	pool *pgxpool.Pool
 }
 
-// Create persists a new entry.
+// conn returns the transaction-aware connection for this store.
+func (s *EntryStore) conn(ctx context.Context) DBTX {
+	return connFromContext(ctx, s.pool)
+}
+
+// entryColumns is the standard column list for entry queries.
+const entryColumns = `
+	id, content, content_hash, embedding, embedding_dim, embedding_model,
+	source_type, source_ref, source_meta,
+	confidence, verified_at, verified_by,
+	scope, ttl_seconds, expires_at,
+	meta, version, created_at, updated_at
+`
+
+// Create persists a new entry. It automatically ensures the scope hierarchy exists.
 func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
+	// Ensure content hash is set.
+	if entry.ContentHash == "" {
+		entry.ContentHash = model.ComputeContentHash(entry.Content)
+	}
+	if entry.Version == 0 {
+		entry.Version = 1
+	}
+
+	// Auto-upsert the scope hierarchy.
+	scopeStore := &ScopeStore{pool: s.pool}
+	if err := scopeStore.EnsureHierarchy(ctx, entry.Scope); err != nil {
+		return fmt.Errorf("ensure scope hierarchy: %w", err)
+	}
+
 	metaJSON, err := marshalNullableJSON(entry.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
@@ -40,26 +68,27 @@ func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
 		ttlSeconds = &secs
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.conn(ctx).Exec(ctx, `
 		INSERT INTO entries (
-			id, content, embedding, embedding_dim, embedding_model,
+			id, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
-			meta, created_at, updated_at
+			meta, version, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14,
-			$15, $16, $17
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15,
+			$16, $17, $18, $19
 		)
 	`,
-		entry.ID.String(), entry.Content, embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
+		entry.ID.String(), entry.Content, entry.ContentHash,
+		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
-		metaJSON, entry.CreatedAt, entry.UpdatedAt,
+		metaJSON, entry.Version, entry.CreatedAt, entry.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create entry: %w", err)
@@ -67,20 +96,98 @@ func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
 	return nil
 }
 
-// Get retrieves an entry by ID.
-func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT
-			id, content, embedding, embedding_dim, embedding_model,
+// CreateOrUpdate inserts a new entry or updates an existing one with the same
+// content hash and scope. Uses ON CONFLICT (content_hash, scope) for idempotent upserts.
+func (s *EntryStore) CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
+	// Ensure content hash is set.
+	if entry.ContentHash == "" {
+		entry.ContentHash = model.ComputeContentHash(entry.Content)
+	}
+	if entry.Version == 0 {
+		entry.Version = 1
+	}
+
+	// Auto-upsert the scope hierarchy.
+	scopeStore := &ScopeStore{pool: s.pool}
+	if err := scopeStore.EnsureHierarchy(ctx, entry.Scope); err != nil {
+		return nil, fmt.Errorf("ensure scope hierarchy: %w", err)
+	}
+
+	metaJSON, err := marshalNullableJSON(entry.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("marshal meta: %w", err)
+	}
+	sourceMetaJSON, err := marshalNullableJSON(entry.Source.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("marshal source meta: %w", err)
+	}
+
+	var embeddingVal any
+	if len(entry.Embedding) > 0 {
+		embeddingVal = pgvector.NewVector(entry.Embedding)
+	}
+
+	var ttlSeconds *int64
+	if entry.TTL != nil {
+		secs := int64(entry.TTL.Duration.Seconds())
+		ttlSeconds = &secs
+	}
+
+	row := s.conn(ctx).QueryRow(ctx, `
+		INSERT INTO entries (
+			id, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
-			meta, created_at, updated_at
+			meta, version, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9,
+			$10, $11, $12,
+			$13, $14, $15,
+			$16, $17, $18, $19
+		)
+		ON CONFLICT (content_hash, scope) DO UPDATE SET
+			content = EXCLUDED.content,
+			embedding = EXCLUDED.embedding,
+			embedding_dim = EXCLUDED.embedding_dim,
+			embedding_model = EXCLUDED.embedding_model,
+			source_type = EXCLUDED.source_type,
+			source_ref = EXCLUDED.source_ref,
+			source_meta = EXCLUDED.source_meta,
+			confidence = EXCLUDED.confidence,
+			verified_at = EXCLUDED.verified_at,
+			verified_by = EXCLUDED.verified_by,
+			ttl_seconds = EXCLUDED.ttl_seconds,
+			expires_at = EXCLUDED.expires_at,
+			meta = EXCLUDED.meta,
+			version = entries.version + 1,
+			updated_at = EXCLUDED.updated_at
+		RETURNING `+entryColumns,
+		entry.ID.String(), entry.Content, entry.ContentHash,
+		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
+		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
+		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
+		entry.Scope, ttlSeconds, entry.ExpiresAt,
+		metaJSON, entry.Version, entry.CreatedAt, entry.UpdatedAt,
+	)
+
+	result, err := scanEntryV2(row)
+	if err != nil {
+		return nil, fmt.Errorf("create or update entry: %w", err)
+	}
+	return result, nil
+}
+
+// Get retrieves an entry by ID.
+func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error) {
+	row := s.conn(ctx).QueryRow(ctx, `
+		SELECT `+entryColumns+`
 		FROM entries
 		WHERE id = $1
 	`, id.String())
 
-	entry, err := scanEntry(row)
+	entry, err := scanEntryV2(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, storage.ErrNotFound
@@ -90,8 +197,13 @@ func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error)
 	return entry, nil
 }
 
-// Update replaces an existing entry.
+// Update replaces an existing entry with optimistic concurrency control.
+// The update only succeeds if the entry's version matches. On success,
+// the version is incremented both in the database and on the entry struct.
 func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
+	// Recompute content hash in case content changed.
+	entry.ContentHash = model.ComputeContentHash(entry.Content)
+
 	metaJSON, err := marshalNullableJSON(entry.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
@@ -112,43 +224,59 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 		ttlSeconds = &secs
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.conn(ctx).Exec(ctx, `
 		UPDATE entries SET
 			content = $2,
-			embedding = $3,
-			embedding_dim = $4,
-			embedding_model = $5,
-			source_type = $6,
-			source_ref = $7,
-			source_meta = $8,
-			confidence = $9,
-			verified_at = $10,
-			verified_by = $11,
-			scope = $12,
-			ttl_seconds = $13,
-			expires_at = $14,
-			meta = $15,
-			updated_at = $16
-		WHERE id = $1
+			content_hash = $3,
+			embedding = $4,
+			embedding_dim = $5,
+			embedding_model = $6,
+			source_type = $7,
+			source_ref = $8,
+			source_meta = $9,
+			confidence = $10,
+			verified_at = $11,
+			verified_by = $12,
+			scope = $13,
+			ttl_seconds = $14,
+			expires_at = $15,
+			meta = $16,
+			version = $17 + 1,
+			updated_at = $18
+		WHERE id = $1 AND version = $17
 	`,
-		entry.ID.String(), entry.Content, embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
+		entry.ID.String(), entry.Content, entry.ContentHash,
+		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
-		metaJSON, entry.UpdatedAt,
+		metaJSON, entry.Version, entry.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("update entry: %w", err)
 	}
+
 	if tag.RowsAffected() == 0 {
-		return storage.ErrNotFound
+		// Determine if the entry doesn't exist or if it's a version mismatch.
+		var exists bool
+		_ = s.conn(ctx).QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM entries WHERE id = $1)`, entry.ID.String()).Scan(&exists)
+		if !exists {
+			return storage.ErrNotFound
+		}
+		return &storage.ConcurrentModificationError{
+			ID:              entry.ID,
+			ExpectedVersion: entry.Version,
+		}
 	}
+
+	// Increment the version on the struct so the caller has the updated value.
+	entry.Version++
 	return nil
 }
 
 // Delete removes an entry by ID.
 func (s *EntryStore) Delete(ctx context.Context, id model.ID) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM entries WHERE id = $1`, id.String())
+	tag, err := s.conn(ctx).Exec(ctx, `DELETE FROM entries WHERE id = $1`, id.String())
 	if err != nil {
 		return fmt.Errorf("delete entry: %w", err)
 	}
@@ -161,12 +289,7 @@ func (s *EntryStore) Delete(ctx context.Context, id model.ID) error {
 // List returns entries matching the given filter.
 func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]model.Entry, error) {
 	query := `
-		SELECT
-			id, content, embedding, embedding_dim, embedding_model,
-			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
-			scope, ttl_seconds, expires_at,
-			meta, created_at, updated_at
+		SELECT ` + entryColumns + `
 		FROM entries
 		WHERE 1=1
 	`
@@ -210,7 +333,7 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		argIdx++
 	}
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.conn(ctx).Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list entries: %w", err)
 	}
@@ -218,7 +341,7 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 
 	var entries []model.Entry
 	for rows.Next() {
-		entry, err := scanEntryFromRows(rows)
+		entry, err := scanEntryFromRowsV2(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
@@ -253,11 +376,11 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 
 	sqlQuery := fmt.Sprintf(`
 		SELECT
-			id, content, embedding, embedding_dim, embedding_model,
+			id, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
-			meta, created_at, updated_at,
+			meta, version, created_at, updated_at,
 			%s AS distance
 		FROM entries
 		WHERE embedding IS NOT NULL
@@ -268,7 +391,7 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		LIMIT $5
 	`, distExpr, distExpr)
 
-	rows, err := s.pool.Query(ctx, sqlQuery, vec, len(query), scope, scope+".%", limit)
+	rows, err := s.conn(ctx).Query(ctx, sqlQuery, vec, len(query), scope, scope+".%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("search similar: %w", err)
 	}
@@ -277,28 +400,30 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	var results []storage.SimilarityResult
 	for rows.Next() {
 		var (
-			entry   model.Entry
-			idStr   string
-			embVec  pgvector.Vector
-			embDim  *int
-			embMod  *string
-			srcType string
-			srcRef  string
-			srcMeta []byte
-			conf    string
-			verAt   *time.Time
-			verBy   *string
-			ttlSecs *int64
-			metaJ   []byte
-			dist    float64
+			entry       model.Entry
+			idStr       string
+			contentHash string
+			embVec      pgvector.Vector
+			embDim      *int
+			embMod      *string
+			srcType     string
+			srcRef      string
+			srcMeta     []byte
+			conf        string
+			verAt       *time.Time
+			verBy       *string
+			ttlSecs     *int64
+			metaJ       []byte
+			version     int
+			dist        float64
 		)
 
 		if err := rows.Scan(
-			&idStr, &entry.Content, &embVec, &embDim, &embMod,
+			&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 			&srcType, &srcRef, &srcMeta,
 			&conf, &verAt, &verBy,
 			&entry.Scope, &ttlSecs, &entry.ExpiresAt,
-			&metaJ, &entry.CreatedAt, &entry.UpdatedAt,
+			&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
 			&dist,
 		); err != nil {
 			return nil, fmt.Errorf("scan similarity result: %w", err)
@@ -309,6 +434,8 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 			return nil, fmt.Errorf("parse id: %w", err)
 		}
 		entry.ID = id
+		entry.ContentHash = contentHash
+		entry.Version = version
 		entry.Embedding = embVec.Slice()
 		if embDim != nil {
 			entry.EmbeddingDim = *embDim
@@ -339,7 +466,7 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 
 // DeleteExpired removes entries whose ExpiresAt is in the past.
 func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.conn(ctx).Exec(ctx, `
 		DELETE FROM entries
 		WHERE expires_at IS NOT NULL AND expires_at <= NOW()
 	`)
@@ -349,72 +476,80 @@ func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-// scanEntry scans a single entry from a pgx.Row.
-func scanEntry(row pgx.Row) (*model.Entry, error) {
+// scanEntryV2 scans a single entry from a pgx.Row with the v2 column set
+// (includes content_hash and version).
+func scanEntryV2(row pgx.Row) (*model.Entry, error) {
 	var (
-		entry   model.Entry
-		idStr   string
-		embVec  pgvector.Vector
-		embDim  *int
-		embMod  *string
-		srcType string
-		srcRef  string
-		srcMeta []byte
-		conf    string
-		verAt   *time.Time
-		verBy   *string
-		ttlSecs *int64
-		metaJ   []byte
+		entry       model.Entry
+		idStr       string
+		contentHash string
+		embVec      pgvector.Vector
+		embDim      *int
+		embMod      *string
+		srcType     string
+		srcRef      string
+		srcMeta     []byte
+		conf        string
+		verAt       *time.Time
+		verBy       *string
+		ttlSecs     *int64
+		metaJ       []byte
+		version     int
 	)
 
 	if err := row.Scan(
-		&idStr, &entry.Content, &embVec, &embDim, &embMod,
+		&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAt, &verBy,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
-		&metaJ, &entry.CreatedAt, &entry.UpdatedAt,
+		&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 
-	return populateEntry(entry, idStr, embVec, embDim, embMod, srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ)
+	return populateEntryV2(entry, idStr, contentHash, embVec, embDim, embMod,
+		srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ, version)
 }
 
-// scanEntryFromRows scans a single entry from pgx.Rows (same fields, different interface).
-func scanEntryFromRows(rows pgx.Rows) (*model.Entry, error) {
+// scanEntryFromRowsV2 scans a single entry from pgx.Rows with the v2 column set.
+func scanEntryFromRowsV2(rows pgx.Rows) (*model.Entry, error) {
 	var (
-		entry   model.Entry
-		idStr   string
-		embVec  pgvector.Vector
-		embDim  *int
-		embMod  *string
-		srcType string
-		srcRef  string
-		srcMeta []byte
-		conf    string
-		verAt   *time.Time
-		verBy   *string
-		ttlSecs *int64
-		metaJ   []byte
+		entry       model.Entry
+		idStr       string
+		contentHash string
+		embVec      pgvector.Vector
+		embDim      *int
+		embMod      *string
+		srcType     string
+		srcRef      string
+		srcMeta     []byte
+		conf        string
+		verAt       *time.Time
+		verBy       *string
+		ttlSecs     *int64
+		metaJ       []byte
+		version     int
 	)
 
 	if err := rows.Scan(
-		&idStr, &entry.Content, &embVec, &embDim, &embMod,
+		&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAt, &verBy,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
-		&metaJ, &entry.CreatedAt, &entry.UpdatedAt,
+		&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 
-	return populateEntry(entry, idStr, embVec, embDim, embMod, srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ)
+	return populateEntryV2(entry, idStr, contentHash, embVec, embDim, embMod,
+		srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ, version)
 }
 
-// populateEntry fills in an Entry from scanned values.
-func populateEntry(
+// populateEntryV2 fills in an Entry from scanned values (v2 column set).
+func populateEntryV2(
 	entry model.Entry,
 	idStr string,
+	contentHash string,
 	embVec pgvector.Vector,
 	embDim *int, embMod *string,
 	srcType, srcRef string,
@@ -423,12 +558,15 @@ func populateEntry(
 	verAt *time.Time, verBy *string,
 	ttlSecs *int64,
 	metaJ []byte,
+	version int,
 ) (*model.Entry, error) {
 	id, err := model.ParseID(idStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse id: %w", err)
 	}
 	entry.ID = id
+	entry.ContentHash = contentHash
+	entry.Version = version
 
 	entry.Embedding = embVec.Slice()
 	if embDim != nil {

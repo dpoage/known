@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
@@ -16,6 +17,11 @@ import (
 // ScopeStore implements storage.ScopeRepo using PostgreSQL with ltree.
 type ScopeStore struct {
 	pool *pgxpool.Pool
+}
+
+// conn returns the transaction-aware connection for this store.
+func (s *ScopeStore) conn(ctx context.Context) DBTX {
+	return connFromContext(ctx, s.pool)
 }
 
 // dotToLtree converts a dot-separated scope path to ltree format.
@@ -35,7 +41,7 @@ func (s *ScopeStore) Upsert(ctx context.Context, scope *model.Scope) error {
 
 	ltreePath := dotToLtree(scope.Path)
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.conn(ctx).Exec(ctx, `
 		INSERT INTO scopes (path, ltree_path, meta, created_at)
 		VALUES ($1, $2::ltree, $3, $4)
 		ON CONFLICT (path) DO UPDATE SET
@@ -47,9 +53,29 @@ func (s *ScopeStore) Upsert(ctx context.Context, scope *model.Scope) error {
 	return nil
 }
 
+// EnsureHierarchy ensures that all ancestor scopes exist for a given scope path.
+// For example, given "project.auth.oauth", it ensures "project", "project.auth",
+// and "project.auth.oauth" all exist.
+func (s *ScopeStore) EnsureHierarchy(ctx context.Context, path string) error {
+	segments := strings.Split(path, ".")
+	for i := range segments {
+		ancestorPath := strings.Join(segments[:i+1], ".")
+		ltreePath := dotToLtree(ancestorPath)
+		_, err := s.conn(ctx).Exec(ctx, `
+			INSERT INTO scopes (path, ltree_path, created_at)
+			VALUES ($1, $2::ltree, $3)
+			ON CONFLICT (path) DO NOTHING
+		`, ancestorPath, ltreePath, time.Now())
+		if err != nil {
+			return fmt.Errorf("ensure scope %q: %w", ancestorPath, err)
+		}
+	}
+	return nil
+}
+
 // Get retrieves a scope by path.
 func (s *ScopeStore) Get(ctx context.Context, path string) (*model.Scope, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := s.conn(ctx).QueryRow(ctx, `
 		SELECT path, meta, created_at
 		FROM scopes
 		WHERE path = $1
@@ -73,7 +99,7 @@ func (s *ScopeStore) Get(ctx context.Context, path string) (*model.Scope, error)
 
 // Delete removes a scope by path.
 func (s *ScopeStore) Delete(ctx context.Context, path string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM scopes WHERE path = $1`, path)
+	tag, err := s.conn(ctx).Exec(ctx, `DELETE FROM scopes WHERE path = $1`, path)
 	if err != nil {
 		return fmt.Errorf("delete scope: %w", err)
 	}
@@ -85,7 +111,7 @@ func (s *ScopeStore) Delete(ctx context.Context, path string) error {
 
 // List returns all scopes ordered by path.
 func (s *ScopeStore) List(ctx context.Context) ([]model.Scope, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.conn(ctx).Query(ctx, `
 		SELECT path, meta, created_at
 		FROM scopes
 		ORDER BY path
@@ -102,7 +128,7 @@ func (s *ScopeStore) List(ctx context.Context) ([]model.Scope, error) {
 func (s *ScopeStore) ListChildren(ctx context.Context, parentPath string) ([]model.Scope, error) {
 	ltreePath := dotToLtree(parentPath)
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.conn(ctx).Query(ctx, `
 		SELECT path, meta, created_at
 		FROM scopes
 		WHERE ltree_path ~ ($1 || '.*{1}')::lquery
@@ -120,7 +146,7 @@ func (s *ScopeStore) ListChildren(ctx context.Context, parentPath string) ([]mod
 func (s *ScopeStore) ListDescendants(ctx context.Context, ancestorPath string) ([]model.Scope, error) {
 	ltreePath := dotToLtree(ancestorPath)
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.conn(ctx).Query(ctx, `
 		SELECT path, meta, created_at
 		FROM scopes
 		WHERE ltree_path <@ $1::ltree

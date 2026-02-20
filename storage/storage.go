@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dpoage/known/model"
@@ -10,6 +11,29 @@ import (
 
 // ErrNotFound is returned when a requested entity does not exist.
 var ErrNotFound = fmt.Errorf("not found")
+
+// ConcurrentModificationError is returned when an update fails due to a version
+// mismatch, indicating another writer modified the entry since it was read.
+type ConcurrentModificationError struct {
+	ID              model.ID
+	ExpectedVersion int
+	ActualVersion   int
+}
+
+func (e *ConcurrentModificationError) Error() string {
+	return fmt.Sprintf("concurrent modification of entry %s: expected version %d, current version has changed",
+		e.ID.String(), e.ExpectedVersion)
+}
+
+// IsConcurrentModification returns true if the error is a ConcurrentModificationError.
+func IsConcurrentModification(err error) bool {
+	var cme *ConcurrentModificationError
+	return errors.As(err, &cme)
+}
+
+// ErrDuplicateContent is returned when an entry with the same content hash
+// and scope already exists.
+var ErrDuplicateContent = fmt.Errorf("duplicate content")
 
 // SimilarityMetric specifies the distance function for vector search.
 type SimilarityMetric int
@@ -48,12 +72,25 @@ type EdgeFilter struct {
 // EntryRepo defines persistence operations for knowledge entries.
 type EntryRepo interface {
 	// Create persists a new entry. Returns an error if the ID already exists.
+	// Automatically ensures the scope hierarchy exists.
 	Create(ctx context.Context, entry *model.Entry) error
+
+	// CreateOrUpdate inserts a new entry or updates an existing one with the same
+	// content hash and scope. This provides idempotent upsert semantics to prevent
+	// duplicate knowledge entries from concurrent agents.
+	// On insert, the entry is created normally.
+	// On conflict (same content_hash + scope), the existing entry is updated.
+	// Returns the final entry (with ID and version populated).
+	CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error)
 
 	// Get retrieves an entry by ID. Returns ErrNotFound if it does not exist.
 	Get(ctx context.Context, id model.ID) (*model.Entry, error)
 
 	// Update replaces an existing entry. Returns ErrNotFound if it does not exist.
+	// Uses optimistic concurrency control: the update only succeeds if the entry's
+	// version matches the expected version. On version mismatch, returns
+	// *ConcurrentModificationError so callers can detect and retry.
+	// On success, the entry's Version field is incremented.
 	Update(ctx context.Context, entry *model.Entry) error
 
 	// Delete removes an entry by ID. Returns ErrNotFound if it does not exist.

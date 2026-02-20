@@ -9,11 +9,33 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
+
+// txKey is the context key for storing a pgx.Tx.
+type txKey struct{}
+
+// DBTX is the common interface between *pgxpool.Pool and pgx.Tx,
+// allowing repo methods to operate within or outside a transaction.
+type DBTX interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// connFromContext returns the transaction from the context if present,
+// otherwise falls back to the pool.
+func connFromContext(ctx context.Context, pool *pgxpool.Pool) DBTX {
+	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		return tx
+	}
+	return pool
+}
 
 // Config holds PostgreSQL connection parameters.
 type Config struct {
@@ -58,6 +80,40 @@ func New(ctx context.Context, cfg Config) (*DB, error) {
 // Close releases all pool resources.
 func (db *DB) Close() {
 	db.Pool.Close()
+}
+
+// WithTx runs fn within a database transaction. The transaction is stored in
+// the context, so any repo method called with the returned context will
+// participate in the same transaction. The transaction is committed if fn
+// returns nil, and rolled back otherwise.
+//
+// If a transaction is already active in the context, fn runs within the
+// existing transaction (no nesting).
+func (db *DB) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	// If already in a transaction, just run fn directly.
+	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		return fn(ctx)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+
+	txCtx := context.WithValue(ctx, txKey{}, tx)
+
+	if err := fn(txCtx); err != nil {
+		// Attempt rollback; if it also fails, wrap both errors.
+		if rbErr := tx.Rollback(ctx); rbErr != nil {
+			return fmt.Errorf("tx error: %w (rollback also failed: %v)", err, rbErr)
+		}
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }
 
 // Migrate runs all pending database migrations.

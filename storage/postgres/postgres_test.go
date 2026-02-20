@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -1051,6 +1052,546 @@ func TestEdgeCascadeDeleteOnEntry(t *testing.T) {
 	_, err := edgeStore.Get(ctx, edge.ID)
 	if err != storage.ErrNotFound {
 		t.Errorf("expected edge to be cascade-deleted, got %v", err)
+	}
+}
+
+// =============================================================================
+// Concurrency / Version Tests
+// =============================================================================
+
+func TestEntryVersionOnCreate(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("versioncreate")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	entry := model.NewEntry("versioned content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("versioncreate")
+
+	if entry.Version != 1 {
+		t.Fatalf("NewEntry Version = %d, want 1", entry.Version)
+	}
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Version != 1 {
+		t.Errorf("Version = %d, want 1", got.Version)
+	}
+}
+
+func TestEntryVersionIncrementOnUpdate(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("versioninc")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	entry := model.NewEntry("v1 content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("versioninc")
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// First update: version 1 -> 2
+	entry.Content = "v2 content"
+	entry.Touch()
+	if err := entries.Update(ctx, &entry); err != nil {
+		t.Fatalf("Update(1): %v", err)
+	}
+	if entry.Version != 2 {
+		t.Errorf("after first update, Version = %d, want 2", entry.Version)
+	}
+
+	// Second update: version 2 -> 3
+	entry.Content = "v3 content"
+	entry.Touch()
+	if err := entries.Update(ctx, &entry); err != nil {
+		t.Fatalf("Update(2): %v", err)
+	}
+	if entry.Version != 3 {
+		t.Errorf("after second update, Version = %d, want 3", entry.Version)
+	}
+
+	// Verify in DB
+	got, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Version != 3 {
+		t.Errorf("DB Version = %d, want 3", got.Version)
+	}
+	if got.Content != "v3 content" {
+		t.Errorf("DB Content = %q, want %q", got.Content, "v3 content")
+	}
+}
+
+func TestEntryConcurrentModificationDetection(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("concmod")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	entry := model.NewEntry("original", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("concmod")
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Simulate two agents reading the same entry
+	agent1, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get(agent1): %v", err)
+	}
+	agent2, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get(agent2): %v", err)
+	}
+
+	// Agent 1 updates successfully
+	agent1.Content = "agent1 update"
+	agent1.Touch()
+	if err := entries.Update(ctx, agent1); err != nil {
+		t.Fatalf("Update(agent1): %v", err)
+	}
+
+	// Agent 2 tries to update with stale version -- should fail
+	agent2.Content = "agent2 update"
+	agent2.Touch()
+	err = entries.Update(ctx, agent2)
+	if err == nil {
+		t.Fatal("expected concurrent modification error, got nil")
+	}
+
+	if !storage.IsConcurrentModification(err) {
+		t.Fatalf("expected ConcurrentModificationError, got %T: %v", err, err)
+	}
+
+	var cme *storage.ConcurrentModificationError
+	if !errors.As(err, &cme) {
+		t.Fatalf("errors.As failed for ConcurrentModificationError")
+	}
+	if cme.ExpectedVersion != 1 {
+		t.Errorf("ConcurrentModificationError.ExpectedVersion = %d, want 1", cme.ExpectedVersion)
+	}
+
+	// Verify the DB has agent1's update
+	got, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get after conflict: %v", err)
+	}
+	if got.Content != "agent1 update" {
+		t.Errorf("Content = %q, want %q", got.Content, "agent1 update")
+	}
+	if got.Version != 2 {
+		t.Errorf("Version = %d, want 2", got.Version)
+	}
+}
+
+func TestEntryContentHash(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("hashtest")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	entry := model.NewEntry("hashable content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("hashtest")
+
+	expectedHash := model.ComputeContentHash("hashable content")
+	if entry.ContentHash != expectedHash {
+		t.Fatalf("ContentHash = %q, want %q", entry.ContentHash, expectedHash)
+	}
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := entries.Get(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ContentHash != expectedHash {
+		t.Errorf("DB ContentHash = %q, want %q", got.ContentHash, expectedHash)
+	}
+}
+
+func TestEntryDuplicateContentSameScopeRejected(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("duptest")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	entry1 := model.NewEntry("duplicate content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test1",
+	}).WithScope("duptest")
+
+	if err := entries.Create(ctx, &entry1); err != nil {
+		t.Fatalf("Create(1): %v", err)
+	}
+
+	// Second entry with same content and scope should fail
+	entry2 := model.NewEntry("duplicate content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test2",
+	}).WithScope("duptest")
+
+	err := entries.Create(ctx, &entry2)
+	if err == nil {
+		t.Fatal("expected error for duplicate content+scope, got nil")
+	}
+}
+
+func TestEntryDuplicateContentDifferentScopeAllowed(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	for _, p := range []string{"dupscope1", "dupscope2"} {
+		s := model.NewScope(p)
+		if err := scopes.Upsert(ctx, &s); err != nil {
+			t.Fatalf("Upsert scope(%s): %v", p, err)
+		}
+	}
+
+	entry1 := model.NewEntry("same content different scope", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("dupscope1")
+
+	entry2 := model.NewEntry("same content different scope", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("dupscope2")
+
+	if err := entries.Create(ctx, &entry1); err != nil {
+		t.Fatalf("Create(1): %v", err)
+	}
+	if err := entries.Create(ctx, &entry2); err != nil {
+		t.Fatalf("Create(2): %v (same content in different scope should be allowed)", err)
+	}
+}
+
+func TestEntryCreateOrUpdate(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("upserttest")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	// First call: should insert
+	entry1 := model.NewEntry("upsert content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "first-agent",
+	}).WithScope("upserttest")
+
+	result1, err := entries.CreateOrUpdate(ctx, &entry1)
+	if err != nil {
+		t.Fatalf("CreateOrUpdate(1): %v", err)
+	}
+	if result1.Version != 1 {
+		t.Errorf("first insert Version = %d, want 1", result1.Version)
+	}
+	originalID := result1.ID
+
+	// Second call with same content: should update (not create duplicate)
+	entry2 := model.NewEntry("upsert content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "second-agent",
+	}).WithScope("upserttest")
+
+	result2, err := entries.CreateOrUpdate(ctx, &entry2)
+	if err != nil {
+		t.Fatalf("CreateOrUpdate(2): %v", err)
+	}
+
+	// Should have the original ID (not a new one)
+	if result2.ID != originalID {
+		t.Errorf("upsert should preserve original ID: got %v, want %v", result2.ID, originalID)
+	}
+	// Version should be incremented
+	if result2.Version != 2 {
+		t.Errorf("upsert Version = %d, want 2", result2.Version)
+	}
+	// Source should be updated
+	if result2.Source.Reference != "second-agent" {
+		t.Errorf("Source.Reference = %q, want %q", result2.Source.Reference, "second-agent")
+	}
+}
+
+// =============================================================================
+// Transaction Tests
+// =============================================================================
+
+func TestWithTxCommit(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	edges := testDB.Edges()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("txcommit")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("tx entry 1", src).WithScope("txcommit")
+	e2 := model.NewEntry("tx entry 2", src).WithScope("txcommit")
+
+	// Create entries + edge atomically
+	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
+		if err := entries.Create(txCtx, &e1); err != nil {
+			return err
+		}
+		if err := entries.Create(txCtx, &e2); err != nil {
+			return err
+		}
+		edge := model.NewEdge(e1.ID, e2.ID, model.EdgeDependsOn)
+		return edges.Create(txCtx, &edge)
+	})
+	if err != nil {
+		t.Fatalf("WithTx: %v", err)
+	}
+
+	// All should be visible
+	got1, err := entries.Get(ctx, e1.ID)
+	if err != nil {
+		t.Fatalf("Get(e1): %v", err)
+	}
+	if got1.Content != "tx entry 1" {
+		t.Errorf("Content = %q, want %q", got1.Content, "tx entry 1")
+	}
+
+	got2, err := entries.Get(ctx, e2.ID)
+	if err != nil {
+		t.Fatalf("Get(e2): %v", err)
+	}
+	if got2.Content != "tx entry 2" {
+		t.Errorf("Content = %q, want %q", got2.Content, "tx entry 2")
+	}
+
+	edgesFrom, err := edges.EdgesFrom(ctx, e1.ID, storage.EdgeFilter{})
+	if err != nil {
+		t.Fatalf("EdgesFrom: %v", err)
+	}
+	if len(edgesFrom) != 1 {
+		t.Errorf("EdgesFrom = %d, want 1", len(edgesFrom))
+	}
+}
+
+func TestWithTxRollback(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("txrollback")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("should not persist", src).WithScope("txrollback")
+
+	// Transaction that creates an entry then errors out
+	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
+		if err := entries.Create(txCtx, &e1); err != nil {
+			return err
+		}
+		return fmt.Errorf("simulated failure")
+	})
+	if err == nil {
+		t.Fatal("expected error from WithTx, got nil")
+	}
+
+	// Entry should NOT exist
+	_, err = entries.Get(ctx, e1.ID)
+	if err != storage.ErrNotFound {
+		t.Errorf("expected ErrNotFound after rollback, got %v", err)
+	}
+}
+
+func TestWithTxNested(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("txnested")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("nested tx entry", src).WithScope("txnested")
+
+	// Nested WithTx should reuse the outer transaction
+	err := testDB.WithTx(ctx, func(outerCtx context.Context) error {
+		return testDB.WithTx(outerCtx, func(innerCtx context.Context) error {
+			return entries.Create(innerCtx, &e1)
+		})
+	})
+	if err != nil {
+		t.Fatalf("nested WithTx: %v", err)
+	}
+
+	got, err := entries.Get(ctx, e1.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Content != "nested tx entry" {
+		t.Errorf("Content = %q, want %q", got.Content, "nested tx entry")
+	}
+}
+
+// =============================================================================
+// Scope Auto-Creation Tests
+// =============================================================================
+
+func TestEntryScopeAutoCreation(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	// Do NOT manually create the scope hierarchy. Entry.Create should handle it.
+	entry := model.NewEntry("auto scope content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("autoscope.sub.deep")
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Verify the full scope hierarchy was created
+	for _, path := range []string{"autoscope", "autoscope.sub", "autoscope.sub.deep"} {
+		_, err := scopes.Get(ctx, path)
+		if err != nil {
+			t.Errorf("scope %q should exist after auto-creation, got %v", path, err)
+		}
+	}
+}
+
+func TestEntryScopeAutoCreationIdempotent(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	// Pre-create a parent scope with metadata
+	parent := model.NewScope("prexisting")
+	parent.Meta = model.Metadata{"owner": "admin"}
+	if err := scopes.Upsert(ctx, &parent); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// Create entry under prexisting.child -- should NOT clobber parent's metadata
+	entry := model.NewEntry("child content", model.Source{
+		Type:      model.SourceManual,
+		Reference: "test",
+	}).WithScope("prexisting.child")
+
+	if err := entries.Create(ctx, &entry); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Verify parent metadata is preserved (EnsureHierarchy uses ON CONFLICT DO NOTHING)
+	got, err := scopes.Get(ctx, "prexisting")
+	if err != nil {
+		t.Fatalf("Get parent scope: %v", err)
+	}
+	if got.Meta.GetString("owner") != "admin" {
+		t.Errorf("parent scope meta[owner] = %q, want %q (should not be clobbered)", got.Meta.GetString("owner"), "admin")
+	}
+}
+
+// =============================================================================
+// Edge Transaction Atomicity Tests
+// =============================================================================
+
+func TestEdgeCreateAtomicWithTx(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+	edges := testDB.Edges()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("edgetx")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("edge tx from", src).WithScope("edgetx")
+	e2 := model.NewEntry("edge tx to", src).WithScope("edgetx")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create entry: %v", err)
+		}
+	}
+
+	// Create two edges atomically
+	edge1 := model.NewEdge(e1.ID, e2.ID, model.EdgeDependsOn)
+	edge2 := model.NewEdge(e2.ID, e1.ID, model.EdgeRelatedTo)
+
+	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
+		if err := edges.Create(txCtx, &edge1); err != nil {
+			return err
+		}
+		return edges.Create(txCtx, &edge2)
+	})
+	if err != nil {
+		t.Fatalf("WithTx: %v", err)
+	}
+
+	// Both edges should exist
+	got1, err := edges.Get(ctx, edge1.ID)
+	if err != nil {
+		t.Fatalf("Get(edge1): %v", err)
+	}
+	if got1.Type != model.EdgeDependsOn {
+		t.Errorf("edge1 Type = %q, want %q", got1.Type, model.EdgeDependsOn)
+	}
+
+	got2, err := edges.Get(ctx, edge2.ID)
+	if err != nil {
+		t.Fatalf("Get(edge2): %v", err)
+	}
+	if got2.Type != model.EdgeRelatedTo {
+		t.Errorf("edge2 Type = %q, want %q", got2.Type, model.EdgeRelatedTo)
 	}
 }
 
