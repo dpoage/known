@@ -1320,7 +1320,7 @@ func TestDetectAllConflicts_NoConflicts(t *testing.T) {
 // Score Utility Tests
 // =============================================================================
 
-func TestDistanceToScore(t *testing.T) {
+func TestDistanceToScore_Cosine(t *testing.T) {
 	tests := []struct {
 		distance float64
 		wantMin  float64
@@ -1332,10 +1332,41 @@ func TestDistanceToScore(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		score := distanceToScore(tt.distance)
+		score := distanceToScore(tt.distance, storage.Cosine)
 		if score < tt.wantMin || score > tt.wantMax {
-			t.Errorf("distanceToScore(%f) = %f, want [%f, %f]", tt.distance, score, tt.wantMin, tt.wantMax)
+			t.Errorf("distanceToScore(%f, Cosine) = %f, want [%f, %f]", tt.distance, score, tt.wantMin, tt.wantMax)
 		}
+	}
+}
+
+func TestDistanceToScore_L2(t *testing.T) {
+	tests := []struct {
+		distance float64
+		wantMin  float64
+		wantMax  float64
+	}{
+		{0.0, 1.0, 1.0},       // exact match
+		{1.0, 0.49, 0.51},     // unit distance
+		{9.0, 0.09, 0.11},     // far away
+	}
+
+	for _, tt := range tests {
+		score := distanceToScore(tt.distance, storage.L2)
+		if score < tt.wantMin || score > tt.wantMax {
+			t.Errorf("distanceToScore(%f, L2) = %f, want [%f, %f]", tt.distance, score, tt.wantMin, tt.wantMax)
+		}
+	}
+}
+
+func TestDistanceToScore_InnerProduct(t *testing.T) {
+	// pgvector returns negative inner product, so distance=0 means perfect match.
+	score := distanceToScore(0.0, storage.InnerProduct)
+	if score < 0.99 {
+		t.Errorf("distanceToScore(0, InnerProduct) = %f, want ~1.0", score)
+	}
+	score = distanceToScore(1.0, storage.InnerProduct)
+	if score < 0.49 || score > 0.51 {
+		t.Errorf("distanceToScore(1, InnerProduct) = %f, want ~0.5", score)
 	}
 }
 

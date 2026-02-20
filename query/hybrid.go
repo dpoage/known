@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dpoage/known/model"
@@ -117,7 +118,7 @@ func (e *Engine) expandFromEntry(
 		}
 
 		for _, edge := range edges {
-			if len(edgeTypeSet) > 1 && !edgeTypeSet[edge.Type] {
+			if len(edgeTypeSet) > 0 && !edgeTypeSet[edge.Type] {
 				continue
 			}
 
@@ -132,8 +133,11 @@ func (e *Engine) expandFromEntry(
 			seen[neighborID.String()] = true
 
 			neighborEntry, err := e.entries.Get(ctx, neighborID)
-			if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
 				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("get entry %s: %w", neighborID, err)
 			}
 
 			results = append(results, Result{

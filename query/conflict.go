@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dpoage/known/model"
@@ -71,8 +72,11 @@ func (e *Engine) DetectAllConflicts(ctx context.Context, scope string) ([]Confli
 			seenEdges[edge.ID.String()] = true
 
 			other, err := e.entries.Get(ctx, edge.ToID)
-			if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
 				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("get conflict entry %s: %w", edge.ToID, err)
 			}
 
 			pairs = append(pairs, ConflictPair{

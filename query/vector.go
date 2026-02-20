@@ -47,6 +47,8 @@ func (e *Engine) SearchVector(ctx context.Context, opts VectorOptions) ([]Result
 		halfLife = 7 * 24 * 3600_000_000_000 // 7 days in nanoseconds as Duration
 	}
 
+	// Collect all candidates with computed scores before truncating,
+	// since recency weighting can reorder results relative to distance.
 	var results []Result
 	for _, sr := range simResults {
 		// Apply exclusion filter.
@@ -54,7 +56,7 @@ func (e *Engine) SearchVector(ctx context.Context, opts VectorOptions) ([]Result
 			continue
 		}
 
-		similarity := distanceToScore(sr.Distance)
+		similarity := distanceToScore(sr.Distance, opts.Metric)
 
 		// Apply recency weighting if configured.
 		score := similarity
@@ -75,16 +77,17 @@ func (e *Engine) SearchVector(ctx context.Context, opts VectorOptions) ([]Result
 			Reach:    ReachDirect,
 			Depth:    0,
 		})
-
-		if len(results) >= opts.Limit {
-			break
-		}
 	}
 
-	// Re-sort by score if recency weighting was applied, since the reweighting
-	// may have changed the order from the distance-sorted storage results.
+	// Sort by score if recency weighting was applied, since reweighting
+	// can change order relative to the distance-sorted storage results.
 	if opts.RecencyWeight > 0 && len(results) > 1 {
 		sortResultsByScore(results)
+	}
+
+	// Apply limit after sorting.
+	if len(results) > opts.Limit {
+		results = results[:opts.Limit]
 	}
 
 	// Enrich results with conflict information.

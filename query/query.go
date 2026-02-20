@@ -143,12 +143,27 @@ func New(entries storage.EntryRepo, edges storage.EdgeRepo, embedder embed.Embed
 	}
 }
 
-// distanceToScore converts a distance value to a 0-1 similarity score.
+// distanceToScore converts a distance value to a 0-1 similarity score,
+// accounting for the metric used.
+//
 // For cosine distance (range 0-2), score = 1 - distance/2.
-// For other metrics the score is clamped to [0, 1].
-func distanceToScore(distance float64) float64 {
-	// Cosine distance in pgvector ranges from 0 to 2.
-	score := 1.0 - distance/2.0
+// For L2 distance (range 0-∞), score = 1 / (1 + distance).
+// For inner product (pgvector returns negative inner product), score = 1 / (1 + distance).
+func distanceToScore(distance float64, metric storage.SimilarityMetric) float64 {
+	var score float64
+	switch metric {
+	case storage.Cosine:
+		// Cosine distance in pgvector ranges from 0 to 2.
+		score = 1.0 - distance/2.0
+	case storage.L2:
+		// L2 distance ranges from 0 to ∞. Use inverse mapping.
+		score = 1.0 / (1.0 + distance)
+	case storage.InnerProduct:
+		// pgvector returns negative inner product, so distance ≥ 0 for normalized vectors.
+		score = 1.0 / (1.0 + distance)
+	default:
+		score = 1.0 - distance/2.0
+	}
 	return clamp(score, 0, 1)
 }
 

@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dpoage/known/model"
@@ -92,8 +93,8 @@ func (e *Engine) Traverse(ctx context.Context, opts GraphOptions) ([]Result, err
 		}
 
 		for _, edge := range edges {
-			// Apply multi-type filter if more than one type was specified.
-			if len(edgeTypeSet) > 1 && !edgeTypeSet[edge.Type] {
+			// Apply edge type filter if types were specified.
+			if len(edgeTypeSet) > 0 && !edgeTypeSet[edge.Type] {
 				continue
 			}
 
@@ -109,9 +110,12 @@ func (e *Engine) Traverse(ctx context.Context, opts GraphOptions) ([]Result, err
 			visited[neighborID.String()] = true
 
 			neighborEntry, err := e.entries.Get(ctx, neighborID)
-			if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
 				// Entry may have been deleted; skip.
 				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("get entry %s: %w", neighborID, err)
 			}
 
 			newPath := make([]model.Edge, len(current.edgePath)+1)
@@ -205,7 +209,7 @@ func (e *Engine) FindPath(ctx context.Context, fromID, toID model.ID, maxDepth i
 
 			// Found the target.
 			if neighborID == toID {
-				return e.buildPathResults(ctx, newPath)
+				return e.buildPathResults(ctx, fromID, newPath)
 			}
 
 			queue = append(queue, bfsItem{
@@ -221,27 +225,23 @@ func (e *Engine) FindPath(ctx context.Context, fromID, toID model.ID, maxDepth i
 }
 
 // buildPathResults constructs Result entries for each hop in a path.
-func (e *Engine) buildPathResults(ctx context.Context, edges []model.Edge) ([]Result, error) {
+// startID is the ID of the entry where the path search originated, used to
+// correctly seed the seen set regardless of edge direction.
+func (e *Engine) buildPathResults(ctx context.Context, startID model.ID, edges []model.Edge) ([]Result, error) {
 	results := make([]Result, 0, len(edges))
 
 	// Track which entry IDs we have already seen to handle the path correctly.
+	// Seed with the start node so we only emit newly discovered entries.
 	seen := make(map[string]bool)
+	seen[startID.String()] = true
 
 	for i, edge := range edges {
-		// For each edge, the "new" node in the path is the target.
-		// We build the path cumulatively.
+		// For each edge, pick the end we haven't visited yet.
 		var targetID model.ID
-		if i == 0 {
-			// First edge: mark the from-side as seen, add the to-side.
-			seen[edge.FromID.String()] = true
-			targetID = edge.ToID
+		if !seen[edge.FromID.String()] {
+			targetID = edge.FromID
 		} else {
-			// Subsequent edges: pick the end we haven't visited.
-			if !seen[edge.FromID.String()] {
-				targetID = edge.FromID
-			} else {
-				targetID = edge.ToID
-			}
+			targetID = edge.ToID
 		}
 
 		if seen[targetID.String()] {
@@ -250,8 +250,11 @@ func (e *Engine) buildPathResults(ctx context.Context, edges []model.Edge) ([]Re
 		seen[targetID.String()] = true
 
 		entry, err := e.entries.Get(ctx, targetID)
-		if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get path entry %s: %w", targetID, err)
 		}
 
 		pathSoFar := make([]model.Edge, i+1)
