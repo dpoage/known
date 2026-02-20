@@ -146,6 +146,19 @@ func (m *mockEntryRepo) DeleteExpired(_ context.Context) (int64, error) {
 	return count, nil
 }
 
+func (m *mockEntryRepo) CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
+	existing, _ := m.Get(ctx, entry.ID)
+	if existing != nil {
+		clone := *entry
+		clone.Version = existing.Version + 1
+		m.entries[entry.ID.String()] = &clone
+		return &clone, nil
+	}
+	clone := *entry
+	m.entries[entry.ID.String()] = &clone
+	return &clone, nil
+}
+
 // cosineDistance computes cosine distance between two vectors.
 func cosineDistance(a, b []float32) float64 {
 	if len(a) != len(b) {
