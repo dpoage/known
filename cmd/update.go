@@ -1,0 +1,89 @@
+package cmd
+
+import (
+	"context"
+	"flag"
+	"fmt"
+
+	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/storage"
+)
+
+// runUpdate implements the "known update" subcommand.
+//
+// Usage: known update <id> [flags]
+//
+//	--content      New content text
+//	--confidence   New confidence level (verified, inferred, uncertain)
+//	--scope        New scope path
+func runUpdate(ctx context.Context, app *App, args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	content := fs.String("content", "", "new content text")
+	confidence := fs.String("confidence", "", "new confidence level (verified, inferred, uncertain)")
+	scope := fs.String("scope", "", "new scope path")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if fs.NArg() == 0 {
+		return fmt.Errorf("entry ID is required\nUsage: known update <id> [flags]")
+	}
+
+	id, err := model.ParseID(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("invalid entry ID: %w", err)
+	}
+
+	// Fetch current entry.
+	entry, err := app.Entries.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get entry: %w", err)
+	}
+
+	// Track whether content changed so we know to re-embed.
+	contentChanged := false
+
+	if *content != "" {
+		entry.Content = *content
+		entry.ContentHash = model.ComputeContentHash(*content)
+		contentChanged = true
+	}
+
+	if *confidence != "" {
+		entry.Confidence.Level = model.ConfidenceLevel(*confidence)
+	}
+
+	if *scope != "" {
+		entry.Scope = *scope
+	}
+
+	// Re-embed if content changed.
+	if contentChanged {
+		embedding, err := app.Embedder.Embed(ctx, entry.Content)
+		if err != nil {
+			return fmt.Errorf("generate embedding: %w", err)
+		}
+		entry.Embedding = embedding
+		entry.EmbeddingDim = len(embedding)
+		entry.EmbeddingModel = app.Embedder.ModelName()
+	}
+
+	entry.Touch()
+
+	// Validate before persisting.
+	if err := entry.Validate(); err != nil {
+		return fmt.Errorf("invalid entry: %w", err)
+	}
+
+	// Persist with optimistic concurrency control.
+	if err := app.Entries.Update(ctx, entry); err != nil {
+		if storage.IsConcurrentModification(err) {
+			return fmt.Errorf("entry was modified by another process since you read it; re-fetch and try again: %w", err)
+		}
+		return fmt.Errorf("update entry: %w", err)
+	}
+
+	app.Printer.PrintEntry(*entry)
+	return nil
+}
