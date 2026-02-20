@@ -45,6 +45,10 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	contentChanged := false
 
 	if *content != "" {
+		if len(*content) > app.Config.MaxContentLength {
+			return fmt.Errorf("content exceeds maximum length (%d > %d); break into smaller entries",
+				len(*content), app.Config.MaxContentLength)
+		}
 		entry.Content = *content
 		entry.ContentHash = model.ComputeContentHash(*content)
 		contentChanged = true

@@ -117,11 +117,13 @@ Global Flags:
   --quiet           Suppress non-essential output
 
 Commands:
+  init       Initialize a scope root (.known.yaml) in the current directory
   add        Add a new knowledge entry
   update     Update an existing entry
   delete     Delete an entry
   show       Show entry details with relationships
   search     Search entries by semantic similarity
+  recall     Retrieve knowledge optimized for LLM context
   related    Find related entries via graph traversal
   conflicts  Detect conflicting entries
   path       Find shortest path between entries
@@ -156,11 +158,19 @@ func Run(ctx context.Context, args []string) int {
 	subArgs := remaining[1:]
 
 	// Commands that generate embeddings need the embedder initialized.
-	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update"
+	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update" || subcmd == "recall"
 
-	// Help does not need app init.
+	// Commands that don't need app init (no DB connection).
 	if subcmd == "help" || subcmd == "--help" || subcmd == "-h" {
 		usage()
+		return 0
+	}
+
+	if subcmd == "init" {
+		if err := runInit(ctx, subArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 
@@ -182,6 +192,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runShow(ctx, app, subArgs)
 	case "search":
 		err = runSearch(ctx, app, subArgs)
+	case "recall":
+		err = runRecall(ctx, app, subArgs)
 	case "related":
 		err = runRelated(ctx, app, subArgs)
 	case "conflicts":

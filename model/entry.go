@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// MaxContentLength is the maximum allowed length (in bytes) for entry content.
+// Entries exceeding this limit should be broken into smaller pieces.
+const MaxContentLength = 4096
+
 // ComputeContentHash returns the SHA-256 hex digest of the given content string.
 func ComputeContentHash(content string) string {
 	h := sha256.Sum256([]byte(content))
@@ -86,6 +90,9 @@ func (e Entry) Validate() error {
 	}
 	if e.Content == "" {
 		return fmt.Errorf("entry content is required")
+	}
+	if len(e.Content) > MaxContentLength {
+		return fmt.Errorf("content exceeds maximum length (%d > %d); break into smaller entries", len(e.Content), MaxContentLength)
 	}
 	if err := e.Source.Validate(); err != nil {
 		return fmt.Errorf("entry source: %w", err)

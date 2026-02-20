@@ -22,7 +22,7 @@ import (
 //	--meta           Metadata key=value pairs (repeatable)
 func runAdd(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	scope := fs.String("scope", "root", "scope path (e.g., project.auth)")
+	scope := fs.String("scope", "", "scope path (default: auto from cwd)")
 	sourceType := fs.String("source-type", "manual", "source type (file, url, conversation, manual)")
 	sourceRef := fs.String("source-ref", "cli", "source reference")
 	confidence := fs.String("confidence", "inferred", "confidence level (verified, inferred, uncertain)")
@@ -34,10 +34,20 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
+	if *scope == "" {
+		*scope = app.Config.DefaultScope
+	}
+
 	if fs.NArg() == 0 {
 		return fmt.Errorf("content argument is required\nUsage: known add 'content' [flags]")
 	}
 	content := fs.Arg(0)
+
+	// Content length check.
+	if len(content) > app.Config.MaxContentLength {
+		return fmt.Errorf("content exceeds maximum length (%d > %d); break into smaller entries",
+			len(content), app.Config.MaxContentLength)
+	}
 
 	// Build the entry.
 	source := model.Source{
@@ -54,13 +64,15 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 		Level: model.ConfidenceLevel(*confidence),
 	}
 
-	// Parse TTL if provided.
+	// Parse TTL if provided, otherwise apply default by source type.
 	if *ttl != "" {
 		dur, err := time.ParseDuration(*ttl)
 		if err != nil {
 			return fmt.Errorf("invalid ttl %q: %w", *ttl, err)
 		}
 		entry.SetTTL(dur)
+	} else if d, ok := app.Config.DefaultTTL[entry.Source.Type]; ok {
+		entry.SetTTL(d)
 	}
 
 	// Parse metadata.
@@ -88,12 +100,16 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("invalid entry: %w", err)
 	}
 
-	// Persist.
-	if err := app.Entries.Create(ctx, &entry); err != nil {
+	// Persist with upsert semantics (dedup by content hash + scope).
+	result, err := app.Entries.CreateOrUpdate(ctx, &entry)
+	if err != nil {
 		return fmt.Errorf("create entry: %w", err)
 	}
+	if result.Version > 1 {
+		app.Printer.PrintMessage("Updated existing entry %s (v%d)", result.ID, result.Version)
+	}
 
-	app.Printer.PrintEntry(entry)
+	app.Printer.PrintEntry(*result)
 	return nil
 }
 

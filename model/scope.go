@@ -11,6 +11,12 @@ import (
 // Segments must be alphanumeric with optional hyphens/underscores, separated by dots.
 var scopePathRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
+// IsValidScopeSegment reports whether s is a valid single scope segment
+// (alphanumeric with optional hyphens/underscores, starting with a letter).
+func IsValidScopeSegment(s string) bool {
+	return scopePathRegex.MatchString(s)
+}
+
 // RootScope is the default top-level scope.
 const RootScope = "root"
 

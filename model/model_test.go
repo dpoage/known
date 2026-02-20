@@ -327,6 +327,33 @@ func TestEdge_Reverse(t *testing.T) {
 // Scope Tests
 // =============================================================================
 
+func TestIsValidScopeSegment(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"root", true},
+		{"my-project", true},
+		{"auth_v2", true},
+		{"Project123", true},
+		{"a", true},
+		{".hidden", false},
+		{"123numeric", false},
+		{"-dashed", false},
+		{"_under", false},
+		{"", false},
+		{"has space", false},
+		{"has.dot", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := IsValidScopeSegment(tt.input); got != tt.want {
+				t.Errorf("IsValidScopeSegment(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseScopePath(t *testing.T) {
 	tests := []struct {
 		path    string
@@ -496,6 +523,16 @@ func TestEntry_Validate(t *testing.T) {
 		{
 			name:    "missing content",
 			modify:  func(e *Entry) { e.Content = "" },
+			wantErr: true,
+		},
+		{
+			name:    "content at max length",
+			modify:  func(e *Entry) { e.Content = string(make([]byte, MaxContentLength)) },
+			wantErr: false,
+		},
+		{
+			name:    "content exceeds max length",
+			modify:  func(e *Entry) { e.Content = string(make([]byte, MaxContentLength+1)) },
 			wantErr: true,
 		},
 		{
