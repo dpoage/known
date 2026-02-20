@@ -680,6 +680,22 @@ func TestNewEmbedder_Unknown(t *testing.T) {
 	}
 }
 
+func TestNewEmbedder_WithCache(t *testing.T) {
+	emb, err := NewEmbedder(Config{
+		Embedder:     "ollama",
+		Model:        "nomic-embed-text",
+		URL:          "http://localhost:11434",
+		CacheEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("NewEmbedder(ollama+cache): %v", err)
+	}
+	// Verify it's wrapped in a CachedEmbedder.
+	if _, ok := emb.(*CachedEmbedder); !ok {
+		t.Errorf("expected *CachedEmbedder, got %T", emb)
+	}
+}
+
 // =============================================================================
 // Config Tests
 // =============================================================================
@@ -690,6 +706,16 @@ func TestConfig_Validate(t *testing.T) {
 		cfg     Config
 		wantErr bool
 	}{
+		{
+			name:    "valid hugot",
+			cfg:     Config{Embedder: "hugot", Model: "sentence-transformers/all-MiniLM-L6-v2"},
+			wantErr: false,
+		},
+		{
+			name:    "valid hugot no URL needed",
+			cfg:     Config{Embedder: "hugot", Model: "sentence-transformers/all-MiniLM-L6-v2", URL: ""},
+			wantErr: false,
+		},
 		{
 			name:    "valid ollama",
 			cfg:     Config{Embedder: "ollama", Model: "nomic-embed-text", URL: "http://localhost:11434"},
@@ -711,7 +737,7 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty URL",
+			name:    "empty URL for HTTP backend",
 			cfg:     Config{Embedder: "ollama", Model: "m", URL: ""},
 			wantErr: true,
 		},

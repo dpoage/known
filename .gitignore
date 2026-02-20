@@ -18,6 +18,7 @@ coverage.txt
 # IDE/Editor
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

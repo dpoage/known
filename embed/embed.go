@@ -32,12 +32,26 @@ type Embedder interface {
 // It reads KNOWN_EMBEDDER to select the backend and delegates to the
 // appropriate constructor.
 func NewEmbedder(cfg Config) (Embedder, error) {
+	var emb Embedder
+	var err error
+
 	switch cfg.Embedder {
+	case "hugot":
+		emb, err = NewHugotEmbedder(cfg)
 	case "ollama":
-		return NewOllamaEmbedder(cfg)
+		emb, err = NewOllamaEmbedder(cfg)
 	case "openai-compatible":
-		return NewOpenAICompatibleEmbedder(cfg)
+		emb, err = NewOpenAICompatibleEmbedder(cfg)
 	default:
-		return nil, fmt.Errorf("unknown embedder type %q: expected \"ollama\" or \"openai-compatible\"", cfg.Embedder)
+		return nil, fmt.Errorf("unknown embedder type %q: expected \"hugot\", \"ollama\", or \"openai-compatible\"", cfg.Embedder)
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.CacheEnabled {
+		emb = NewCachedEmbedder(emb)
+	}
+
+	return emb, nil
 }

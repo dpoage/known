@@ -30,11 +30,12 @@ type Config struct {
 }
 
 // defaults returns a Config with sensible local-first defaults.
+// The hugot backend runs a sentence-transformer model in pure Go —
+// no external services or CGo required.
 func defaults() Config {
 	return Config{
-		Embedder:     "ollama",
-		Model:        "nomic-embed-text",
-		URL:          "http://localhost:11434",
+		Embedder:     "hugot",
+		Model:        defaultHugotModel,
 		CacheEnabled: false,
 	}
 }
@@ -43,8 +44,8 @@ func defaults() Config {
 //
 // Environment variables (prefix KNOWN_):
 //
-//	KNOWN_EMBEDDER          - "ollama" or "openai-compatible"
-//	KNOWN_EMBED_MODEL       - model name
+//	KNOWN_EMBEDDER          - "hugot" (default), "ollama", or "openai-compatible"
+//	KNOWN_EMBED_MODEL       - model name (default: sentence-transformers/all-MiniLM-L6-v2)
 //	KNOWN_EMBED_URL         - base URL
 //	KNOWN_EMBED_API_KEY     - API key / bearer token
 //	KNOWN_EMBED_DIMENSIONS  - override vector dimensions
@@ -81,7 +82,7 @@ func LoadConfig() Config {
 // Validate checks that the configuration is internally consistent.
 func (c Config) Validate() error {
 	switch c.Embedder {
-	case "ollama", "openai-compatible":
+	case "hugot", "ollama", "openai-compatible":
 		// ok
 	default:
 		return fmt.Errorf("unknown embedder type %q", c.Embedder)
@@ -89,7 +90,8 @@ func (c Config) Validate() error {
 	if c.Model == "" {
 		return fmt.Errorf("embedding model name is required")
 	}
-	if c.URL == "" {
+	// URL is required only for HTTP-based backends.
+	if c.Embedder != "hugot" && c.URL == "" {
 		return fmt.Errorf("embedding service URL is required")
 	}
 	if c.Dimensions < 0 {
