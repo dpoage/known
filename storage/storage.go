@@ -21,6 +21,10 @@ type ConcurrentModificationError struct {
 }
 
 func (e *ConcurrentModificationError) Error() string {
+	if e.ActualVersion > 0 {
+		return fmt.Sprintf("concurrent modification of entry %s: expected version %d, actual version %d",
+			e.ID.String(), e.ExpectedVersion, e.ActualVersion)
+	}
 	return fmt.Sprintf("concurrent modification of entry %s: expected version %d, current version has changed",
 		e.ID.String(), e.ExpectedVersion)
 }

@@ -1,15 +1,11 @@
--- Enable pgcrypto for SHA-256 digest in backfill
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 -- Add optimistic concurrency control version column
 ALTER TABLE entries ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
 
 -- Add content hash for duplicate detection
 ALTER TABLE entries ADD COLUMN content_hash TEXT;
 
--- Backfill content_hash for existing rows using SHA-256
--- PostgreSQL's encode/digest functions handle this
-UPDATE entries SET content_hash = encode(digest(content, 'sha256'), 'hex')
+-- Backfill content_hash for existing rows using built-in sha256 (PostgreSQL 14+)
+UPDATE entries SET content_hash = encode(sha256(content::bytea), 'hex')
 WHERE content_hash IS NULL;
 
 -- Now make content_hash NOT NULL after backfill

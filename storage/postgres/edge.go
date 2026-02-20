@@ -21,16 +21,16 @@ func (s *EdgeStore) conn(ctx context.Context) DBTX {
 	return connFromContext(ctx, s.pool)
 }
 
-// Create persists a new edge. The edge type registration and edge insert are
-// performed within a single transaction for atomicity.
+// Create persists a new edge. When called within a transaction (via context),
+// both the edge type registration and edge insert use the same transaction.
+// Without a caller-provided transaction, each operation runs independently,
+// which is acceptable since edge type registration uses ON CONFLICT DO NOTHING.
 func (s *EdgeStore) Create(ctx context.Context, edge *model.Edge) error {
 	metaJSON, err := marshalNullableJSON(edge.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
 	}
 
-	// If we are already inside a transaction (from ctx), both operations
-	// will use that transaction. Otherwise, we need to wrap them ourselves.
 	conn := s.conn(ctx)
 
 	// Ensure the edge type exists in the registry (insert if custom)

@@ -9,6 +9,7 @@ import (
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
 )
@@ -23,6 +24,20 @@ func (s *EntryStore) conn(ctx context.Context) DBTX {
 	return connFromContext(ctx, s.pool)
 }
 
+// withTx runs fn within a transaction using the store's pool.
+func (s *EntryStore) withTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	txCtx := context.WithValue(ctx, txKey{}, tx)
+	if err := fn(txCtx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // entryColumns is the standard column list for entry queries.
 const entryColumns = `
 	id, content, content_hash, embedding, embedding_dim, embedding_model,
@@ -33,7 +48,19 @@ const entryColumns = `
 `
 
 // Create persists a new entry. It automatically ensures the scope hierarchy exists.
+// If not already within a transaction, wraps both operations in one for atomicity.
 func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
+	// If not already in a transaction, wrap in one to keep EnsureHierarchy
+	// and the entry insert atomic.
+	if _, ok := ctx.Value(txKey{}).(pgx.Tx); !ok {
+		return s.withTx(ctx, func(txCtx context.Context) error {
+			return s.createInner(txCtx, entry)
+		})
+	}
+	return s.createInner(ctx, entry)
+}
+
+func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error {
 	// Ensure content hash is set.
 	if entry.ContentHash == "" {
 		entry.ContentHash = model.ComputeContentHash(entry.Content)
@@ -91,6 +118,10 @@ func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
 		metaJSON, entry.Version, entry.CreatedAt, entry.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return fmt.Errorf("%w: %s", storage.ErrDuplicateContent, pgErr.Detail)
+		}
 		return fmt.Errorf("create entry: %w", err)
 	}
 	return nil
@@ -98,7 +129,21 @@ func (s *EntryStore) Create(ctx context.Context, entry *model.Entry) error {
 
 // CreateOrUpdate inserts a new entry or updates an existing one with the same
 // content hash and scope. Uses ON CONFLICT (content_hash, scope) for idempotent upserts.
+// If not already within a transaction, wraps both operations in one for atomicity.
 func (s *EntryStore) CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
+	if _, ok := ctx.Value(txKey{}).(pgx.Tx); !ok {
+		var result *model.Entry
+		err := s.withTx(ctx, func(txCtx context.Context) error {
+			var innerErr error
+			result, innerErr = s.createOrUpdateInner(txCtx, entry)
+			return innerErr
+		})
+		return result, err
+	}
+	return s.createOrUpdateInner(ctx, entry)
+}
+
+func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
 	// Ensure content hash is set.
 	if entry.ContentHash == "" {
 		entry.ContentHash = model.ComputeContentHash(entry.Content)
@@ -224,7 +269,9 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 		ttlSeconds = &secs
 	}
 
-	tag, err := s.conn(ctx).Exec(ctx, `
+	// Use RETURNING to detect a successful update in a single round-trip.
+	var newVersion int
+	err = s.conn(ctx).QueryRow(ctx, `
 		UPDATE entries SET
 			content = $2,
 			content_hash = $3,
@@ -244,6 +291,7 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 			version = $17 + 1,
 			updated_at = $18
 		WHERE id = $1 AND version = $17
+		RETURNING version
 	`,
 		entry.ID.String(), entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
@@ -251,27 +299,32 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
 		metaJSON, entry.Version, entry.UpdatedAt,
-	)
-	if err != nil {
+	).Scan(&newVersion)
+
+	if err == nil {
+		// Update succeeded — set the new version on the struct.
+		entry.Version = newVersion
+		return nil
+	}
+
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("update entry: %w", err)
 	}
 
-	if tag.RowsAffected() == 0 {
-		// Determine if the entry doesn't exist or if it's a version mismatch.
-		var exists bool
-		_ = s.conn(ctx).QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM entries WHERE id = $1)`, entry.ID.String()).Scan(&exists)
-		if !exists {
-			return storage.ErrNotFound
-		}
-		return &storage.ConcurrentModificationError{
-			ID:              entry.ID,
-			ExpectedVersion: entry.Version,
-		}
+	// Zero rows returned. Distinguish not-found from version mismatch.
+	var actualVersion int
+	probeErr := s.conn(ctx).QueryRow(ctx, `SELECT version FROM entries WHERE id = $1`, entry.ID.String()).Scan(&actualVersion)
+	if errors.Is(probeErr, pgx.ErrNoRows) {
+		return storage.ErrNotFound
 	}
-
-	// Increment the version on the struct so the caller has the updated value.
-	entry.Version++
-	return nil
+	if probeErr != nil {
+		return fmt.Errorf("probe entry version: %w", probeErr)
+	}
+	return &storage.ConcurrentModificationError{
+		ID:              entry.ID,
+		ExpectedVersion: entry.Version,
+		ActualVersion:   actualVersion,
+	}
 }
 
 // Delete removes an entry by ID.
