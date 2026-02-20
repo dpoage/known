@@ -1,0 +1,37 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/known
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories
+/vendor/
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config (not the default config)
+*.local.yaml
+*.local.json
+.env
+.env.*
+
+# Build artifacts
+/dist/
+/bin/
