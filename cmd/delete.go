@@ -63,6 +63,6 @@ func runDelete(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("delete entry: %w", err)
 	}
 
-	app.Printer.PrintMessage(fmt.Sprintf("Deleted entry %s", id.String()))
+	app.Printer.PrintMessage("Deleted entry %s", id.String())
 	return nil
 }

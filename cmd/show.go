@@ -65,8 +65,21 @@ func runShow(ctx context.Context, app *App, args []string) error {
 	// Print entry.
 	app.Printer.PrintEntry(*entry)
 
-	// Print relationships (human mode gets extra labels).
-	if app.Printer.mode == OutputHuman {
+	// Print relationships based on output mode.
+	if app.Printer.json {
+		// In JSON mode, output a combined structure.
+		type showResult struct {
+			Entry    model.Entry  `json:"entry"`
+			Outgoing []model.Edge `json:"outgoing_edges"`
+			Incoming []model.Edge `json:"incoming_edges"`
+		}
+		app.Printer.printJSON(showResult{
+			Entry:    *entry,
+			Outgoing: outgoing,
+			Incoming: incoming,
+		})
+	} else if !app.Printer.quiet {
+		// Human mode gets extra labels.
 		if len(outgoing) > 0 {
 			fmt.Fprintln(app.Printer.w)
 			fmt.Fprintf(app.Printer.w, "Outgoing edges (%d):\n", len(outgoing))
@@ -81,18 +94,6 @@ func runShow(ctx context.Context, app *App, args []string) error {
 			fmt.Fprintln(app.Printer.w)
 			fmt.Fprintln(app.Printer.w, "No relationships.")
 		}
-	} else if app.Printer.mode == OutputJSON {
-		// In JSON mode, output a combined structure.
-		type showResult struct {
-			Entry    model.Entry  `json:"entry"`
-			Outgoing []model.Edge `json:"outgoing_edges"`
-			Incoming []model.Edge `json:"incoming_edges"`
-		}
-		app.Printer.encodeJSON(showResult{
-			Entry:    *entry,
-			Outgoing: outgoing,
-			Incoming: incoming,
-		})
 	}
 	// Quiet mode already printed just the ID from PrintEntry.
 

@@ -1,53 +1,60 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/viper"
 )
 
-// Config holds CLI configuration values loaded from file, environment,
-// and command-line flags.
-type Config struct {
-	// DSN is the PostgreSQL connection string.
-	DSN string
-
-	// JSON enables JSON output mode.
-	JSON bool
-
-	// Quiet enables minimal output mode (IDs only).
+// AppConfig holds the resolved configuration for the CLI.
+type AppConfig struct {
+	DSN   string
+	JSON  bool
 	Quiet bool
 }
 
-// DefaultDSN is the fallback database connection string when none is configured.
-const DefaultDSN = "postgres://localhost:5432/known?sslmode=disable"
-
-// LoadConfig reads configuration from ~/.known/config.yaml and environment
-// variables (KNOWN_DSN, etc.). Command-line flags override both.
-func LoadConfig() Config {
+// loadAppConfig resolves configuration from flags, environment, and config file.
+// Priority: flags > env > config file > defaults.
+func loadAppConfig(gf globalFlags) (*AppConfig, error) {
+	// Set up Viper for config file.
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 
-	// Config directory: ~/.known/
 	home, err := os.UserHomeDir()
 	if err == nil {
 		viper.AddConfigPath(filepath.Join(home, ".known"))
 	}
 
-	viper.SetEnvPrefix("KNOWN")
-	viper.AutomaticEnv()
-
-	viper.SetDefault("dsn", DefaultDSN)
-	viper.SetDefault("json", false)
-	viper.SetDefault("quiet", false)
-
-	// Ignore missing config file; env and flags still work.
-	_ = viper.ReadInConfig()
-
-	return Config{
-		DSN:   viper.GetString("dsn"),
-		JSON:  viper.GetBool("json"),
-		Quiet: viper.GetBool("quiet"),
+	// Read config file if it exists; ignore "not found" errors.
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			// Only fail on actual read errors, not missing file.
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("read config: %w", err)
+			}
+		}
 	}
+
+	cfg := &AppConfig{
+		JSON:  gf.json,
+		Quiet: gf.quiet,
+	}
+
+	// DSN resolution: flag > env > config file.
+	switch {
+	case gf.dsn != "":
+		cfg.DSN = gf.dsn
+	case os.Getenv("KNOWN_DSN") != "":
+		cfg.DSN = os.Getenv("KNOWN_DSN")
+	default:
+		cfg.DSN = viper.GetString("dsn")
+	}
+
+	if cfg.DSN == "" {
+		return nil, fmt.Errorf("database connection string required: set --dsn flag, KNOWN_DSN env var, or dsn in ~/.known/config.yaml")
+	}
+
+	return cfg, nil
 }

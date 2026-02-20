@@ -1,9 +1,11 @@
+// Package cmd implements the CLI commands for the known knowledge graph.
 package cmd
 
 import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dpoage/known/embed"
@@ -12,124 +14,203 @@ import (
 	"github.com/dpoage/known/storage/postgres"
 )
 
-// App holds the initialized dependencies shared across subcommands.
+// App holds the shared dependencies for all CLI commands.
 type App struct {
 	DB       *postgres.DB
 	Entries  storage.EntryRepo
 	Edges    storage.EdgeRepo
 	Scopes   storage.ScopeRepo
 	Embedder embed.Embedder
-	Query    *query.Engine
+	Engine   *query.Engine
 	Printer  *Printer
-	Config   Config
+	Config   *AppConfig
 }
 
-// subcommand maps a name to its handler function.
-type subcommand struct {
-	fn    func(ctx context.Context, app *App, args []string) error
-	usage string
+// globalFlags holds the flags parsed from the root command.
+type globalFlags struct {
+	dsn   string
+	json  bool
+	quiet bool
 }
 
-// Run parses global flags, initializes the application, and dispatches to
-// the appropriate subcommand. It returns an error rather than calling
-// os.Exit, leaving that to the caller in main.
-func Run(args []string) error {
-	// Global flags.
-	globalFlags := flag.NewFlagSet("known", flag.ContinueOnError)
-	dsnFlag := globalFlags.String("dsn", "", "PostgreSQL connection string (env: KNOWN_DSN)")
-	jsonFlag := globalFlags.Bool("json", false, "output as JSON")
-	quietFlag := globalFlags.Bool("quiet", false, "minimal output (IDs only)")
+// parseGlobalFlags extracts global flags from args and returns remaining args.
+// Global flags must appear before the subcommand. The standard flag package
+// stops parsing at the first non-flag argument, so subcommand names and their
+// flags are returned as the remaining args.
+func parseGlobalFlags(args []string) (globalFlags, []string) {
+	var gf globalFlags
 
-	globalFlags.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: known [flags] <command> [command-flags] [args]\n\n")
-		fmt.Fprintf(os.Stderr, "Commands:\n")
-		fmt.Fprintf(os.Stderr, "  add       Add a new knowledge entry\n")
-		fmt.Fprintf(os.Stderr, "  update    Update an existing entry\n")
-		fmt.Fprintf(os.Stderr, "  delete    Delete an entry\n")
-		fmt.Fprintf(os.Stderr, "  show      Show entry details with relationships\n")
-		fmt.Fprintf(os.Stderr, "\nGlobal flags:\n")
-		globalFlags.PrintDefaults()
-	}
+	fs := flag.NewFlagSet("known", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // suppress default error output
+	fs.StringVar(&gf.dsn, "dsn", "", "PostgreSQL connection string (env: KNOWN_DSN)")
+	fs.BoolVar(&gf.json, "json", false, "output as JSON")
+	fs.BoolVar(&gf.quiet, "quiet", false, "suppress non-essential output")
 
-	if err := globalFlags.Parse(args); err != nil {
-		return err
-	}
+	// Parse stops at the first non-flag argument (the subcommand name).
+	// Errors are ignored so that subcommand-specific flags like --help
+	// do not cause a failure here.
+	_ = fs.Parse(args)
 
-	remaining := globalFlags.Args()
-	if len(remaining) == 0 {
-		globalFlags.Usage()
-		return fmt.Errorf("no command specified")
-	}
+	return gf, fs.Args()
+}
 
-	cmdName := remaining[0]
-	cmdArgs := remaining[1:]
-
-	// Load config from file/env, then apply flag overrides.
-	cfg := LoadConfig()
-	if *dsnFlag != "" {
-		cfg.DSN = *dsnFlag
+// initApp creates and initializes the App from the given flags and config.
+// The embedder is only initialized when needsEmbedder is true (for search).
+// The query engine is always created since graph traversal commands use it
+// without requiring an embedder.
+func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, error) {
+	cfg, err := loadAppConfig(gf)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
 	}
-	if *jsonFlag {
-		cfg.JSON = true
-	}
-	if *quietFlag {
-		cfg.Quiet = true
-	}
-
-	// Determine output mode.
-	mode := OutputHuman
-	if cfg.JSON {
-		mode = OutputJSON
-	} else if cfg.Quiet {
-		mode = OutputQuiet
-	}
-
-	commands := map[string]subcommand{
-		"add":    {fn: runAdd, usage: "known add 'content' [flags]"},
-		"update": {fn: runUpdate, usage: "known update <id> [flags]"},
-		"delete": {fn: runDelete, usage: "known delete <id> [flags]"},
-		"show":   {fn: runShow, usage: "known show <id>"},
-	}
-
-	sub, ok := commands[cmdName]
-	if !ok {
-		globalFlags.Usage()
-		return fmt.Errorf("unknown command: %s", cmdName)
-	}
-
-	// Initialize dependencies.
-	ctx := context.Background()
 
 	db, err := postgres.New(ctx, postgres.Config{DSN: cfg.DSN})
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
-	}
-	defer db.Close()
-
-	if err := db.Migrate(cfg.DSN); err != nil {
-		return fmt.Errorf("run migrations: %w", err)
-	}
-
-	embedCfg := embed.LoadConfig()
-	embedder, err := embed.NewEmbedder(embedCfg)
-	if err != nil {
-		return fmt.Errorf("create embedder: %w", err)
+		return nil, fmt.Errorf("connect to database: %w", err)
 	}
 
 	app := &App{
-		DB:       db,
-		Entries:  db.Entries(),
-		Edges:    db.Edges(),
-		Scopes:   db.Scopes(),
-		Embedder: embedder,
-		Query:    query.New(db.Entries(), db.Edges(), embedder),
-		Printer:  NewPrinter(os.Stdout, mode),
-		Config:   cfg,
+		DB:      db,
+		Entries: db.Entries(),
+		Edges:   db.Edges(),
+		Scopes:  db.Scopes(),
+		Printer: NewPrinter(os.Stdout, cfg.JSON, cfg.Quiet),
+		Config:  cfg,
 	}
 
-	if err := sub.fn(ctx, app, cmdArgs); err != nil {
-		return fmt.Errorf("%s: %w", cmdName, err)
+	if needsEmbedder {
+		embedCfg := embed.LoadConfig()
+		embedder, err := embed.NewEmbedder(embedCfg)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("create embedder: %w", err)
+		}
+		app.Embedder = embedder
+		app.Engine = query.New(app.Entries, app.Edges, embedder)
+	} else {
+		// Create engine without embedder for graph-only commands.
+		// SearchVector/SearchHybrid will panic if called without an embedder,
+		// but Traverse, FindPath, FindConflicts, and DetectAllConflicts are safe.
+		app.Engine = query.New(app.Entries, app.Edges, nil)
 	}
 
-	return nil
+	return app, nil
+}
+
+// Close releases all resources held by the App.
+func (a *App) Close() {
+	if a.DB != nil {
+		a.DB.Close()
+	}
+}
+
+// usage prints the top-level help message.
+func usage() {
+	fmt.Fprintf(os.Stderr, `known - a memory graph for LLMs
+
+Usage:
+  known [global flags] <command> [command flags] [arguments]
+
+Global Flags:
+  --dsn <string>    PostgreSQL connection string (env: KNOWN_DSN)
+  --json            Output as JSON
+  --quiet           Suppress non-essential output
+
+Commands:
+  add        Add a new knowledge entry
+  update     Update an existing entry
+  delete     Delete an entry
+  show       Show entry details with relationships
+  search     Search entries by semantic similarity
+  related    Find related entries via graph traversal
+  conflicts  Detect conflicting entries
+  path       Find shortest path between entries
+  link       Create an edge between entries
+  unlink     Delete an edge
+  scope      Manage scopes (list, create, tree)
+  gc         Delete expired entries
+  stats      Show knowledge graph statistics
+  export     Export entries as JSON or JSONL
+  import     Import entries from JSON or JSONL
+
+Run 'known <command> --help' for details on a specific command.
+`)
+}
+
+// Run is the main entry point for the CLI. It parses args and dispatches
+// to the appropriate subcommand.
+func Run(ctx context.Context, args []string) int {
+	if len(args) < 1 {
+		usage()
+		return 1
+	}
+
+	gf, remaining := parseGlobalFlags(args)
+
+	if len(remaining) == 0 {
+		usage()
+		return 1
+	}
+
+	subcmd := remaining[0]
+	subArgs := remaining[1:]
+
+	// Commands that generate embeddings need the embedder initialized.
+	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update"
+
+	// Help does not need app init.
+	if subcmd == "help" || subcmd == "--help" || subcmd == "-h" {
+		usage()
+		return 0
+	}
+
+	app, err := initApp(ctx, gf, needsEmbedder)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer app.Close()
+
+	switch subcmd {
+	case "add":
+		err = runAdd(ctx, app, subArgs)
+	case "update":
+		err = runUpdate(ctx, app, subArgs)
+	case "delete":
+		err = runDelete(ctx, app, subArgs)
+	case "show":
+		err = runShow(ctx, app, subArgs)
+	case "search":
+		err = runSearch(ctx, app, subArgs)
+	case "related":
+		err = runRelated(ctx, app, subArgs)
+	case "conflicts":
+		err = runConflicts(ctx, app, subArgs)
+	case "path":
+		err = runPath(ctx, app, subArgs)
+	case "link":
+		err = runLink(ctx, app, subArgs)
+	case "unlink":
+		err = runUnlink(ctx, app, subArgs)
+	case "scope":
+		err = runScope(ctx, app, subArgs)
+	case "gc":
+		err = runGC(ctx, app, subArgs)
+	case "stats":
+		err = runStats(ctx, app, subArgs)
+	case "export":
+		err = runExport(ctx, app, subArgs)
+	case "import":
+		err = runImport(ctx, app, subArgs)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcmd)
+		usage()
+		return 1
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	return 0
 }
