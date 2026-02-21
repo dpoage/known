@@ -148,14 +148,14 @@ Run 'known <command> --help' for details on a specific command.
 func Run(ctx context.Context, args []string) int {
 	if len(args) < 1 {
 		usage()
-		return 1
+		return 0
 	}
 
 	gf, remaining := parseGlobalFlags(args)
 
 	if len(remaining) == 0 {
 		usage()
-		return 1
+		return 0
 	}
 
 	subcmd := remaining[0]
