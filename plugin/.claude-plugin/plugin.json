@@ -1,0 +1,32 @@
+{
+  "name": "known",
+  "description": "Persistent memory graph for LLMs. Store facts in one session, recall them in the next. Semantic search, graph relationships, and hierarchical scopes.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dustin Poage",
+    "url": "https://github.com/dpoage"
+  },
+  "repository": "https://github.com/dpoage/known",
+  "license": "MIT",
+  "homepage": "https://github.com/dpoage/known",
+  "keywords": [
+    "memory",
+    "knowledge-graph",
+    "semantic-search",
+    "llm-context",
+    "agent-memory"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v known >/dev/null && known scope tree 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

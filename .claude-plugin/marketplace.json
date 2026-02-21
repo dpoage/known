@@ -1,0 +1,15 @@
+{
+  "name": "known-marketplace",
+  "description": "Marketplace for the Known persistent memory graph plugin",
+  "owner": {
+    "name": "Dustin Poage"
+  },
+  "plugins": [
+    {
+      "name": "known",
+      "source": "./plugin",
+      "description": "Persistent memory graph for LLMs — store facts in one session, recall them in the next",
+      "version": "0.1.0"
+    }
+  ]
+}
