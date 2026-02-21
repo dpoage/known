@@ -1,13 +1,13 @@
 ---
 description: Store a fact in the knowledge graph
-argument-hint: <fact to store>
+argument-hint: <fact or context to store>
 ---
 
 Extract a single atomic fact from the user's message and store it.
 
 ## Instructions
 
-1. Extract the core fact from the user's input. Rewrite it as a single, clear sentence if needed. Do not store multi-sentence paragraphs — break them into separate calls.
+1. Extract the core fact from the user's input. Rewrite it as a single, clear sentence if needed. Do not store multi-sentence paragraphs — break them into separate `/known:remember` calls.
 
 2. Choose the appropriate flags:
    - `--source-type conversation` (always, since this comes from chat)

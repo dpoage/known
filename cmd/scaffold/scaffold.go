@@ -1,6 +1,10 @@
 // Package scaffold installs Claude Code skills and guidance into a project.
 //
 // Templates are embedded in the binary and written to .claude/ by Install.
+// Standalone SKILL.md files are generated from the plugin command sources
+// in plugin/commands/ — run "go generate ./cmd/scaffold" to regenerate.
+//
+//go:generate go run generate.go
 package scaffold
 
 import (

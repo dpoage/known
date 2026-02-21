@@ -10,7 +10,7 @@ Find and delete a knowledge entry. This is a two-step process: search first, the
 1. Search for matching entries using JSON output to get IDs. Note: `--json` is a global flag and goes **before** the subcommand:
 
 ```bash
-known --json search '$ARGUMENTS'
+known --json search '<query>'
 ```
 
 2. Present the matching entries to the user and ask which one(s) to delete. Show the entry content and ID for each match.
