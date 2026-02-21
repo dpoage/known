@@ -1,4 +1,4 @@
-package postgres_test
+package sqlite_test
 
 import (
 	"context"
@@ -10,54 +10,19 @@ import (
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
-	"github.com/dpoage/known/storage/postgres"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/dpoage/known/storage/sqlite"
 )
 
 // testDB is a shared test database instance.
-var testDB *postgres.DB
+var testDB *sqlite.DB
 
 func TestMain(m *testing.M) {
-	if os.Getenv("KNOWN_INTEGRATION") == "" {
-		fmt.Println("Skipping integration tests (set KNOWN_INTEGRATION=1 to run)")
-		os.Exit(0)
-	}
-
 	ctx := context.Background()
 
-	pgContainer, err := tcpostgres.Run(ctx,
-		"pgvector/pgvector:pg17",
-		tcpostgres.WithDatabase("known_test"),
-		tcpostgres.WithUsername("test"),
-		tcpostgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
+	var err error
+	testDB, err = sqlite.New(ctx, ":memory:")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start postgres container: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		_ = pgContainer.Terminate(ctx)
-	}()
-
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get connection string: %v\n", err)
-		os.Exit(1)
-	}
-
-	testDB, err = postgres.New(ctx, postgres.Config{
-		DSN:      connStr,
-		MaxConns: 5,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to open sqlite: %v\n", err)
 		os.Exit(1)
 	}
 	defer testDB.Close()
@@ -165,8 +130,7 @@ func TestScopeList(t *testing.T) {
 	ctx := context.Background()
 	scopes := testDB.Scopes()
 
-	// Create several scopes with a unique prefix to avoid interference
-	prefix := "listtest"
+	prefix := "slisttest"
 	paths := []string{
 		prefix,
 		prefix + ".alpha",
@@ -184,7 +148,6 @@ func TestScopeList(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	// Verify our scopes are in the list
 	found := make(map[string]bool)
 	for _, s := range all {
 		found[s.Path] = true
@@ -200,8 +163,7 @@ func TestScopeHierarchy(t *testing.T) {
 	ctx := context.Background()
 	scopes := testDB.Scopes()
 
-	// Create a hierarchy: hier > hier.a > hier.a.x, hier.b
-	paths := []string{"hier", "hier.a", "hier.a.x", "hier.b"}
+	paths := []string{"shier", "shier.a", "shier.a.x", "shier.b"}
 	for _, p := range paths {
 		s := model.NewScope(p)
 		if err := scopes.Upsert(ctx, &s); err != nil {
@@ -209,32 +171,30 @@ func TestScopeHierarchy(t *testing.T) {
 		}
 	}
 
-	// ListChildren of "hier" should return hier.a and hier.b
-	children, err := scopes.ListChildren(ctx, "hier")
+	children, err := scopes.ListChildren(ctx, "shier")
 	if err != nil {
 		t.Fatalf("ListChildren: %v", err)
 	}
 	childPaths := scopePaths(children)
-	if !contains(childPaths, "hier.a") || !contains(childPaths, "hier.b") {
-		t.Errorf("ListChildren(hier) = %v, want [hier.a, hier.b]", childPaths)
+	if !contains(childPaths, "shier.a") || !contains(childPaths, "shier.b") {
+		t.Errorf("ListChildren(shier) = %v, want [shier.a, shier.b]", childPaths)
 	}
-	if contains(childPaths, "hier.a.x") {
-		t.Errorf("ListChildren(hier) should not include grandchild hier.a.x")
+	if contains(childPaths, "shier.a.x") {
+		t.Errorf("ListChildren(shier) should not include grandchild shier.a.x")
 	}
 
-	// ListDescendants of "hier" should return hier.a, hier.a.x, hier.b
-	desc, err := scopes.ListDescendants(ctx, "hier")
+	desc, err := scopes.ListDescendants(ctx, "shier")
 	if err != nil {
 		t.Fatalf("ListDescendants: %v", err)
 	}
 	descPaths := scopePaths(desc)
-	for _, want := range []string{"hier.a", "hier.a.x", "hier.b"} {
+	for _, want := range []string{"shier.a", "shier.a.x", "shier.b"} {
 		if !contains(descPaths, want) {
-			t.Errorf("ListDescendants(hier) missing %q, got %v", want, descPaths)
+			t.Errorf("ListDescendants(shier) missing %q, got %v", want, descPaths)
 		}
 	}
-	if contains(descPaths, "hier") {
-		t.Errorf("ListDescendants(hier) should not include ancestor itself")
+	if contains(descPaths, "shier") {
+		t.Errorf("ListDescendants(shier) should not include ancestor itself")
 	}
 }
 
@@ -247,8 +207,7 @@ func TestEntryCreateAndGet(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	// Ensure scope exists
-	scope := model.NewScope("entrytest")
+	scope := model.NewScope("sentrytest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -257,7 +216,7 @@ func TestEntryCreateAndGet(t *testing.T) {
 		Type:      model.SourceFile,
 		Reference: "/test.go",
 		Meta:      model.Metadata{"line": 42},
-	}).WithScope("entrytest").
+	}).WithScope("sentrytest").
 		WithMeta(model.Metadata{"tag": "test"}).
 		WithEmbedding([]float32{0.1, 0.2, 0.3}, "test-model")
 
@@ -276,8 +235,8 @@ func TestEntryCreateAndGet(t *testing.T) {
 	if got.Content != "test knowledge" {
 		t.Errorf("Content = %q, want %q", got.Content, "test knowledge")
 	}
-	if got.Scope != "entrytest" {
-		t.Errorf("Scope = %q, want %q", got.Scope, "entrytest")
+	if got.Scope != "sentrytest" {
+		t.Errorf("Scope = %q, want %q", got.Scope, "sentrytest")
 	}
 	if got.EmbeddingDim != 3 {
 		t.Errorf("EmbeddingDim = %d, want 3", got.EmbeddingDim)
@@ -314,7 +273,7 @@ func TestEntryUpdate(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("entryupdate")
+	scope := model.NewScope("sentryupdate")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -322,7 +281,7 @@ func TestEntryUpdate(t *testing.T) {
 	entry := model.NewEntry("original", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("entryupdate")
+	}).WithScope("sentryupdate")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -364,7 +323,7 @@ func TestEntryDelete(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("entrydel")
+	scope := model.NewScope("sentrydel")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -372,7 +331,7 @@ func TestEntryDelete(t *testing.T) {
 	entry := model.NewEntry("to delete", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("entrydel")
+	}).WithScope("sentrydel")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -403,7 +362,7 @@ func TestEntryListByScope(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	for _, p := range []string{"listscope", "listscope.sub", "other-listscope"} {
+	for _, p := range []string{"slistscope", "slistscope.sub", "sother-listscope"} {
 		s := model.NewScope(p)
 		if err := scopes.Upsert(ctx, &s); err != nil {
 			t.Fatalf("Upsert scope(%s): %v", p, err)
@@ -411,9 +370,9 @@ func TestEntryListByScope(t *testing.T) {
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("in scope", src).WithScope("listscope")
-	e2 := model.NewEntry("in subscope", src).WithScope("listscope.sub")
-	e3 := model.NewEntry("other scope", src).WithScope("other-listscope")
+	e1 := model.NewEntry("in scope", src).WithScope("slistscope")
+	e2 := model.NewEntry("in subscope", src).WithScope("slistscope.sub")
+	e3 := model.NewEntry("other scope", src).WithScope("sother-listscope")
 
 	for _, e := range []*model.Entry{&e1, &e2, &e3} {
 		if err := entries.Create(ctx, e); err != nil {
@@ -421,8 +380,7 @@ func TestEntryListByScope(t *testing.T) {
 		}
 	}
 
-	// Exact scope match
-	got, err := entries.List(ctx, storage.EntryFilter{Scope: "listscope"})
+	got, err := entries.List(ctx, storage.EntryFilter{Scope: "slistscope"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -430,8 +388,7 @@ func TestEntryListByScope(t *testing.T) {
 		t.Errorf("exact scope: got %d entries, want 1 with 'in scope'", len(got))
 	}
 
-	// Scope prefix match (listscope and listscope.sub)
-	got, err = entries.List(ctx, storage.EntryFilter{ScopePrefix: "listscope"})
+	got, err = entries.List(ctx, storage.EntryFilter{ScopePrefix: "slistscope"})
 	if err != nil {
 		t.Fatalf("List prefix: %v", err)
 	}
@@ -445,22 +402,21 @@ func TestEntryListPagination(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("pagtest")
+	scope := model.NewScope("spagtest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
 	for i := 0; i < 5; i++ {
-		e := model.NewEntry(fmt.Sprintf("entry-%d", i), src).WithScope("pagtest")
+		e := model.NewEntry(fmt.Sprintf("entry-%d", i), src).WithScope("spagtest")
 		if err := entries.Create(ctx, &e); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		time.Sleep(time.Millisecond) // ensure distinct created_at for ordering
+		time.Sleep(time.Millisecond)
 	}
 
-	// First page
-	page1, err := entries.List(ctx, storage.EntryFilter{Scope: "pagtest", Limit: 2})
+	page1, err := entries.List(ctx, storage.EntryFilter{Scope: "spagtest", Limit: 2})
 	if err != nil {
 		t.Fatalf("List page1: %v", err)
 	}
@@ -468,8 +424,7 @@ func TestEntryListPagination(t *testing.T) {
 		t.Errorf("page1: got %d entries, want 2", len(page1))
 	}
 
-	// Second page
-	page2, err := entries.List(ctx, storage.EntryFilter{Scope: "pagtest", Limit: 2, Offset: 2})
+	page2, err := entries.List(ctx, storage.EntryFilter{Scope: "spagtest", Limit: 2, Offset: 2})
 	if err != nil {
 		t.Fatalf("List page2: %v", err)
 	}
@@ -477,7 +432,6 @@ func TestEntryListPagination(t *testing.T) {
 		t.Errorf("page2: got %d entries, want 2", len(page2))
 	}
 
-	// Pages should not overlap
 	if page1[0].ID == page2[0].ID {
 		t.Error("page1 and page2 overlap")
 	}
@@ -488,35 +442,31 @@ func TestEntryTTLExpiration(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("ttltest")
+	scope := model.NewScope("sttltest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
 
-	// Create an expired entry (TTL of -1 hour)
-	expired := model.NewEntry("expired", src).WithScope("ttltest")
+	expired := model.NewEntry("expired", src).WithScope("sttltest")
 	expired.SetTTL(-time.Hour)
 	if err := entries.Create(ctx, &expired); err != nil {
 		t.Fatalf("Create expired: %v", err)
 	}
 
-	// Create a non-expired entry
-	active := model.NewEntry("active", src).WithScope("ttltest")
+	active := model.NewEntry("active", src).WithScope("sttltest")
 	active.SetTTL(time.Hour)
 	if err := entries.Create(ctx, &active); err != nil {
 		t.Fatalf("Create active: %v", err)
 	}
 
-	// Create an entry with no TTL
-	noTTL := model.NewEntry("no-ttl", src).WithScope("ttltest")
+	noTTL := model.NewEntry("no-ttl", src).WithScope("sttltest")
 	if err := entries.Create(ctx, &noTTL); err != nil {
 		t.Fatalf("Create no-ttl: %v", err)
 	}
 
-	// List should exclude expired by default
-	got, err := entries.List(ctx, storage.EntryFilter{Scope: "ttltest"})
+	got, err := entries.List(ctx, storage.EntryFilter{Scope: "sttltest"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -526,8 +476,7 @@ func TestEntryTTLExpiration(t *testing.T) {
 		}
 	}
 
-	// List with IncludeExpired should include all
-	got, err = entries.List(ctx, storage.EntryFilter{Scope: "ttltest", IncludeExpired: true})
+	got, err = entries.List(ctx, storage.EntryFilter{Scope: "sttltest", IncludeExpired: true})
 	if err != nil {
 		t.Fatalf("List(IncludeExpired): %v", err)
 	}
@@ -541,7 +490,6 @@ func TestEntryTTLExpiration(t *testing.T) {
 		t.Error("IncludeExpired should show expired entries")
 	}
 
-	// DeleteExpired should remove the expired entry
 	deleted, err := entries.DeleteExpired(ctx)
 	if err != nil {
 		t.Fatalf("DeleteExpired: %v", err)
@@ -550,13 +498,11 @@ func TestEntryTTLExpiration(t *testing.T) {
 		t.Errorf("DeleteExpired = %d, want >= 1", deleted)
 	}
 
-	// Verify the expired entry is gone
 	_, err = entries.Get(ctx, expired.ID)
 	if err != storage.ErrNotFound {
 		t.Errorf("expired entry should be deleted, got %v", err)
 	}
 
-	// Active and no-TTL entries should still exist
 	if _, err := entries.Get(ctx, active.ID); err != nil {
 		t.Errorf("active entry should still exist: %v", err)
 	}
@@ -570,16 +516,16 @@ func TestEntryWithConfidence(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("conftest")
+	scope := model.NewScope("sconftest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
-	now := time.Now().Truncate(time.Microsecond)
+	now := time.Now().Truncate(time.Second) // SQLite has lower time precision
 	entry := model.NewEntry("verified knowledge", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("conftest").WithConfidence(model.Confidence{
+	}).WithScope("sconftest").WithConfidence(model.Confidence{
 		Level:      model.ConfidenceVerified,
 		VerifiedAt: &now,
 		VerifiedBy: "admin",
@@ -609,14 +555,14 @@ func TestEntryListByConfidence(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("conffilter")
+	scope := model.NewScope("sconffilter")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	verified := model.NewEntry("verified", src).WithScope("conffilter").WithConfidence(model.Confidence{Level: model.ConfidenceVerified})
-	inferred := model.NewEntry("inferred", src).WithScope("conffilter")
+	verified := model.NewEntry("verified", src).WithScope("sconffilter").WithConfidence(model.Confidence{Level: model.ConfidenceVerified})
+	inferred := model.NewEntry("inferred", src).WithScope("sconffilter")
 
 	for _, e := range []*model.Entry{&verified, &inferred} {
 		if err := entries.Create(ctx, e); err != nil {
@@ -625,7 +571,7 @@ func TestEntryListByConfidence(t *testing.T) {
 	}
 
 	got, err := entries.List(ctx, storage.EntryFilter{
-		Scope:           "conffilter",
+		Scope:           "sconffilter",
 		ConfidenceLevel: model.ConfidenceVerified,
 	})
 	if err != nil {
@@ -645,22 +591,20 @@ func TestSearchSimilar(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("vectest")
+	scope := model.NewScope("svectest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
 
-	// Create entries with known embeddings
-	e1 := model.NewEntry("similar to query", src).WithScope("vectest").
+	e1 := model.NewEntry("similar to query", src).WithScope("svectest").
 		WithEmbedding([]float32{1.0, 0.0, 0.0}, "test-model")
-	e2 := model.NewEntry("somewhat similar", src).WithScope("vectest").
+	e2 := model.NewEntry("somewhat similar", src).WithScope("svectest").
 		WithEmbedding([]float32{0.7, 0.7, 0.0}, "test-model")
-	e3 := model.NewEntry("different", src).WithScope("vectest").
+	e3 := model.NewEntry("different", src).WithScope("svectest").
 		WithEmbedding([]float32{0.0, 0.0, 1.0}, "test-model")
-	// Entry without embedding should not appear
-	e4 := model.NewEntry("no embedding", src).WithScope("vectest")
+	e4 := model.NewEntry("no embedding", src).WithScope("svectest")
 
 	for _, e := range []*model.Entry{&e1, &e2, &e3, &e4} {
 		if err := entries.Create(ctx, e); err != nil {
@@ -668,8 +612,7 @@ func TestSearchSimilar(t *testing.T) {
 		}
 	}
 
-	// Search for entries similar to [1, 0, 0]
-	results, err := entries.SearchSimilar(ctx, []float32{1.0, 0.0, 0.0}, "vectest", storage.Cosine, 3)
+	results, err := entries.SearchSimilar(ctx, []float32{1.0, 0.0, 0.0}, "svectest", storage.Cosine, 3)
 	if err != nil {
 		t.Fatalf("SearchSimilar: %v", err)
 	}
@@ -678,12 +621,10 @@ func TestSearchSimilar(t *testing.T) {
 		t.Fatalf("SearchSimilar: got %d results, want 3", len(results))
 	}
 
-	// First result should be the most similar (exact match)
 	if results[0].Entry.Content != "similar to query" {
 		t.Errorf("first result = %q, want %q", results[0].Entry.Content, "similar to query")
 	}
 
-	// Distances should be in ascending order
 	for i := 1; i < len(results); i++ {
 		if results[i].Distance < results[i-1].Distance {
 			t.Errorf("results not sorted by distance: [%d]=%f < [%d]=%f",
@@ -697,7 +638,7 @@ func TestSearchSimilarScopeFilter(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	for _, p := range []string{"vecscopeA", "vecscopeB"} {
+	for _, p := range []string{"svecscopeA", "svecscopeB"} {
 		s := model.NewScope(p)
 		if err := scopes.Upsert(ctx, &s); err != nil {
 			t.Fatalf("Upsert scope(%s): %v", p, err)
@@ -707,8 +648,8 @@ func TestSearchSimilarScopeFilter(t *testing.T) {
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
 	emb := []float32{1.0, 0.0, 0.0}
 
-	eA := model.NewEntry("scope A", src).WithScope("vecscopeA").WithEmbedding(emb, "test-model")
-	eB := model.NewEntry("scope B", src).WithScope("vecscopeB").WithEmbedding(emb, "test-model")
+	eA := model.NewEntry("scope A", src).WithScope("svecscopeA").WithEmbedding(emb, "test-model")
+	eB := model.NewEntry("scope B", src).WithScope("svecscopeB").WithEmbedding(emb, "test-model")
 
 	for _, e := range []*model.Entry{&eA, &eB} {
 		if err := entries.Create(ctx, e); err != nil {
@@ -716,14 +657,14 @@ func TestSearchSimilarScopeFilter(t *testing.T) {
 		}
 	}
 
-	results, err := entries.SearchSimilar(ctx, emb, "vecscopeA", storage.Cosine, 10)
+	results, err := entries.SearchSimilar(ctx, emb, "svecscopeA", storage.Cosine, 10)
 	if err != nil {
 		t.Fatalf("SearchSimilar: %v", err)
 	}
 
 	for _, r := range results {
-		if r.Entry.Scope != "vecscopeA" {
-			t.Errorf("result scope = %q, want %q", r.Entry.Scope, "vecscopeA")
+		if r.Entry.Scope != "svecscopeA" {
+			t.Errorf("result scope = %q, want %q", r.Entry.Scope, "svecscopeA")
 		}
 	}
 }
@@ -738,14 +679,14 @@ func TestEdgeCreateAndGet(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("edgetest")
+	scope := model.NewScope("sedgetest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("from", src).WithScope("edgetest")
-	e2 := model.NewEntry("to", src).WithScope("edgetest")
+	e1 := model.NewEntry("from", src).WithScope("sedgetest")
+	e2 := model.NewEntry("to", src).WithScope("sedgetest")
 	for _, e := range []*model.Entry{&e1, &e2} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
@@ -797,14 +738,14 @@ func TestEdgeDelete(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("edgedel")
+	scope := model.NewScope("sedgedel")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("a", src).WithScope("edgedel")
-	e2 := model.NewEntry("b", src).WithScope("edgedel")
+	e1 := model.NewEntry("a", src).WithScope("sedgedel")
+	e2 := model.NewEntry("b", src).WithScope("sedgedel")
 	for _, e := range []*model.Entry{&e1, &e2} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
@@ -842,22 +783,21 @@ func TestEdgesFromAndTo(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("adjtest")
+	scope := model.NewScope("sadjtest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("center", src).WithScope("adjtest")
-	e2 := model.NewEntry("dep1", src).WithScope("adjtest")
-	e3 := model.NewEntry("dep2", src).WithScope("adjtest")
+	e1 := model.NewEntry("center", src).WithScope("sadjtest")
+	e2 := model.NewEntry("dep1", src).WithScope("sadjtest")
+	e3 := model.NewEntry("dep2", src).WithScope("sadjtest")
 	for _, e := range []*model.Entry{&e1, &e2, &e3} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
 		}
 	}
 
-	// e1 -> e2 (depends-on), e1 -> e3 (related-to), e3 -> e1 (elaborates)
 	edges1 := model.NewEdge(e1.ID, e2.ID, model.EdgeDependsOn)
 	edges2 := model.NewEdge(e1.ID, e3.ID, model.EdgeRelatedTo)
 	edges3 := model.NewEdge(e3.ID, e1.ID, model.EdgeElaborates)
@@ -867,7 +807,6 @@ func TestEdgesFromAndTo(t *testing.T) {
 		}
 	}
 
-	// EdgesFrom(e1) should return 2 edges
 	from, err := edges.EdgesFrom(ctx, e1.ID, storage.EdgeFilter{})
 	if err != nil {
 		t.Fatalf("EdgesFrom: %v", err)
@@ -876,7 +815,6 @@ func TestEdgesFromAndTo(t *testing.T) {
 		t.Errorf("EdgesFrom(e1) = %d, want 2", len(from))
 	}
 
-	// EdgesTo(e1) should return 1 edge
 	to, err := edges.EdgesTo(ctx, e1.ID, storage.EdgeFilter{})
 	if err != nil {
 		t.Fatalf("EdgesTo: %v", err)
@@ -885,7 +823,6 @@ func TestEdgesFromAndTo(t *testing.T) {
 		t.Errorf("EdgesTo(e1) = %d, want 1", len(to))
 	}
 
-	// Filter by type
 	filtered, err := edges.EdgesFrom(ctx, e1.ID, storage.EdgeFilter{Type: model.EdgeDependsOn})
 	if err != nil {
 		t.Fatalf("EdgesFrom(type): %v", err)
@@ -901,14 +838,14 @@ func TestEdgesBetween(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("betweentest")
+	scope := model.NewScope("sbetweentest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("a", src).WithScope("betweentest")
-	e2 := model.NewEntry("b", src).WithScope("betweentest")
+	e1 := model.NewEntry("a", src).WithScope("sbetweentest")
+	e2 := model.NewEntry("b", src).WithScope("sbetweentest")
 	for _, e := range []*model.Entry{&e1, &e2} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
@@ -917,14 +854,13 @@ func TestEdgesBetween(t *testing.T) {
 
 	edge1 := model.NewEdge(e1.ID, e2.ID, model.EdgeDependsOn)
 	edge2 := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo)
-	edge3 := model.NewEdge(e2.ID, e1.ID, model.EdgeElaborates) // opposite direction
+	edge3 := model.NewEdge(e2.ID, e1.ID, model.EdgeElaborates)
 	for _, e := range []*model.Edge{&edge1, &edge2, &edge3} {
 		if err := edges.Create(ctx, e); err != nil {
 			t.Fatalf("Create edge: %v", err)
 		}
 	}
 
-	// e1 -> e2 should return 2 edges
 	between, err := edges.EdgesBetween(ctx, e1.ID, e2.ID)
 	if err != nil {
 		t.Fatalf("EdgesBetween: %v", err)
@@ -940,14 +876,14 @@ func TestEdgeCustomType(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("customedge")
+	scope := model.NewScope("scustomedge")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("a", src).WithScope("customedge")
-	e2 := model.NewEntry("b", src).WithScope("customedge")
+	e1 := model.NewEntry("a", src).WithScope("scustomedge")
+	e2 := model.NewEntry("b", src).WithScope("scustomedge")
 	for _, e := range []*model.Entry{&e1, &e2} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
@@ -974,26 +910,24 @@ func TestFindConflicts(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("conflicttest")
+	scope := model.NewScope("sconflicttest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("claim A", src).WithScope("conflicttest")
-	e2 := model.NewEntry("contradicts A", src).WithScope("conflicttest")
-	e3 := model.NewEntry("also contradicts A", src).WithScope("conflicttest")
-	e4 := model.NewEntry("unrelated", src).WithScope("conflicttest")
+	e1 := model.NewEntry("claim A", src).WithScope("sconflicttest")
+	e2 := model.NewEntry("contradicts A", src).WithScope("sconflicttest")
+	e3 := model.NewEntry("also contradicts A", src).WithScope("sconflicttest")
+	e4 := model.NewEntry("unrelated", src).WithScope("sconflicttest")
 	for _, e := range []*model.Entry{&e1, &e2, &e3, &e4} {
 		if err := entries.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
 		}
 	}
 
-	// e1 contradicts e2, e3 contradicts e1
 	c1 := model.NewEdge(e1.ID, e2.ID, model.EdgeContradicts)
 	c2 := model.NewEdge(e3.ID, e1.ID, model.EdgeContradicts)
-	// e1 -> e4 is related, not contradicts
 	r1 := model.NewEdge(e1.ID, e4.ID, model.EdgeRelatedTo)
 	for _, e := range []*model.Edge{&c1, &c2, &r1} {
 		if err := edges.Create(ctx, e); err != nil {
@@ -1025,14 +959,14 @@ func TestEdgeCascadeDeleteOnEntry(t *testing.T) {
 	entryStore := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("cascadetest")
+	scope := model.NewScope("scascadetest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("will be deleted", src).WithScope("cascadetest")
-	e2 := model.NewEntry("stays", src).WithScope("cascadetest")
+	e1 := model.NewEntry("will be deleted", src).WithScope("scascadetest")
+	e2 := model.NewEntry("stays", src).WithScope("scascadetest")
 	for _, e := range []*model.Entry{&e1, &e2} {
 		if err := entryStore.Create(ctx, e); err != nil {
 			t.Fatalf("Create entry: %v", err)
@@ -1044,7 +978,6 @@ func TestEdgeCascadeDeleteOnEntry(t *testing.T) {
 		t.Fatalf("Create edge: %v", err)
 	}
 
-	// Delete entry e1 - edge should be cascade-deleted
 	if err := entryStore.Delete(ctx, e1.ID); err != nil {
 		t.Fatalf("Delete entry: %v", err)
 	}
@@ -1064,7 +997,7 @@ func TestEntryVersionOnCreate(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("versioncreate")
+	scope := model.NewScope("sversioncreate")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -1072,7 +1005,7 @@ func TestEntryVersionOnCreate(t *testing.T) {
 	entry := model.NewEntry("versioned content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("versioncreate")
+	}).WithScope("sversioncreate")
 
 	if entry.Version != 1 {
 		t.Fatalf("NewEntry Version = %d, want 1", entry.Version)
@@ -1096,7 +1029,7 @@ func TestEntryVersionIncrementOnUpdate(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("versioninc")
+	scope := model.NewScope("sversioninc")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -1104,13 +1037,12 @@ func TestEntryVersionIncrementOnUpdate(t *testing.T) {
 	entry := model.NewEntry("v1 content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("versioninc")
+	}).WithScope("sversioninc")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// First update: version 1 -> 2
 	entry.Content = "v2 content"
 	entry.Touch()
 	if err := entries.Update(ctx, &entry); err != nil {
@@ -1120,7 +1052,6 @@ func TestEntryVersionIncrementOnUpdate(t *testing.T) {
 		t.Errorf("after first update, Version = %d, want 2", entry.Version)
 	}
 
-	// Second update: version 2 -> 3
 	entry.Content = "v3 content"
 	entry.Touch()
 	if err := entries.Update(ctx, &entry); err != nil {
@@ -1130,7 +1061,6 @@ func TestEntryVersionIncrementOnUpdate(t *testing.T) {
 		t.Errorf("after second update, Version = %d, want 3", entry.Version)
 	}
 
-	// Verify in DB
 	got, err := entries.Get(ctx, entry.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -1148,7 +1078,7 @@ func TestEntryConcurrentModificationDetection(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("concmod")
+	scope := model.NewScope("sconcmod")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -1156,13 +1086,12 @@ func TestEntryConcurrentModificationDetection(t *testing.T) {
 	entry := model.NewEntry("original", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("concmod")
+	}).WithScope("sconcmod")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Simulate two agents reading the same entry
 	agent1, err := entries.Get(ctx, entry.ID)
 	if err != nil {
 		t.Fatalf("Get(agent1): %v", err)
@@ -1172,14 +1101,12 @@ func TestEntryConcurrentModificationDetection(t *testing.T) {
 		t.Fatalf("Get(agent2): %v", err)
 	}
 
-	// Agent 1 updates successfully
 	agent1.Content = "agent1 update"
 	agent1.Touch()
 	if err := entries.Update(ctx, agent1); err != nil {
 		t.Fatalf("Update(agent1): %v", err)
 	}
 
-	// Agent 2 tries to update with stale version -- should fail
 	agent2.Content = "agent2 update"
 	agent2.Touch()
 	err = entries.Update(ctx, agent2)
@@ -1199,7 +1126,6 @@ func TestEntryConcurrentModificationDetection(t *testing.T) {
 		t.Errorf("ConcurrentModificationError.ExpectedVersion = %d, want 1", cme.ExpectedVersion)
 	}
 
-	// Verify the DB has agent1's update
 	got, err := entries.Get(ctx, entry.ID)
 	if err != nil {
 		t.Fatalf("Get after conflict: %v", err)
@@ -1217,7 +1143,7 @@ func TestEntryContentHash(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("hashtest")
+	scope := model.NewScope("shashtest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -1225,7 +1151,7 @@ func TestEntryContentHash(t *testing.T) {
 	entry := model.NewEntry("hashable content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("hashtest")
+	}).WithScope("shashtest")
 
 	expectedHash := model.ComputeContentHash("hashable content")
 	if entry.ContentHash != expectedHash {
@@ -1250,7 +1176,7 @@ func TestEntryDuplicateContentSameScopeRejected(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("duptest")
+	scope := model.NewScope("sduptest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
@@ -1258,17 +1184,16 @@ func TestEntryDuplicateContentSameScopeRejected(t *testing.T) {
 	entry1 := model.NewEntry("duplicate content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test1",
-	}).WithScope("duptest")
+	}).WithScope("sduptest")
 
 	if err := entries.Create(ctx, &entry1); err != nil {
 		t.Fatalf("Create(1): %v", err)
 	}
 
-	// Second entry with same content and scope should fail
 	entry2 := model.NewEntry("duplicate content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test2",
-	}).WithScope("duptest")
+	}).WithScope("sduptest")
 
 	err := entries.Create(ctx, &entry2)
 	if err == nil {
@@ -1281,7 +1206,7 @@ func TestEntryDuplicateContentDifferentScopeAllowed(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	for _, p := range []string{"dupscope1", "dupscope2"} {
+	for _, p := range []string{"sdupscope1", "sdupscope2"} {
 		s := model.NewScope(p)
 		if err := scopes.Upsert(ctx, &s); err != nil {
 			t.Fatalf("Upsert scope(%s): %v", p, err)
@@ -1291,12 +1216,12 @@ func TestEntryDuplicateContentDifferentScopeAllowed(t *testing.T) {
 	entry1 := model.NewEntry("same content different scope", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("dupscope1")
+	}).WithScope("sdupscope1")
 
 	entry2 := model.NewEntry("same content different scope", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("dupscope2")
+	}).WithScope("sdupscope2")
 
 	if err := entries.Create(ctx, &entry1); err != nil {
 		t.Fatalf("Create(1): %v", err)
@@ -1311,16 +1236,15 @@ func TestEntryCreateOrUpdate(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("upserttest")
+	scope := model.NewScope("supserttest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
-	// First call: should insert
 	entry1 := model.NewEntry("upsert content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "first-agent",
-	}).WithScope("upserttest")
+	}).WithScope("supserttest")
 
 	result1, err := entries.CreateOrUpdate(ctx, &entry1)
 	if err != nil {
@@ -1331,26 +1255,22 @@ func TestEntryCreateOrUpdate(t *testing.T) {
 	}
 	originalID := result1.ID
 
-	// Second call with same content: should update (not create duplicate)
 	entry2 := model.NewEntry("upsert content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "second-agent",
-	}).WithScope("upserttest")
+	}).WithScope("supserttest")
 
 	result2, err := entries.CreateOrUpdate(ctx, &entry2)
 	if err != nil {
 		t.Fatalf("CreateOrUpdate(2): %v", err)
 	}
 
-	// Should have the original ID (not a new one)
 	if result2.ID != originalID {
 		t.Errorf("upsert should preserve original ID: got %v, want %v", result2.ID, originalID)
 	}
-	// Version should be incremented
 	if result2.Version != 2 {
 		t.Errorf("upsert Version = %d, want 2", result2.Version)
 	}
-	// Source should be updated
 	if result2.Source.Reference != "second-agent" {
 		t.Errorf("Source.Reference = %q, want %q", result2.Source.Reference, "second-agent")
 	}
@@ -1366,16 +1286,15 @@ func TestWithTxCommit(t *testing.T) {
 	edges := testDB.Edges()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("txcommit")
+	scope := model.NewScope("stxcommit")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("tx entry 1", src).WithScope("txcommit")
-	e2 := model.NewEntry("tx entry 2", src).WithScope("txcommit")
+	e1 := model.NewEntry("tx entry 1", src).WithScope("stxcommit")
+	e2 := model.NewEntry("tx entry 2", src).WithScope("stxcommit")
 
-	// Create entries + edge atomically
 	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
 		if err := entries.Create(txCtx, &e1); err != nil {
 			return err
@@ -1390,7 +1309,6 @@ func TestWithTxCommit(t *testing.T) {
 		t.Fatalf("WithTx: %v", err)
 	}
 
-	// All should be visible
 	got1, err := entries.Get(ctx, e1.ID)
 	if err != nil {
 		t.Fatalf("Get(e1): %v", err)
@@ -1421,15 +1339,14 @@ func TestWithTxRollback(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("txrollback")
+	scope := model.NewScope("stxrollback")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("should not persist", src).WithScope("txrollback")
+	e1 := model.NewEntry("should not persist", src).WithScope("stxrollback")
 
-	// Transaction that creates an entry then errors out
 	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
 		if err := entries.Create(txCtx, &e1); err != nil {
 			return err
@@ -1440,7 +1357,6 @@ func TestWithTxRollback(t *testing.T) {
 		t.Fatal("expected error from WithTx, got nil")
 	}
 
-	// Entry should NOT exist
 	_, err = entries.Get(ctx, e1.ID)
 	if err != storage.ErrNotFound {
 		t.Errorf("expected ErrNotFound after rollback, got %v", err)
@@ -1452,15 +1368,14 @@ func TestWithTxNested(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("txnested")
+	scope := model.NewScope("stxnested")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("nested tx entry", src).WithScope("txnested")
+	e1 := model.NewEntry("nested tx entry", src).WithScope("stxnested")
 
-	// Nested WithTx should reuse the outer transaction
 	err := testDB.WithTx(ctx, func(outerCtx context.Context) error {
 		return testDB.WithTx(outerCtx, func(innerCtx context.Context) error {
 			return entries.Create(innerCtx, &e1)
@@ -1488,18 +1403,16 @@ func TestEntryScopeAutoCreation(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	// Do NOT manually create the scope hierarchy. Entry.Create should handle it.
 	entry := model.NewEntry("auto scope content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("autoscope.sub.deep")
+	}).WithScope("sautoscope.sub.deep")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Verify the full scope hierarchy was created
-	for _, path := range []string{"autoscope", "autoscope.sub", "autoscope.sub.deep"} {
+	for _, path := range []string{"sautoscope", "sautoscope.sub", "sautoscope.sub.deep"} {
 		_, err := scopes.Get(ctx, path)
 		if err != nil {
 			t.Errorf("scope %q should exist after auto-creation, got %v", path, err)
@@ -1512,25 +1425,22 @@ func TestEntryScopeAutoCreationIdempotent(t *testing.T) {
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	// Pre-create a parent scope with metadata
-	parent := model.NewScope("prexisting")
+	parent := model.NewScope("sprexisting")
 	parent.Meta = model.Metadata{"owner": "admin"}
 	if err := scopes.Upsert(ctx, &parent); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 
-	// Create entry under prexisting.child -- should NOT clobber parent's metadata
 	entry := model.NewEntry("child content", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("prexisting.child")
+	}).WithScope("sprexisting.child")
 
 	if err := entries.Create(ctx, &entry); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Verify parent metadata is preserved (EnsureHierarchy uses ON CONFLICT DO NOTHING)
-	got, err := scopes.Get(ctx, "prexisting")
+	got, err := scopes.Get(ctx, "sprexisting")
 	if err != nil {
 		t.Fatalf("Get parent scope: %v", err)
 	}
@@ -1540,70 +1450,14 @@ func TestEntryScopeAutoCreationIdempotent(t *testing.T) {
 }
 
 // =============================================================================
-// Edge Transaction Atomicity Tests
-// =============================================================================
-
-func TestEdgeCreateAtomicWithTx(t *testing.T) {
-	ctx := context.Background()
-	entries := testDB.Entries()
-	edges := testDB.Edges()
-	scopes := testDB.Scopes()
-
-	scope := model.NewScope("edgetx")
-	if err := scopes.Upsert(ctx, &scope); err != nil {
-		t.Fatalf("Upsert scope: %v", err)
-	}
-
-	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	e1 := model.NewEntry("edge tx from", src).WithScope("edgetx")
-	e2 := model.NewEntry("edge tx to", src).WithScope("edgetx")
-	for _, e := range []*model.Entry{&e1, &e2} {
-		if err := entries.Create(ctx, e); err != nil {
-			t.Fatalf("Create entry: %v", err)
-		}
-	}
-
-	// Create two edges atomically
-	edge1 := model.NewEdge(e1.ID, e2.ID, model.EdgeDependsOn)
-	edge2 := model.NewEdge(e2.ID, e1.ID, model.EdgeRelatedTo)
-
-	err := testDB.WithTx(ctx, func(txCtx context.Context) error {
-		if err := edges.Create(txCtx, &edge1); err != nil {
-			return err
-		}
-		return edges.Create(txCtx, &edge2)
-	})
-	if err != nil {
-		t.Fatalf("WithTx: %v", err)
-	}
-
-	// Both edges should exist
-	got1, err := edges.Get(ctx, edge1.ID)
-	if err != nil {
-		t.Fatalf("Get(edge1): %v", err)
-	}
-	if got1.Type != model.EdgeDependsOn {
-		t.Errorf("edge1 Type = %q, want %q", got1.Type, model.EdgeDependsOn)
-	}
-
-	got2, err := edges.Get(ctx, edge2.ID)
-	if err != nil {
-		t.Fatalf("Get(edge2): %v", err)
-	}
-	if got2.Type != model.EdgeRelatedTo {
-		t.Errorf("edge2 Type = %q, want %q", got2.Type, model.EdgeRelatedTo)
-	}
-}
-
-// =============================================================================
 // Interface Compliance Tests
 // =============================================================================
 
 func TestInterfaceCompliance(t *testing.T) {
-	// Compile-time checks that implementations satisfy interfaces.
-	var _ storage.EntryRepo = (*postgres.EntryStore)(nil)
-	var _ storage.EdgeRepo = (*postgres.EdgeStore)(nil)
-	var _ storage.ScopeRepo = (*postgres.ScopeStore)(nil)
+	var _ storage.EntryRepo = (*sqlite.EntryStore)(nil)
+	var _ storage.EdgeRepo = (*sqlite.EdgeStore)(nil)
+	var _ storage.ScopeRepo = (*sqlite.ScopeStore)(nil)
+	var _ storage.Backend = (*sqlite.DB)(nil)
 }
 
 // =============================================================================

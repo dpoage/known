@@ -131,8 +131,14 @@ func TestLoadAppConfig(t *testing.T) {
 			},
 		},
 		{
-			name:    "no dsn anywhere errors",
-			wantErr: "database connection string required",
+			name: "no dsn anywhere defaults to sqlite",
+			check: func(t *testing.T, cfg *AppConfig) {
+				home, _ := os.UserHomeDir()
+				want := filepath.Join(home, ".known", "known.db")
+				if cfg.DSN != want {
+					t.Errorf("DSN = %q, want %q", cfg.DSN, want)
+				}
+			},
 		},
 
 		// --- ScopeRoot + DefaultScope ---

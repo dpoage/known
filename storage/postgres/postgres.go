@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/dpoage/known/storage"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -13,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Compile-time check that DB satisfies storage.Backend.
+var _ storage.Backend = (*DB)(nil)
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -51,6 +55,7 @@ type Config struct {
 // DB wraps a pgxpool and provides access to repository implementations.
 type DB struct {
 	Pool *pgxpool.Pool
+	dsn  string
 }
 
 // New creates a new DB with a connection pool. The caller must call Close when finished.
@@ -74,12 +79,13 @@ func New(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	return &DB{Pool: pool}, nil
+	return &DB{Pool: pool, dsn: cfg.DSN}, nil
 }
 
 // Close releases all pool resources.
-func (db *DB) Close() {
+func (db *DB) Close() error {
 	db.Pool.Close()
+	return nil
 }
 
 // WithTx runs fn within a database transaction. The transaction is stored in
@@ -117,13 +123,13 @@ func (db *DB) WithTx(ctx context.Context, fn func(ctx context.Context) error) er
 }
 
 // Migrate runs all pending database migrations.
-func (db *DB) Migrate(dsn string) error {
+func (db *DB) Migrate() error {
 	source, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("create migration source: %w", err)
 	}
 
-	m, err := migrate.NewWithSourceInstance("iofs", source, dsn)
+	m, err := migrate.NewWithSourceInstance("iofs", source, db.dsn)
 	if err != nil {
 		return fmt.Errorf("create migrator: %w", err)
 	}
@@ -137,16 +143,16 @@ func (db *DB) Migrate(dsn string) error {
 }
 
 // Entries returns the EntryRepo implementation backed by this DB.
-func (db *DB) Entries() *EntryStore {
+func (db *DB) Entries() storage.EntryRepo {
 	return &EntryStore{pool: db.Pool}
 }
 
 // Edges returns the EdgeRepo implementation backed by this DB.
-func (db *DB) Edges() *EdgeStore {
+func (db *DB) Edges() storage.EdgeRepo {
 	return &EdgeStore{pool: db.Pool}
 }
 
 // Scopes returns the ScopeRepo implementation backed by this DB.
-func (db *DB) Scopes() *ScopeStore {
+func (db *DB) Scopes() storage.ScopeRepo {
 	return &ScopeStore{pool: db.Pool}
 }

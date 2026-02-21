@@ -11,12 +11,11 @@ import (
 	"github.com/dpoage/known/embed"
 	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
-	"github.com/dpoage/known/storage/postgres"
 )
 
 // App holds the shared dependencies for all CLI commands.
 type App struct {
-	DB       *postgres.DB
+	DB       storage.Backend
 	Entries  storage.EntryRepo
 	Edges    storage.EdgeRepo
 	Scopes   storage.ScopeRepo
@@ -42,7 +41,7 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 
 	fs := flag.NewFlagSet("known", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // suppress default error output
-	fs.StringVar(&gf.dsn, "dsn", "", "PostgreSQL connection string (env: KNOWN_DSN)")
+	fs.StringVar(&gf.dsn, "dsn", "", "database connection string (default: ~/.known/known.db)")
 	fs.BoolVar(&gf.json, "json", false, "output as JSON")
 	fs.BoolVar(&gf.quiet, "quiet", false, "suppress non-essential output")
 
@@ -64,9 +63,14 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	db, err := postgres.New(ctx, postgres.Config{DSN: cfg.DSN})
+	db, err := newBackend(ctx, cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+
+	if err := db.Migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
 	app := &App{
@@ -82,7 +86,7 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 		embedCfg := embed.LoadConfig()
 		embedder, err := embed.NewEmbedder(embedCfg)
 		if err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("create embedder: %w", err)
 		}
 		app.Embedder = embedder
@@ -100,7 +104,7 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 // Close releases all resources held by the App.
 func (a *App) Close() {
 	if a.DB != nil {
-		a.DB.Close()
+		_ = a.DB.Close()
 	}
 }
 
@@ -112,7 +116,7 @@ Usage:
   known [global flags] <command> [command flags] [arguments]
 
 Global Flags:
-  --dsn <string>    PostgreSQL connection string (env: KNOWN_DSN)
+  --dsn <string>    Database connection string (default: ~/.known/known.db)
   --json            Output as JSON
   --quiet           Suppress non-essential output
 

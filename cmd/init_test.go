@@ -18,6 +18,10 @@ func TestRunInit(t *testing.T) {
 		wantDSN     string // expected DSN in written file
 	}
 
+	// Compute the expected default SQLite DSN.
+	home, _ := os.UserHomeDir()
+	defaultDSN := filepath.Join(home, ".known", "known.db")
+
 	tests := []testCase{
 		{
 			name:    "dsn from flag",
@@ -37,9 +41,9 @@ func TestRunInit(t *testing.T) {
 			wantDSN: "postgres://flag",
 		},
 		{
-			name:    "no dsn errors",
+			name:    "no dsn defaults to sqlite",
 			args:    []string{},
-			wantErr: "DSN required",
+			wantDSN: defaultDSN,
 		},
 		{
 			name:        "exists without force",

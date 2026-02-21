@@ -6,6 +6,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/knights-analytics/hugot v0.6.2
+	github.com/ncruces/go-sqlite3 v0.17.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/spf13/viper v1.21.0
@@ -66,6 +67,7 @@ require (
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.0 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
@@ -86,6 +88,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/sugarme/regexpset v0.0.0-20200920021344-4d4ec8eaf93c // indirect
 	github.com/sugarme/tokenizer v0.3.0 // indirect
+	github.com/tetratelabs/wazero v1.7.3 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/viant/afs v1.30.0 // indirect

@@ -137,6 +137,17 @@ type EdgeRepo interface {
 	FindConflicts(ctx context.Context, entryID model.ID) ([]model.Entry, error)
 }
 
+// Backend is the top-level interface for a storage backend (postgres, sqlite, etc.).
+// It provides access to the individual repositories and manages connections/transactions.
+type Backend interface {
+	Entries() EntryRepo
+	Edges() EdgeRepo
+	Scopes() ScopeRepo
+	WithTx(ctx context.Context, fn func(context.Context) error) error
+	Close() error
+	Migrate() error
+}
+
 // ScopeRepo defines persistence operations for scope metadata.
 type ScopeRepo interface {
 	// Upsert creates or updates a scope. The path is the natural key.

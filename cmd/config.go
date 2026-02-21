@@ -69,7 +69,15 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	}
 
 	if cfg.DSN == "" {
-		return nil, fmt.Errorf("database connection string required: set --dsn flag, KNOWN_DSN env var, dsn in .known.yaml, or dsn in ~/.known/config.yaml")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("database connection string required and cannot determine home directory: %w", err)
+		}
+		knownDir := filepath.Join(home, ".known")
+		if err := os.MkdirAll(knownDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create %s: %w", knownDir, err)
+		}
+		cfg.DSN = filepath.Join(knownDir, "known.db")
 	}
 
 	// 4. ScopeRoot: project dir > global scope_root > (absent).

@@ -15,20 +15,24 @@ import (
 // Usage: known init [--dsn <string>] [--force]
 func runInit(_ /* ctx */ interface{}, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	dsn := fs.String("dsn", "", "PostgreSQL connection string")
+	dsn := fs.String("dsn", "", "database connection string (default: ~/.known/known.db)")
 	force := fs.Bool("force", false, "overwrite existing .known.yaml")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	// DSN from: flag > env > error.
+	// DSN from: flag > env > default SQLite path.
 	resolvedDSN := *dsn
 	if resolvedDSN == "" {
 		resolvedDSN = os.Getenv("KNOWN_DSN")
 	}
 	if resolvedDSN == "" {
-		return fmt.Errorf("DSN required: use --dsn flag or set KNOWN_DSN environment variable")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		resolvedDSN = filepath.Join(home, ".known", "known.db")
 	}
 
 	cwd, err := os.Getwd()
