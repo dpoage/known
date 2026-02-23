@@ -102,9 +102,10 @@ After the directory walk, store project-wide facts:
 3. **Conventions** — naming patterns, error handling approach, test patterns,
    anything a new contributor would need to know.
 
-4. **Key relationships** — link entries that elaborate on each other:
+4. **Key relationships** — use `--link` on `add` to create edges inline, or link
+   after the fact with `known link`. Prefer inline linking when you have the target ID:
    ```bash
-   known link <detail-id> <overview-id> --type elaborates
+   known add '<detail>' --scope <prefix>.<module> --link elaborates:<overview-id> ...
    ```
 
 ### Quality Standards

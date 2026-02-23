@@ -106,7 +106,8 @@ These are available directly (not as plugin commands):
 | `known show <id>` | Full entry details with relationships |
 | `known update <id> --content '...'` | Modify an entry |
 | `known related <id>` | Find connected entries via graph edges |
-| `known link <from> <to> --type <type>` | Create a relationship |
+| `known link <from> <to> --type <type>` | Create a relationship (standalone) |
+| `known add '...' --link type:id` | Create entry + edge atomically |
 | `known conflicts` | Detect contradictory entries |
 | `known stats` | Knowledge graph statistics |
 

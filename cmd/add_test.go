@@ -18,8 +18,10 @@ import (
 
 // stubEntryRepo captures the entry passed to CreateOrUpdate so tests can
 // inspect it. Only the methods used by runAdd are implemented.
+// Pre-seed entries in the `existing` map for Get lookups (used by --link).
 type stubEntryRepo struct {
-	created *model.Entry
+	created  *model.Entry
+	existing map[model.ID]*model.Entry
 }
 
 func (s *stubEntryRepo) CreateOrUpdate(_ context.Context, entry *model.Entry) (*model.Entry, error) {
@@ -27,10 +29,17 @@ func (s *stubEntryRepo) CreateOrUpdate(_ context.Context, entry *model.Entry) (*
 	s.created = &clone
 	return &clone, nil
 }
-func (s *stubEntryRepo) Create(context.Context, *model.Entry) error                    { return nil }
-func (s *stubEntryRepo) Get(context.Context, model.ID) (*model.Entry, error)           { return nil, storage.ErrNotFound }
-func (s *stubEntryRepo) Update(context.Context, *model.Entry) error                    { return nil }
-func (s *stubEntryRepo) Delete(context.Context, model.ID) error                        { return nil }
+func (s *stubEntryRepo) Create(context.Context, *model.Entry) error { return nil }
+func (s *stubEntryRepo) Get(_ context.Context, id model.ID) (*model.Entry, error) {
+	if s.existing != nil {
+		if e, ok := s.existing[id]; ok {
+			return e, nil
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+func (s *stubEntryRepo) Update(context.Context, *model.Entry) error { return nil }
+func (s *stubEntryRepo) Delete(context.Context, model.ID) error     { return nil }
 func (s *stubEntryRepo) List(context.Context, storage.EntryFilter) ([]model.Entry, error) {
 	return nil, nil
 }
@@ -38,6 +47,32 @@ func (s *stubEntryRepo) SearchSimilar(context.Context, []float32, string, storag
 	return nil, nil
 }
 func (s *stubEntryRepo) DeleteExpired(context.Context) (int64, error) { return 0, nil }
+
+// stubEdgeRepo captures created edges for inspection.
+type stubEdgeRepo struct {
+	created []model.Edge
+}
+
+func (s *stubEdgeRepo) Create(_ context.Context, edge *model.Edge) error {
+	s.created = append(s.created, *edge)
+	return nil
+}
+func (s *stubEdgeRepo) Get(context.Context, model.ID) (*model.Edge, error) {
+	return nil, storage.ErrNotFound
+}
+func (s *stubEdgeRepo) Delete(context.Context, model.ID) error { return nil }
+func (s *stubEdgeRepo) EdgesFrom(context.Context, model.ID, storage.EdgeFilter) ([]model.Edge, error) {
+	return nil, nil
+}
+func (s *stubEdgeRepo) EdgesTo(context.Context, model.ID, storage.EdgeFilter) ([]model.Edge, error) {
+	return nil, nil
+}
+func (s *stubEdgeRepo) EdgesBetween(context.Context, model.ID, model.ID) ([]model.Edge, error) {
+	return nil, nil
+}
+func (s *stubEdgeRepo) FindConflicts(context.Context, model.ID) ([]model.Entry, error) {
+	return nil, nil
+}
 
 // stubEmbedder returns a fixed-dimension zero vector.
 type stubEmbedder struct{ dims int }
@@ -209,5 +244,119 @@ func TestRunAdd_MissingContent(t *testing.T) {
 	}
 }
 
+func TestRunAdd_LinkCreatesEdge(t *testing.T) {
+	// Pre-seed an existing entry that the link will target.
+	targetID := model.NewID()
+	targetEntry := model.NewEntry("target content", model.Source{Type: model.SourceManual, Reference: "test"})
+	targetEntry.ID = targetID
+	targetEntry.Scope = "root"
+
+	repo := &stubEntryRepo{
+		existing: map[model.ID]*model.Entry{targetID: &targetEntry},
+	}
+	edgeRepo := &stubEdgeRepo{}
+	app := newTestApp(repo)
+	app.Edges = edgeRepo
+
+	err := runAdd(context.Background(), app, []string{
+		"--link", "elaborates:" + targetID.String(),
+		"detail about the target",
+	})
+	if err != nil {
+		t.Fatalf("runAdd with --link: %v", err)
+	}
+
+	if repo.created == nil {
+		t.Fatal("expected an entry to be created")
+	}
+	if len(edgeRepo.created) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(edgeRepo.created))
+	}
+
+	edge := edgeRepo.created[0]
+	if edge.FromID != repo.created.ID {
+		t.Errorf("edge from = %s, want %s (new entry)", edge.FromID, repo.created.ID)
+	}
+	if edge.ToID != targetID {
+		t.Errorf("edge to = %s, want %s (target)", edge.ToID, targetID)
+	}
+	if edge.Type != model.EdgeElaborates {
+		t.Errorf("edge type = %s, want elaborates", edge.Type)
+	}
+}
+
+func TestRunAdd_LinkMultiple(t *testing.T) {
+	id1, id2 := model.NewID(), model.NewID()
+	e1 := model.NewEntry("e1", model.Source{Type: model.SourceManual, Reference: "test"})
+	e1.ID = id1
+	e1.Scope = "root"
+	e2 := model.NewEntry("e2", model.Source{Type: model.SourceManual, Reference: "test"})
+	e2.ID = id2
+	e2.Scope = "root"
+
+	repo := &stubEntryRepo{
+		existing: map[model.ID]*model.Entry{id1: &e1, id2: &e2},
+	}
+	edgeRepo := &stubEdgeRepo{}
+	app := newTestApp(repo)
+	app.Edges = edgeRepo
+
+	err := runAdd(context.Background(), app, []string{
+		"--link", "elaborates:" + id1.String(),
+		"--link", "depends-on:" + id2.String(),
+		"entry with two links",
+	})
+	if err != nil {
+		t.Fatalf("runAdd with multiple --link: %v", err)
+	}
+
+	if len(edgeRepo.created) != 2 {
+		t.Fatalf("expected 2 edges, got %d", len(edgeRepo.created))
+	}
+	if edgeRepo.created[0].Type != model.EdgeElaborates {
+		t.Errorf("first edge type = %s, want elaborates", edgeRepo.created[0].Type)
+	}
+	if edgeRepo.created[1].Type != model.EdgeDependsOn {
+		t.Errorf("second edge type = %s, want depends-on", edgeRepo.created[1].Type)
+	}
+}
+
+func TestRunAdd_LinkInvalidFormat(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{
+		"--link", "no-colon-here",
+		"some content",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid link format")
+	}
+	if !strings.Contains(err.Error(), "invalid --link format") {
+		t.Errorf("error %q should mention invalid format", err.Error())
+	}
+}
+
+func TestRunAdd_LinkBadTarget(t *testing.T) {
+	// Target doesn't exist — should error.
+	repo := &stubEntryRepo{}
+	edgeRepo := &stubEdgeRepo{}
+	app := newTestApp(repo)
+	app.Edges = edgeRepo
+
+	fakeID := model.NewID()
+	err := runAdd(context.Background(), app, []string{
+		"--link", "elaborates:" + fakeID.String(),
+		"orphan link attempt",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent target")
+	}
+	if !strings.Contains(err.Error(), "target entry") {
+		t.Errorf("error %q should mention target entry", err.Error())
+	}
+}
+
 // Verify interface compliance of stubs at compile time.
 var _ storage.EntryRepo = (*stubEntryRepo)(nil)
+var _ storage.EdgeRepo = (*stubEdgeRepo)(nil)
