@@ -358,6 +358,11 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		args = append(args, filter.ScopePrefix, filter.ScopePrefix+".%")
 	}
 
+	if filter.SourceType != "" {
+		query += " AND source_type = ?"
+		args = append(args, string(filter.SourceType))
+	}
+
 	if filter.ConfidenceLevel != "" {
 		query += " AND confidence = ?"
 		args = append(args, string(filter.ConfidenceLevel))
