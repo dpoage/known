@@ -11,6 +11,9 @@ import (
 // Entries exceeding this limit should be broken into smaller pieces.
 const MaxContentLength = 4096
 
+// MaxTitleLength is the maximum allowed length (in bytes) for entry titles.
+const MaxTitleLength = 200
+
 // ComputeContentHash returns the SHA-256 hex digest of the given content string.
 func ComputeContentHash(content string) string {
 	h := sha256.Sum256([]byte(content))
@@ -20,6 +23,7 @@ func ComputeContentHash(content string) string {
 // Entry represents a single piece of knowledge in the graph.
 type Entry struct {
 	ID             ID         `json:"id"`
+	Title          string     `json:"title,omitempty"`
 	Content        string     `json:"content"`
 	ContentHash    string     `json:"content_hash,omitempty"` // SHA-256 hex digest of content
 	Embedding      []float32  `json:"embedding,omitempty"`
@@ -88,6 +92,9 @@ func (e Entry) Validate() error {
 	if e.ID.IsZero() {
 		return fmt.Errorf("entry ID is required")
 	}
+	if len(e.Title) > MaxTitleLength {
+		return fmt.Errorf("title exceeds maximum length (%d > %d)", len(e.Title), MaxTitleLength)
+	}
 	if e.Content == "" {
 		return fmt.Errorf("entry content is required")
 	}
@@ -129,6 +136,12 @@ func (e Entry) WithEmbedding(embedding []float32, model string) Entry {
 	e.Embedding = embedding
 	e.EmbeddingDim = len(embedding)
 	e.EmbeddingModel = model
+	return e
+}
+
+// WithTitle returns a copy of the entry with the title set.
+func (e Entry) WithTitle(title string) Entry {
+	e.Title = title
 	return e
 }
 

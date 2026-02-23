@@ -87,8 +87,14 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int) error
 		if i > 0 {
 			fmt.Fprintln(app.Printer.w)
 		}
-		meta := fmt.Sprintf("[%s] (%s, source: %s)",
-			e.Scope, e.Confidence.Level, e.Source.Reference)
+		var meta string
+		if e.Title != "" {
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s)",
+				e.Scope, e.Title, e.Confidence.Level, e.Source.Reference)
+		} else {
+			meta = fmt.Sprintf("[%s] (%s, source: %s)",
+				e.Scope, e.Confidence.Level, e.Source.Reference)
+		}
 		fmt.Fprintln(app.Printer.w, meta)
 		fmt.Fprintln(app.Printer.w, e.Content)
 	}

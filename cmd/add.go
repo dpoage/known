@@ -22,6 +22,7 @@ import (
 //	--meta           Metadata key=value pairs (repeatable)
 func runAdd(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	title := fs.String("title", "", "short label for the entry (2-5 words)")
 	scope := fs.String("scope", "", "scope path (default: auto from cwd)")
 	sourceType := fs.String("source-type", "manual", "source type (file, url, conversation, manual)")
 	sourceRef := fs.String("source-ref", "cli", "source reference")
@@ -59,6 +60,7 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	}
 
 	entry := model.NewEntry(content, source)
+	entry.Title = *title
 	entry.Scope = *scope
 	entry.Confidence = model.Confidence{
 		Level: model.ConfidenceLevel(*confidence),

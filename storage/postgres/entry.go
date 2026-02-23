@@ -40,7 +40,7 @@ func (s *EntryStore) withTx(ctx context.Context, fn func(ctx context.Context) er
 
 // entryColumns is the standard column list for entry queries.
 const entryColumns = `
-	id, content, content_hash, embedding, embedding_dim, embedding_model,
+	id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 	source_type, source_ref, source_meta,
 	confidence, verified_at, verified_by,
 	scope, ttl_seconds, expires_at,
@@ -97,20 +97,20 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 
 	_, err = s.conn(ctx).Exec(ctx, `
 		INSERT INTO entries (
-			id, content, content_hash, embedding, embedding_dim, embedding_model,
+			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
 			meta, version, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9,
-			$10, $11, $12,
-			$13, $14, $15,
-			$16, $17, $18, $19
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16,
+			$17, $18, $19, $20
 		)
 	`,
-		entry.ID.String(), entry.Content, entry.ContentHash,
+		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
@@ -180,19 +180,20 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 
 	row := s.conn(ctx).QueryRow(ctx, `
 		INSERT INTO entries (
-			id, content, content_hash, embedding, embedding_dim, embedding_model,
+			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
 			meta, version, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9,
-			$10, $11, $12,
-			$13, $14, $15,
-			$16, $17, $18, $19
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16,
+			$17, $18, $19, $20
 		)
 		ON CONFLICT (content_hash, scope) DO UPDATE SET
+			title = EXCLUDED.title,
 			content = EXCLUDED.content,
 			embedding = EXCLUDED.embedding,
 			embedding_dim = EXCLUDED.embedding_dim,
@@ -209,7 +210,7 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 			version = entries.version + 1,
 			updated_at = EXCLUDED.updated_at
 		RETURNING `+entryColumns,
-		entry.ID.String(), entry.Content, entry.ContentHash,
+		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
@@ -273,27 +274,28 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 	var newVersion int
 	err = s.conn(ctx).QueryRow(ctx, `
 		UPDATE entries SET
-			content = $2,
-			content_hash = $3,
-			embedding = $4,
-			embedding_dim = $5,
-			embedding_model = $6,
-			source_type = $7,
-			source_ref = $8,
-			source_meta = $9,
-			confidence = $10,
-			verified_at = $11,
-			verified_by = $12,
-			scope = $13,
-			ttl_seconds = $14,
-			expires_at = $15,
-			meta = $16,
-			version = $17 + 1,
-			updated_at = $18
-		WHERE id = $1 AND version = $17
+			title = $2,
+			content = $3,
+			content_hash = $4,
+			embedding = $5,
+			embedding_dim = $6,
+			embedding_model = $7,
+			source_type = $8,
+			source_ref = $9,
+			source_meta = $10,
+			confidence = $11,
+			verified_at = $12,
+			verified_by = $13,
+			scope = $14,
+			ttl_seconds = $15,
+			expires_at = $16,
+			meta = $17,
+			version = $18 + 1,
+			updated_at = $19
+		WHERE id = $1 AND version = $18
 		RETURNING version
 	`,
-		entry.ID.String(), entry.Content, entry.ContentHash,
+		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
@@ -435,7 +437,7 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 
 	sqlQuery := fmt.Sprintf(`
 		SELECT
-			id, content, content_hash, embedding, embedding_dim, embedding_model,
+			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
@@ -478,7 +480,7 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		)
 
 		if err := rows.Scan(
-			&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
+			&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 			&srcType, &srcRef, &srcMeta,
 			&conf, &verAt, &verBy,
 			&entry.Scope, &ttlSecs, &entry.ExpiresAt,
@@ -557,7 +559,7 @@ func scanEntryV2(row pgx.Row) (*model.Entry, error) {
 	)
 
 	if err := row.Scan(
-		&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
+		&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAt, &verBy,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
@@ -591,7 +593,7 @@ func scanEntryFromRowsV2(rows pgx.Rows) (*model.Entry, error) {
 	)
 
 	if err := rows.Scan(
-		&idStr, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
+		&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAt, &verBy,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
