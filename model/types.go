@@ -144,21 +144,41 @@ func (s Source) Validate() error {
 	return nil
 }
 
-// ConfidenceLevel indicates reliability of knowledge.
+// ProvenanceLevel indicates how knowledge was obtained (assertion strength).
 // These are stable values, not LLM-generated scores.
-type ConfidenceLevel string
+type ProvenanceLevel string
 
 const (
-	ConfidenceVerified  ConfidenceLevel = "verified"  // explicitly verified by trusted source
-	ConfidenceInferred  ConfidenceLevel = "inferred"  // derived from analysis
-	ConfidenceUncertain ConfidenceLevel = "uncertain" // needs verification
+	ProvenanceVerified  ProvenanceLevel = "verified"  // user/human stated or confirmed this fact
+	ProvenanceInferred  ProvenanceLevel = "inferred"  // agent derived from analysis of source material
+	ProvenanceUncertain ProvenanceLevel = "uncertain" // source or conclusion is questionable
 )
 
-// Confidence tracks the reliability of a piece of knowledge.
-type Confidence struct {
-	Level      ConfidenceLevel `json:"level"`
-	VerifiedAt *time.Time      `json:"verified_at,omitempty"`
-	VerifiedBy string          `json:"verified_by,omitempty"` // source of verification
+// Provenance tracks how a piece of knowledge was obtained.
+type Provenance struct {
+	Level ProvenanceLevel `json:"level"`
+}
+
+// Freshness tracks when knowledge was last observed and whether the source has changed.
+type Freshness struct {
+	ObservedAt time.Time `json:"observed_at"`
+	ObservedBy string    `json:"observed_by,omitempty"`
+	SourceHash string    `json:"source_hash,omitempty"`
+}
+
+// FreshnessLabel returns a display label based on age since last observation:
+// "fresh" (< 7d), "aging Nd" (7-30d), "stale Nd" (> 30d).
+func (f Freshness) FreshnessLabel() string {
+	d := time.Since(f.ObservedAt)
+	days := int(d.Hours() / 24)
+	switch {
+	case days < 7:
+		return "fresh"
+	case days <= 30:
+		return fmt.Sprintf("aging %dd", days)
+	default:
+		return fmt.Sprintf("stale %dd", days)
+	}
 }
 
 // ResolutionStatus indicates the state of conflict resolution.

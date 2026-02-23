@@ -184,7 +184,7 @@ func TestZshContainsAllSubcommands(t *testing.T) {
 func TestEnumFlagsInOutput(t *testing.T) {
 	enums := map[string][]string{
 		"source-type": {"file", "url", "conversation", "manual"},
-		"confidence":  {"verified", "inferred", "uncertain"},
+		"provenance":  {"verified", "inferred", "uncertain"},
 		"direction":   {"out", "outgoing", "in", "incoming", "both"},
 		"format":      {"json", "jsonl"},
 		"type":        {"depends-on", "contradicts", "supersedes", "elaborates", "related-to"},

@@ -30,7 +30,8 @@ type Entry struct {
 	EmbeddingDim   int        `json:"embedding_dim,omitempty"`   // dimension for mixed model support
 	EmbeddingModel string     `json:"embedding_model,omitempty"` // which model generated this
 	Source         Source     `json:"source"`
-	Confidence     Confidence `json:"confidence"`
+	Provenance     Provenance `json:"provenance"`
+	Freshness      Freshness  `json:"freshness"`
 	Scope          string     `json:"scope"` // hierarchical scope path
 	TTL            *Duration  `json:"ttl,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
@@ -81,8 +82,11 @@ func NewEntry(content string, source Source) Entry {
 		Version:     1,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		Confidence: Confidence{
-			Level: ConfidenceInferred,
+		Provenance: Provenance{
+			Level: ProvenanceInferred,
+		},
+		Freshness: Freshness{
+			ObservedAt: now,
 		},
 	}
 }
@@ -151,9 +155,15 @@ func (e Entry) WithScope(scope string) Entry {
 	return e
 }
 
-// WithConfidence returns a copy of the entry with the confidence set.
-func (e Entry) WithConfidence(c Confidence) Entry {
-	e.Confidence = c
+// WithProvenance returns a copy of the entry with the provenance set.
+func (e Entry) WithProvenance(p Provenance) Entry {
+	e.Provenance = p
+	return e
+}
+
+// WithFreshness returns a copy of the entry with the freshness set.
+func (e Entry) WithFreshness(f Freshness) Entry {
+	e.Freshness = f
 	return e
 }
 

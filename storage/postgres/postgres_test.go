@@ -294,8 +294,8 @@ func TestEntryCreateAndGet(t *testing.T) {
 	if got.Meta.GetString("tag") != "test" {
 		t.Errorf("Meta[tag] = %q, want %q", got.Meta.GetString("tag"), "test")
 	}
-	if got.Confidence.Level != model.ConfidenceInferred {
-		t.Errorf("Confidence.Level = %q, want %q", got.Confidence.Level, model.ConfidenceInferred)
+	if got.Provenance.Level != model.ProvenanceInferred {
+		t.Errorf("Provenance.Level = %q, want %q", got.Provenance.Level, model.ProvenanceInferred)
 	}
 }
 
@@ -565,24 +565,24 @@ func TestEntryTTLExpiration(t *testing.T) {
 	}
 }
 
-func TestEntryWithConfidence(t *testing.T) {
+func TestEntryWithProvenance(t *testing.T) {
 	ctx := context.Background()
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("conftest")
+	scope := model.NewScope("provtest")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
-	now := time.Now().Truncate(time.Microsecond)
 	entry := model.NewEntry("verified knowledge", model.Source{
 		Type:      model.SourceManual,
 		Reference: "test",
-	}).WithScope("conftest").WithConfidence(model.Confidence{
-		Level:      model.ConfidenceVerified,
-		VerifiedAt: &now,
-		VerifiedBy: "admin",
+	}).WithScope("provtest").WithProvenance(model.Provenance{
+		Level: model.ProvenanceVerified,
+	}).WithFreshness(model.Freshness{
+		ObservedAt: time.Now(),
+		ObservedBy: "admin",
 	})
 
 	if err := entries.Create(ctx, &entry); err != nil {
@@ -593,30 +593,30 @@ func TestEntryWithConfidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Confidence.Level != model.ConfidenceVerified {
-		t.Errorf("Confidence.Level = %q, want %q", got.Confidence.Level, model.ConfidenceVerified)
+	if got.Provenance.Level != model.ProvenanceVerified {
+		t.Errorf("Provenance.Level = %q, want %q", got.Provenance.Level, model.ProvenanceVerified)
 	}
-	if got.Confidence.VerifiedBy != "admin" {
-		t.Errorf("Confidence.VerifiedBy = %q, want %q", got.Confidence.VerifiedBy, "admin")
+	if got.Freshness.ObservedBy != "admin" {
+		t.Errorf("Freshness.ObservedBy = %q, want %q", got.Freshness.ObservedBy, "admin")
 	}
-	if got.Confidence.VerifiedAt == nil {
-		t.Error("Confidence.VerifiedAt should not be nil")
+	if got.Freshness.ObservedAt.IsZero() {
+		t.Error("Freshness.ObservedAt should not be zero")
 	}
 }
 
-func TestEntryListByConfidence(t *testing.T) {
+func TestEntryListByProvenance(t *testing.T) {
 	ctx := context.Background()
 	entries := testDB.Entries()
 	scopes := testDB.Scopes()
 
-	scope := model.NewScope("conffilter")
+	scope := model.NewScope("provfilter")
 	if err := scopes.Upsert(ctx, &scope); err != nil {
 		t.Fatalf("Upsert scope: %v", err)
 	}
 
 	src := model.Source{Type: model.SourceManual, Reference: "test"}
-	verified := model.NewEntry("verified", src).WithScope("conffilter").WithConfidence(model.Confidence{Level: model.ConfidenceVerified})
-	inferred := model.NewEntry("inferred", src).WithScope("conffilter")
+	verified := model.NewEntry("verified", src).WithScope("provfilter").WithProvenance(model.Provenance{Level: model.ProvenanceVerified})
+	inferred := model.NewEntry("inferred", src).WithScope("provfilter")
 
 	for _, e := range []*model.Entry{&verified, &inferred} {
 		if err := entries.Create(ctx, e); err != nil {
@@ -625,14 +625,14 @@ func TestEntryListByConfidence(t *testing.T) {
 	}
 
 	got, err := entries.List(ctx, storage.EntryFilter{
-		Scope:           "conffilter",
-		ConfidenceLevel: model.ConfidenceVerified,
+		Scope:           "provfilter",
+		ProvenanceLevel: model.ProvenanceVerified,
 	})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(got) != 1 || got[0].Content != "verified" {
-		t.Errorf("confidence filter: got %d entries, want 1 verified", len(got))
+		t.Errorf("provenance filter: got %d entries, want 1 verified", len(got))
 	}
 }
 

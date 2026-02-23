@@ -127,7 +127,7 @@ func addEntry(t *testing.T, dir string, content string, extraArgs ...string) str
 	t.Helper()
 	// Flags must come before the positional content argument because Go's
 	// flag package stops parsing at the first non-flag arg.
-	args := []string{"add", "--source-type", "manual", "--confidence", "verified"}
+	args := []string{"add", "--source-type", "manual", "--provenance", "verified"}
 	args = append(args, extraArgs...)
 	args = append(args, content)
 	stdout, stderr, code := runKnown(t, dir, args...)

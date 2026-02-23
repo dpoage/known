@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dpoage/known/model"
 )
@@ -62,7 +63,8 @@ type EntryFilter struct {
 	Scope           string                // exact scope match
 	ScopePrefix     string                // hierarchical scope match (scope and all descendants)
 	SourceType      model.SourceType      // filter by source type (file, url, conversation, manual)
-	ConfidenceLevel model.ConfidenceLevel // filter by confidence level
+	ProvenanceLevel model.ProvenanceLevel // filter by provenance level
+	StalerThan      time.Duration         // filter entries whose observed_at is older than this duration
 	IncludeExpired  bool                  // if false (default), exclude entries past ExpiresAt
 	Limit           int
 	Offset          int

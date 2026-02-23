@@ -36,7 +36,8 @@ func (p *Printer) PrintEntry(e model.Entry) {
 	fmt.Fprintf(p.w, "Content:    %s\n", truncate(e.Content, 200))
 	fmt.Fprintf(p.w, "Scope:      %s\n", e.Scope)
 	fmt.Fprintf(p.w, "Source:     %s (%s)\n", e.Source.Reference, e.Source.Type)
-	fmt.Fprintf(p.w, "Confidence: %s\n", e.Confidence.Level)
+	fmt.Fprintf(p.w, "Provenance: %s\n", e.Provenance.Level)
+	fmt.Fprintf(p.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
 	fmt.Fprintf(p.w, "Version:    %d\n", e.Version)
 	fmt.Fprintf(p.w, "Created:    %s\n", e.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(p.w, "Updated:    %s\n", e.UpdatedAt.Format(time.RFC3339))
@@ -153,7 +154,7 @@ func (p *Printer) PrintMessage(format string, args ...any) {
 }
 
 // PrintRecallResults prints query results in a clean, LLM-optimized format.
-// Output contains scope, title, confidence, source, entry ID, and content.
+// Output contains scope, title, provenance, source, freshness, entry ID, and content.
 // No scores, timestamps, or JSON structure. IDs are always included in curly
 // braces so agents can act on results (link, update, delete, show).
 func (p *Printer) PrintRecallResults(results []query.Result) {
@@ -167,11 +168,11 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		}
 		var meta string
 		if r.Entry.Title != "" {
-			meta = fmt.Sprintf("[%s: %s] (%s, source: %s) {%s}",
-				r.Entry.Scope, r.Entry.Title, r.Entry.Confidence.Level, r.Entry.Source.Reference, r.Entry.ID)
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s, %s) {%s}",
+				r.Entry.Scope, r.Entry.Title, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(), r.Entry.ID)
 		} else {
-			meta = fmt.Sprintf("[%s] (%s, source: %s) {%s}",
-				r.Entry.Scope, r.Entry.Confidence.Level, r.Entry.Source.Reference, r.Entry.ID)
+			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
+				r.Entry.Scope, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(), r.Entry.ID)
 		}
 		if r.HasConflict {
 			meta += " (conflicts with existing entries)"

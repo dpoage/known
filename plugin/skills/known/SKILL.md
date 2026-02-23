@@ -123,7 +123,7 @@ These are available directly (not as plugin commands):
 | `url` | From a web page or API doc |
 | `manual` | User entered directly |
 
-## Confidence Levels
+## Provenance Levels
 
 | Level | When |
 |-------|------|

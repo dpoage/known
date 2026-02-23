@@ -17,7 +17,7 @@ import (
 //	--scope          Scope path (default: "root")
 //	--source-type    Source type: file, url, conversation, manual (default: "manual")
 //	--source-ref     Source reference (default: "cli")
-//	--confidence     Confidence level: verified, inferred, uncertain (default: "inferred")
+//	--provenance     Provenance level: verified, inferred, uncertain (default: "inferred")
 //	--ttl            Time-to-live duration (e.g., "24h", "168h")
 //	--meta           Metadata key=value pairs (repeatable)
 //	--link           Create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)
@@ -27,7 +27,9 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	scope := fs.String("scope", "", "scope path (default: auto from cwd)")
 	sourceType := fs.String("source-type", "manual", "source type (file, url, conversation, manual)")
 	sourceRef := fs.String("source-ref", "cli", "source reference")
-	confidence := fs.String("confidence", "inferred", "confidence level (verified, inferred, uncertain)")
+	provenance := fs.String("provenance", "inferred", "provenance level (verified, inferred, uncertain)")
+	observedBy := fs.String("observed-by", "", "who observed this fact (e.g., user, agent)")
+	sourceHash := fs.String("source-hash", "", "fingerprint of source at observation time")
 	ttl := fs.String("ttl", "", "time-to-live (e.g., 24h, 168h)")
 	var metaFlags multiFlag
 	fs.Var(&metaFlags, "meta", "metadata key=value (repeatable)")
@@ -67,8 +69,14 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	entry := model.NewEntry(content, source)
 	entry.Title = *title
 	entry.Scope = *scope
-	entry.Confidence = model.Confidence{
-		Level: model.ConfidenceLevel(*confidence),
+	entry.Provenance = model.Provenance{
+		Level: model.ProvenanceLevel(*provenance),
+	}
+	if *observedBy != "" {
+		entry.Freshness.ObservedBy = *observedBy
+	}
+	if *sourceHash != "" {
+		entry.Freshness.SourceHash = *sourceHash
 	}
 
 	// Parse TTL if provided, otherwise apply default by source type.

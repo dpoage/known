@@ -92,11 +92,11 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int) error
 		}
 		var meta string
 		if e.Title != "" {
-			meta = fmt.Sprintf("[%s: %s] (%s, source: %s) {%s}",
-				e.Scope, e.Title, e.Confidence.Level, e.Source.Reference, e.ID)
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s, %s) {%s}",
+				e.Scope, e.Title, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(), e.ID)
 		} else {
-			meta = fmt.Sprintf("[%s] (%s, source: %s) {%s}",
-				e.Scope, e.Confidence.Level, e.Source.Reference, e.ID)
+			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
+				e.Scope, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(), e.ID)
 		}
 		fmt.Fprintln(app.Printer.w, meta)
 		fmt.Fprintln(app.Printer.w, e.Content)

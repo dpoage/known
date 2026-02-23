@@ -80,7 +80,7 @@ For each significant directory, follow this process:
      --scope <prefix>.<module> \
      --source-type file \
      --source-ref '<primary file analyzed>' \
-     --confidence inferred
+     --provenance inferred
    ```
 
 4. **Skip these directories entirely:**

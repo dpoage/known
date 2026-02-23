@@ -72,7 +72,7 @@ func (m *mockEntryRepo) List(_ context.Context, filter storage.EntryFilter) ([]m
 				continue
 			}
 		}
-		if filter.ConfidenceLevel != "" && e.Confidence.Level != filter.ConfidenceLevel {
+		if filter.ProvenanceLevel != "" && e.Provenance.Level != filter.ProvenanceLevel {
 			continue
 		}
 		if !filter.IncludeExpired && e.ExpiresAt != nil && time.Now().After(*e.ExpiresAt) {

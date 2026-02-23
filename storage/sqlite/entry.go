@@ -37,9 +37,10 @@ func (s *EntryStore) withTx(ctx context.Context, fn func(ctx context.Context) er
 const entryColumns = `
 	id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 	source_type, source_ref, source_meta,
-	confidence, verified_at, verified_by,
+	confidence,
 	scope, ttl_seconds, expires_at,
-	meta, version, created_at, updated_at
+	meta, version, created_at, updated_at,
+	observed_at, observed_by, source_hash
 `
 
 // Create persists a new entry. It automatically ensures the scope hierarchy exists.
@@ -92,23 +93,26 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 		INSERT INTO entries (
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
+			confidence,
 			scope, ttl_seconds, expires_at,
-			meta, version, created_at, updated_at
+			meta, version, created_at, updated_at,
+			observed_at, observed_by, source_hash
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
+			?,
 			?, ?, ?,
-			?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?, ?, ?
 		)
 	`,
 		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, formatNullableTime(entry.ExpiresAt),
 		metaJSON, entry.Version, formatTime(entry.CreatedAt), formatTime(entry.UpdatedAt),
+		formatTime(entry.Freshness.ObservedAt), nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 	)
 	if err != nil {
 		if isUniqueConstraintError(err) {
@@ -179,15 +183,17 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 		INSERT INTO entries (
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
+			confidence,
 			scope, ttl_seconds, expires_at,
-			meta, version, created_at, updated_at
+			meta, version, created_at, updated_at,
+			observed_at, observed_by, source_hash
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
+			?,
 			?, ?, ?,
-			?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?, ?, ?
 		)
 		ON CONFLICT (content_hash, scope) DO UPDATE SET
 			title = excluded.title,
@@ -199,20 +205,22 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 			source_ref = excluded.source_ref,
 			source_meta = excluded.source_meta,
 			confidence = excluded.confidence,
-			verified_at = excluded.verified_at,
-			verified_by = excluded.verified_by,
 			ttl_seconds = excluded.ttl_seconds,
 			expires_at = excluded.expires_at,
 			meta = excluded.meta,
 			version = entries.version + 1,
-			updated_at = excluded.updated_at
+			updated_at = excluded.updated_at,
+			observed_at = excluded.observed_at,
+			observed_by = excluded.observed_by,
+			source_hash = excluded.source_hash
 	`,
 		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, formatNullableTime(entry.ExpiresAt),
 		metaJSON, entry.Version, formatTime(entry.CreatedAt), formatTime(entry.UpdatedAt),
+		formatTime(entry.Freshness.ObservedAt), nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create or update entry: %w", err)
@@ -293,22 +301,24 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 			source_ref = ?,
 			source_meta = ?,
 			confidence = ?,
-			verified_at = ?,
-			verified_by = ?,
 			scope = ?,
 			ttl_seconds = ?,
 			expires_at = ?,
 			meta = ?,
 			version = ? + 1,
-			updated_at = ?
+			updated_at = ?,
+			observed_at = ?,
+			observed_by = ?,
+			source_hash = ?
 		WHERE id = ? AND version = ?
 	`,
 		entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, formatNullableTime(entry.ExpiresAt),
 		metaJSON, entry.Version, formatTime(entry.UpdatedAt),
+		formatTime(entry.Freshness.ObservedAt), nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 		entry.ID.String(), entry.Version,
 	)
 	if err != nil {
@@ -370,9 +380,15 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		args = append(args, string(filter.SourceType))
 	}
 
-	if filter.ConfidenceLevel != "" {
+	if filter.ProvenanceLevel != "" {
 		query += " AND confidence = ?"
-		args = append(args, string(filter.ConfidenceLevel))
+		args = append(args, string(filter.ProvenanceLevel))
+	}
+
+	if filter.StalerThan > 0 {
+		cutoff := formatTime(time.Now().Add(-filter.StalerThan))
+		query += " AND observed_at IS NOT NULL AND observed_at < ?"
+		args = append(args, cutoff)
 	}
 
 	if !filter.IncludeExpired {
@@ -536,75 +552,81 @@ func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
 // scanEntry scans a single entry from a *sql.Row.
 func scanEntry(row *sql.Row) (*model.Entry, error) {
 	var (
-		entry       model.Entry
-		idStr       string
-		contentHash string
-		embBlob     []byte
-		embDim      *int
-		embMod      *string
-		srcType     string
-		srcRef      string
-		srcMeta     []byte
-		conf        string
-		verAtStr    *string
-		verBy       *string
-		ttlSecs     *int64
-		expiresStr  *string
-		metaJ       []byte
-		version     int
-		createdStr  string
-		updatedStr  string
+		entry          model.Entry
+		idStr          string
+		contentHash    string
+		embBlob        []byte
+		embDim         *int
+		embMod         *string
+		srcType        string
+		srcRef         string
+		srcMeta        []byte
+		conf           string
+		ttlSecs        *int64
+		expiresStr     *string
+		metaJ          []byte
+		version        int
+		createdStr     string
+		updatedStr     string
+		observedAtStr  *string
+		observedBy     *string
+		sourceHash     *string
 	)
 
 	if err := row.Scan(
 		&idStr, &entry.Title, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
-		&conf, &verAtStr, &verBy,
+		&conf,
 		&entry.Scope, &ttlSecs, &expiresStr,
 		&metaJ, &version, &createdStr, &updatedStr,
+		&observedAtStr, &observedBy, &sourceHash,
 	); err != nil {
 		return nil, err
 	}
 
 	return populateEntry(entry, idStr, contentHash, embBlob, embDim, embMod,
-		srcType, srcRef, srcMeta, conf, verAtStr, verBy, ttlSecs, expiresStr, metaJ, version, createdStr, updatedStr)
+		srcType, srcRef, srcMeta, conf, ttlSecs, expiresStr, metaJ, version, createdStr, updatedStr,
+		observedAtStr, observedBy, sourceHash)
 }
 
 // scanEntryFromRows scans a single entry from *sql.Rows.
 func scanEntryFromRows(rows *sql.Rows) (*model.Entry, error) {
 	var (
-		entry       model.Entry
-		idStr       string
-		contentHash string
-		embBlob     []byte
-		embDim      *int
-		embMod      *string
-		srcType     string
-		srcRef      string
-		srcMeta     []byte
-		conf        string
-		verAtStr    *string
-		verBy       *string
-		ttlSecs     *int64
-		expiresStr  *string
-		metaJ       []byte
-		version     int
-		createdStr  string
-		updatedStr  string
+		entry          model.Entry
+		idStr          string
+		contentHash    string
+		embBlob        []byte
+		embDim         *int
+		embMod         *string
+		srcType        string
+		srcRef         string
+		srcMeta        []byte
+		conf           string
+		ttlSecs        *int64
+		expiresStr     *string
+		metaJ          []byte
+		version        int
+		createdStr     string
+		updatedStr     string
+		observedAtStr  *string
+		observedBy     *string
+		sourceHash     *string
 	)
 
 	if err := rows.Scan(
 		&idStr, &entry.Title, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
-		&conf, &verAtStr, &verBy,
+		&conf,
 		&entry.Scope, &ttlSecs, &expiresStr,
 		&metaJ, &version, &createdStr, &updatedStr,
+		&observedAtStr, &observedBy, &sourceHash,
 	); err != nil {
 		return nil, err
 	}
 
 	return populateEntry(entry, idStr, contentHash, embBlob, embDim, embMod,
-		srcType, srcRef, srcMeta, conf, verAtStr, verBy, ttlSecs, expiresStr, metaJ, version, createdStr, updatedStr)
+		srcType, srcRef, srcMeta, conf, ttlSecs, expiresStr, metaJ, version, createdStr, updatedStr,
+		observedAtStr, observedBy, sourceHash)
 }
 
 func populateEntry(
@@ -612,10 +634,11 @@ func populateEntry(
 	idStr, contentHash string,
 	embBlob []byte, embDim *int, embMod *string,
 	srcType, srcRef string, srcMeta []byte,
-	conf string, verAtStr *string, verBy *string,
+	conf string,
 	ttlSecs *int64, expiresStr *string,
 	metaJ []byte, version int,
 	createdStr, updatedStr string,
+	observedAtStr *string, observedBy *string, sourceHash *string,
 ) (*model.Entry, error) {
 	id, err := model.ParseID(idStr)
 	if err != nil {
@@ -638,11 +661,7 @@ func populateEntry(
 		return nil, fmt.Errorf("unmarshal source meta: %w", err)
 	}
 
-	entry.Confidence.Level = model.ConfidenceLevel(conf)
-	entry.Confidence.VerifiedAt = parseNullableTime(verAtStr)
-	if verBy != nil {
-		entry.Confidence.VerifiedBy = *verBy
-	}
+	entry.Provenance.Level = model.ProvenanceLevel(conf)
 
 	entry.ExpiresAt = parseNullableTime(expiresStr)
 	if ttlSecs != nil {
@@ -655,6 +674,19 @@ func populateEntry(
 
 	entry.CreatedAt = parseTime(createdStr)
 	entry.UpdatedAt = parseTime(updatedStr)
+
+	// Freshness fields.
+	if observedAtStr != nil {
+		entry.Freshness.ObservedAt = parseTime(*observedAtStr)
+	} else {
+		entry.Freshness.ObservedAt = entry.CreatedAt
+	}
+	if observedBy != nil {
+		entry.Freshness.ObservedBy = *observedBy
+	}
+	if sourceHash != nil {
+		entry.Freshness.SourceHash = *sourceHash
+	}
 
 	return &entry, nil
 }

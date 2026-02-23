@@ -42,9 +42,10 @@ func (s *EntryStore) withTx(ctx context.Context, fn func(ctx context.Context) er
 const entryColumns = `
 	id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 	source_type, source_ref, source_meta,
-	confidence, verified_at, verified_by,
+	confidence,
 	scope, ttl_seconds, expires_at,
-	meta, version, created_at, updated_at
+	meta, version, created_at, updated_at,
+	observed_at, observed_by, source_hash
 `
 
 // Create persists a new entry. It automatically ensures the scope hierarchy exists.
@@ -99,23 +100,26 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 		INSERT INTO entries (
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
+			confidence,
 			scope, ttl_seconds, expires_at,
-			meta, version, created_at, updated_at
+			meta, version, created_at, updated_at,
+			observed_at, observed_by, source_hash
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10,
-			$11, $12, $13,
-			$14, $15, $16,
-			$17, $18, $19, $20
+			$11,
+			$12, $13, $14,
+			$15, $16, $17, $18,
+			$19, $20, $21
 		)
 	`,
 		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
 		metaJSON, entry.Version, entry.CreatedAt, entry.UpdatedAt,
+		entry.Freshness.ObservedAt, nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -182,15 +186,17 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 		INSERT INTO entries (
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
+			confidence,
 			scope, ttl_seconds, expires_at,
-			meta, version, created_at, updated_at
+			meta, version, created_at, updated_at,
+			observed_at, observed_by, source_hash
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10,
-			$11, $12, $13,
-			$14, $15, $16,
-			$17, $18, $19, $20
+			$11,
+			$12, $13, $14,
+			$15, $16, $17, $18,
+			$19, $20, $21
 		)
 		ON CONFLICT (content_hash, scope) DO UPDATE SET
 			title = EXCLUDED.title,
@@ -202,8 +208,9 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 			source_ref = EXCLUDED.source_ref,
 			source_meta = EXCLUDED.source_meta,
 			confidence = EXCLUDED.confidence,
-			verified_at = EXCLUDED.verified_at,
-			verified_by = EXCLUDED.verified_by,
+			observed_at = EXCLUDED.observed_at,
+			observed_by = EXCLUDED.observed_by,
+			source_hash = EXCLUDED.source_hash,
 			ttl_seconds = EXCLUDED.ttl_seconds,
 			expires_at = EXCLUDED.expires_at,
 			meta = EXCLUDED.meta,
@@ -213,9 +220,10 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
 		metaJSON, entry.Version, entry.CreatedAt, entry.UpdatedAt,
+		entry.Freshness.ObservedAt, nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 	)
 
 	result, err := scanEntryV2(row)
@@ -290,23 +298,25 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 			source_ref = $9,
 			source_meta = $10,
 			confidence = $11,
-			verified_at = $12,
-			verified_by = $13,
-			scope = $14,
-			ttl_seconds = $15,
-			expires_at = $16,
-			meta = $17,
-			version = $18 + 1,
-			updated_at = $19
-		WHERE id = $1 AND version = $18
+			scope = $12,
+			ttl_seconds = $13,
+			expires_at = $14,
+			meta = $15,
+			version = $16 + 1,
+			updated_at = $17,
+			observed_at = $18,
+			observed_by = $19,
+			source_hash = $20
+		WHERE id = $1 AND version = $16
 		RETURNING version
 	`,
 		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingVal, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
-		string(entry.Confidence.Level), entry.Confidence.VerifiedAt, nullableString(entry.Confidence.VerifiedBy),
+		string(entry.Provenance.Level),
 		entry.Scope, ttlSeconds, entry.ExpiresAt,
 		metaJSON, entry.Version, entry.UpdatedAt,
+		entry.Freshness.ObservedAt, nullableString(entry.Freshness.ObservedBy), nullableString(entry.Freshness.SourceHash),
 	).Scan(&newVersion)
 
 	if err == nil {
@@ -376,9 +386,15 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		argIdx++
 	}
 
-	if filter.ConfidenceLevel != "" {
+	if filter.ProvenanceLevel != "" {
 		query += fmt.Sprintf(" AND confidence = $%d", argIdx)
-		args = append(args, string(filter.ConfidenceLevel))
+		args = append(args, string(filter.ProvenanceLevel))
+		argIdx++
+	}
+
+	if filter.StalerThan > 0 {
+		query += fmt.Sprintf(" AND observed_at < NOW() - $%d::interval", argIdx)
+		args = append(args, filter.StalerThan.String())
 		argIdx++
 	}
 
@@ -445,9 +461,10 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		SELECT
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
-			confidence, verified_at, verified_by,
+			confidence,
 			scope, ttl_seconds, expires_at,
 			meta, version, created_at, updated_at,
+			observed_at, observed_by, source_hash,
 			%s AS distance
 		FROM entries
 		WHERE embedding IS NOT NULL
@@ -477,20 +494,22 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 			srcRef      string
 			srcMeta     []byte
 			conf        string
-			verAt       *time.Time
-			verBy       *string
 			ttlSecs     *int64
 			metaJ       []byte
 			version     int
+			observedAt  time.Time
+			observedBy  *string
+			sourceHash  *string
 			dist        float64
 		)
 
 		if err := rows.Scan(
 			&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 			&srcType, &srcRef, &srcMeta,
-			&conf, &verAt, &verBy,
+			&conf,
 			&entry.Scope, &ttlSecs, &entry.ExpiresAt,
 			&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
+			&observedAt, &observedBy, &sourceHash,
 			&dist,
 		); err != nil {
 			return nil, fmt.Errorf("scan similarity result: %w", err)
@@ -514,10 +533,13 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		if err := unmarshalNullableJSON(srcMeta, &entry.Source.Meta); err != nil {
 			return nil, fmt.Errorf("unmarshal source meta: %w", err)
 		}
-		entry.Confidence.Level = model.ConfidenceLevel(conf)
-		entry.Confidence.VerifiedAt = verAt
-		if verBy != nil {
-			entry.Confidence.VerifiedBy = *verBy
+		entry.Provenance.Level = model.ProvenanceLevel(conf)
+		entry.Freshness.ObservedAt = observedAt
+		if observedBy != nil {
+			entry.Freshness.ObservedBy = *observedBy
+		}
+		if sourceHash != nil {
+			entry.Freshness.SourceHash = *sourceHash
 		}
 		if ttlSecs != nil {
 			entry.TTL = &model.Duration{Duration: time.Duration(*ttlSecs) * time.Second}
@@ -557,25 +579,27 @@ func scanEntryV2(row pgx.Row) (*model.Entry, error) {
 		srcRef      string
 		srcMeta     []byte
 		conf        string
-		verAt       *time.Time
-		verBy       *string
 		ttlSecs     *int64
 		metaJ       []byte
 		version     int
+		observedAt  time.Time
+		observedBy  *string
+		sourceHash  *string
 	)
 
 	if err := row.Scan(
 		&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
-		&conf, &verAt, &verBy,
+		&conf,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
 		&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
+		&observedAt, &observedBy, &sourceHash,
 	); err != nil {
 		return nil, err
 	}
 
 	return populateEntryV2(entry, idStr, contentHash, embVec, embDim, embMod,
-		srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ, version)
+		srcType, srcRef, srcMeta, conf, observedAt, observedBy, sourceHash, ttlSecs, metaJ, version)
 }
 
 // scanEntryFromRowsV2 scans a single entry from pgx.Rows with the v2 column set.
@@ -591,25 +615,27 @@ func scanEntryFromRowsV2(rows pgx.Rows) (*model.Entry, error) {
 		srcRef      string
 		srcMeta     []byte
 		conf        string
-		verAt       *time.Time
-		verBy       *string
 		ttlSecs     *int64
 		metaJ       []byte
 		version     int
+		observedAt  time.Time
+		observedBy  *string
+		sourceHash  *string
 	)
 
 	if err := rows.Scan(
 		&idStr, &entry.Title, &entry.Content, &contentHash, &embVec, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
-		&conf, &verAt, &verBy,
+		&conf,
 		&entry.Scope, &ttlSecs, &entry.ExpiresAt,
 		&metaJ, &version, &entry.CreatedAt, &entry.UpdatedAt,
+		&observedAt, &observedBy, &sourceHash,
 	); err != nil {
 		return nil, err
 	}
 
 	return populateEntryV2(entry, idStr, contentHash, embVec, embDim, embMod,
-		srcType, srcRef, srcMeta, conf, verAt, verBy, ttlSecs, metaJ, version)
+		srcType, srcRef, srcMeta, conf, observedAt, observedBy, sourceHash, ttlSecs, metaJ, version)
 }
 
 // populateEntryV2 fills in an Entry from scanned values (v2 column set).
@@ -622,7 +648,7 @@ func populateEntryV2(
 	srcType, srcRef string,
 	srcMeta []byte,
 	conf string,
-	verAt *time.Time, verBy *string,
+	observedAt time.Time, observedBy *string, sourceHash *string,
 	ttlSecs *int64,
 	metaJ []byte,
 	version int,
@@ -648,10 +674,13 @@ func populateEntryV2(
 		return nil, fmt.Errorf("unmarshal source meta: %w", err)
 	}
 
-	entry.Confidence.Level = model.ConfidenceLevel(conf)
-	entry.Confidence.VerifiedAt = verAt
-	if verBy != nil {
-		entry.Confidence.VerifiedBy = *verBy
+	entry.Provenance.Level = model.ProvenanceLevel(conf)
+	entry.Freshness.ObservedAt = observedAt
+	if observedBy != nil {
+		entry.Freshness.ObservedBy = *observedBy
+	}
+	if sourceHash != nil {
+		entry.Freshness.SourceHash = *sourceHash
 	}
 
 	if ttlSecs != nil {
