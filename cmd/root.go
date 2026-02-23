@@ -191,6 +191,14 @@ func Run(ctx context.Context, args []string) int {
 		return 0
 	}
 
+	if subcmd == "__complete" {
+		if err := runCompleteLight(ctx, gf, subArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	app, err := initApp(ctx, gf, needsEmbedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -233,8 +241,6 @@ func Run(ctx context.Context, args []string) int {
 		err = runExport(ctx, app, subArgs)
 	case "import":
 		err = runImport(ctx, app, subArgs)
-	case "__complete":
-		err = runComplete(ctx, app, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcmd)
 		usage()

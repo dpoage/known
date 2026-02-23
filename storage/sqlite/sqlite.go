@@ -8,8 +8,7 @@ import (
 	"fmt"
 
 	"github.com/dpoage/known/storage"
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
@@ -31,7 +30,7 @@ type DB struct {
 func New(ctx context.Context, dsn string) (*DB, error) {
 	pragmas := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
 
-	// The ncruces driver requires file: URI format.
+	// The modernc driver uses file: URI format.
 	var uri string
 	if dsn == ":memory:" {
 		uri = "file::memory:?" + pragmas
@@ -39,7 +38,7 @@ func New(ctx context.Context, dsn string) (*DB, error) {
 		uri = "file:" + dsn + "?" + pragmas
 	}
 
-	db, err := sql.Open("sqlite3", uri)
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

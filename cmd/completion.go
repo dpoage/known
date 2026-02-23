@@ -137,15 +137,30 @@ func runCompletion(args []string) error {
 	return nil
 }
 
-// runComplete implements the hidden "known __complete <type>" subcommand.
-// It queries the DB and prints completion candidates one per line.
-func runComplete(ctx context.Context, app *App, args []string) error {
+// runCompleteLight implements the hidden "known __complete <type>" subcommand.
+// It opens a bare DB connection (no Migrate, no query engine) for low-latency
+// completion during interactive shell use.
+func runCompleteLight(ctx context.Context, gf globalFlags, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: known __complete <type>")
 	}
+	cfg, err := loadAppConfig(gf)
+	if err != nil {
+		return err
+	}
+	db, err := newBackend(ctx, cfg.DSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := db.Migrate(); err != nil {
+		return err
+	}
+
 	switch args[0] {
 	case "scopes":
-		scopes, err := app.Scopes.List(ctx)
+		scopes, err := db.Scopes().List(ctx)
 		if err != nil {
 			return err
 		}

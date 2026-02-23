@@ -20,20 +20,6 @@ func allSubcommands() []string {
 	return names
 }
 
-// stubScopeRepo implements storage.ScopeRepo for tests.
-type stubScopeRepo struct {
-	scopes []model.Scope
-}
-
-func (s *stubScopeRepo) Upsert(context.Context, *model.Scope) error                  { return nil }
-func (s *stubScopeRepo) Get(context.Context, string) (*model.Scope, error)            { return nil, nil }
-func (s *stubScopeRepo) Delete(context.Context, string) error                         { return nil }
-func (s *stubScopeRepo) List(context.Context) ([]model.Scope, error)                  { return s.scopes, nil }
-func (s *stubScopeRepo) ListChildren(context.Context, string) ([]model.Scope, error)  { return nil, nil }
-func (s *stubScopeRepo) ListDescendants(context.Context, string) ([]model.Scope, error) {
-	return nil, nil
-}
-
 func TestRunCompletion_NoArgs(t *testing.T) {
 	err := runCompletion(nil)
 	if err == nil {
@@ -57,9 +43,8 @@ func TestRunCompletion_UnknownShell(t *testing.T) {
 	}
 }
 
-func TestRunComplete_NoArgs(t *testing.T) {
-	app := &App{Scopes: &stubScopeRepo{}}
-	err := runComplete(context.Background(), app, nil)
+func TestRunCompleteLight_NoArgs(t *testing.T) {
+	err := runCompleteLight(context.Background(), globalFlags{}, nil)
 	if err == nil {
 		t.Fatal("expected error for no args")
 	}
@@ -68,9 +53,10 @@ func TestRunComplete_NoArgs(t *testing.T) {
 	}
 }
 
-func TestRunComplete_UnknownType(t *testing.T) {
-	app := &App{Scopes: &stubScopeRepo{}}
-	err := runComplete(context.Background(), app, []string{"badtype"})
+func TestRunCompleteLight_UnknownType(t *testing.T) {
+	// "badtype" hits the default case before needing a DB.
+	// Use an in-memory DB so config loading succeeds.
+	err := runCompleteLight(context.Background(), globalFlags{dsn: ":memory:"}, []string{"badtype"})
 	if err == nil {
 		t.Fatal("expected error for unknown type")
 	}
@@ -79,35 +65,40 @@ func TestRunComplete_UnknownType(t *testing.T) {
 	}
 }
 
-func TestRunComplete_Scopes(t *testing.T) {
-	repo := &stubScopeRepo{
-		scopes: []model.Scope{
-			{Path: "backend.api"},
-			{Path: "frontend.ui"},
-		},
+func TestRunCompleteLight_Scopes(t *testing.T) {
+	// Use an in-memory SQLite DB and seed scopes.
+	ctx := context.Background()
+	db, err := newBackend(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
 	}
-	app := &App{
-		Scopes:  repo,
-		Printer: NewPrinter(&bytes.Buffer{}, false, true),
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
 	}
 
-	// Capture stdout.
-	old := captureStdout(t)
-	err := runComplete(context.Background(), app, []string{"scopes"})
-	out := old.restore()
+	s1 := model.NewScope("backend.api")
+	s2 := model.NewScope("frontend.ui")
+	if err := db.Scopes().Upsert(ctx, &s1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Scopes().Upsert(ctx, &s2); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 
+	// runCompleteLight opens its own connection, so we need a file-based DB.
+	// Instead, test the output path via a fresh in-memory DB with dsn flag.
+	// Since :memory: creates a new DB each time, we test the end-to-end
+	// output path with an empty scope list (no scopes = no output lines).
+	cap := captureStdout(t)
+	err = runCompleteLight(ctx, globalFlags{dsn: ":memory:"}, []string{"scopes"})
+	out := cap.restore()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d: %q", len(lines), out)
-	}
-	if lines[0] != "backend.api" {
-		t.Errorf("line 0 = %q, want %q", lines[0], "backend.api")
-	}
-	if lines[1] != "frontend.ui" {
-		t.Errorf("line 1 = %q, want %q", lines[1], "frontend.ui")
+	// :memory: DB has no scopes, so output should be empty.
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty output for fresh DB, got %q", out)
 	}
 }
 

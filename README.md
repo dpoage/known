@@ -82,7 +82,7 @@ cmd/            CLI commands (init, add, recall, search, ...)
 cmd/scaffold/   Embedded Claude Code skill templates
 model/          Core types: Entry, Edge, Scope, ID (ULID)
 storage/        Backend interface + implementations
-  sqlite/       Default — pure Go via wazero, no CGo
+  sqlite/       Default — pure Go transpiled from C, no CGo
   postgres/     PostgreSQL + pgvector for production scale
 query/          Search engine: vector, graph traversal, hybrid
 embed/          Embedder interface + backends
@@ -193,8 +193,8 @@ go build -o known ./cmd/known/
 ```
 
 The project uses pure Go throughout — no CGo, no Makefiles, no Docker required
-for development. SQLite via [ncruces/go-sqlite3](https://github.com/ncruces/go-sqlite3)
-(wazero), embeddings via [hugot](https://github.com/knights-analytics/hugot) (ONNX on GoMLX).
+for development. SQLite via [modernc.org/sqlite](https://gitlab.com/cznic/sqlite),
+embeddings via [hugot](https://github.com/knights-analytics/hugot) (ONNX on GoMLX).
 
 ### Project structure
 
