@@ -30,6 +30,7 @@ Install: `go install github.com/dpoage/known/cmd/known@latest`
 | `/known:recall` | Retrieve knowledge relevant to a query |
 | `/known:forget` | Find and delete an entry |
 | `/known:search` | Search with full control over flags |
+| `/known:discover` | Walk a codebase and store architectural knowledge |
 
 ## When to Recall
 
