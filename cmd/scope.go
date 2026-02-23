@@ -127,12 +127,14 @@ func runScopeTree(ctx context.Context, app *App, args []string) error {
 	return nil
 }
 
-// printTree displays scopes as an indented tree.
+// printTree displays scopes as an indented tree with usage context.
 func printTree(p *Printer, scopes []model.Scope) {
 	// Sort by path to ensure parents come before children.
 	sort.Slice(scopes, func(i, j int) bool {
 		return scopes[i].Path < scopes[j].Path
 	})
+
+	fmt.Fprintln(p.w, "Knowledge available — use /recall before exploring:")
 
 	for _, s := range scopes {
 		depth := strings.Count(s.Path, ".")
@@ -147,4 +149,6 @@ func printTree(p *Printer, scopes []model.Scope) {
 
 		fmt.Fprintf(p.w, "%s%s\n", indent, name)
 	}
+
+	fmt.Fprintf(p.w, "Example: known recall '<topic>' --scope <scope>\n")
 }
