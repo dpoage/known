@@ -250,6 +250,12 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 	// Recompute content hash in case content changed.
 	entry.ContentHash = model.ComputeContentHash(entry.Content)
 
+	// Auto-create scope hierarchy if the scope changed.
+	scopeStore := &ScopeStore{pool: s.pool}
+	if err := scopeStore.EnsureHierarchy(ctx, entry.Scope); err != nil {
+		return fmt.Errorf("ensure scope hierarchy: %w", err)
+	}
+
 	metaJSON, err := marshalNullableJSON(entry.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
