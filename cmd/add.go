@@ -69,12 +69,19 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	}
 
 	// Parse TTL if provided, otherwise apply default by source type.
+	// --ttl 0 means "permanent" (no TTL, no ExpiresAt), same as update.go.
 	if *ttl != "" {
-		dur, err := time.ParseDuration(*ttl)
-		if err != nil {
-			return fmt.Errorf("invalid ttl %q: %w", *ttl, err)
+		if *ttl == "0" {
+			// Explicit zero: permanent entry, skip default TTL.
+			entry.TTL = nil
+			entry.ExpiresAt = nil
+		} else {
+			dur, err := time.ParseDuration(*ttl)
+			if err != nil {
+				return fmt.Errorf("invalid ttl %q: %w", *ttl, err)
+			}
+			entry.SetTTL(dur)
 		}
-		entry.SetTTL(dur)
 	} else if d, ok := app.Config.DefaultTTL[entry.Source.Type]; ok {
 		entry.SetTTL(d)
 	}
