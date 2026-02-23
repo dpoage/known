@@ -56,7 +56,11 @@ func runList(ctx context.Context, app *App, args []string) error {
 			fmt.Fprintln(app.Printer.w)
 		}
 		fmt.Fprintf(app.Printer.w, "ID:         %s\n", e.ID)
-		fmt.Fprintf(app.Printer.w, "Content:    %s\n", truncate(e.Content, 100))
+		if e.Title != "" {
+			fmt.Fprintf(app.Printer.w, "Title:      %s\n", e.Title)
+		} else {
+			fmt.Fprintf(app.Printer.w, "Content:    %s\n", truncate(e.Content, 100))
+		}
 		fmt.Fprintf(app.Printer.w, "Scope:      %s\n", e.Scope)
 		fmt.Fprintf(app.Printer.w, "Confidence: %s\n", e.Confidence.Level)
 		fmt.Fprintf(app.Printer.w, "Source:     %s\n", e.Source.Type)

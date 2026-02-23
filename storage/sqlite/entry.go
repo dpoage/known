@@ -35,7 +35,7 @@ func (s *EntryStore) withTx(ctx context.Context, fn func(ctx context.Context) er
 }
 
 const entryColumns = `
-	id, content, content_hash, embedding, embedding_dim, embedding_model,
+	id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 	source_type, source_ref, source_meta,
 	confidence, verified_at, verified_by,
 	scope, ttl_seconds, expires_at,
@@ -90,20 +90,20 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 
 	_, err = s.conn(ctx).ExecContext(ctx, `
 		INSERT INTO entries (
-			id, content, content_hash, embedding, embedding_dim, embedding_model,
+			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
 			meta, version, created_at, updated_at
 		) VALUES (
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?
 		)
 	`,
-		entry.ID.String(), entry.Content, entry.ContentHash,
+		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
@@ -177,19 +177,20 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 	// Try to insert first.
 	result, err := conn.ExecContext(ctx, `
 		INSERT INTO entries (
-			id, content, content_hash, embedding, embedding_dim, embedding_model,
+			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
 			source_type, source_ref, source_meta,
 			confidence, verified_at, verified_by,
 			scope, ttl_seconds, expires_at,
 			meta, version, created_at, updated_at
 		) VALUES (
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?
 		)
 		ON CONFLICT (content_hash, scope) DO UPDATE SET
+			title = excluded.title,
 			content = excluded.content,
 			embedding = excluded.embedding,
 			embedding_dim = excluded.embedding_dim,
@@ -206,7 +207,7 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 			version = entries.version + 1,
 			updated_at = excluded.updated_at
 	`,
-		entry.ID.String(), entry.Content, entry.ContentHash,
+		entry.ID.String(), entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
@@ -277,6 +278,7 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 
 	result, err := conn.ExecContext(ctx, `
 		UPDATE entries SET
+			title = ?,
 			content = ?,
 			content_hash = ?,
 			embedding = ?,
@@ -296,7 +298,7 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 			updated_at = ?
 		WHERE id = ? AND version = ?
 	`,
-		entry.Content, entry.ContentHash,
+		entry.Title, entry.Content, entry.ContentHash,
 		embeddingBlob, nullableInt(entry.EmbeddingDim), nullableString(entry.EmbeddingModel),
 		string(entry.Source.Type), entry.Source.Reference, sourceMetaJSON,
 		string(entry.Confidence.Level), formatNullableTime(entry.Confidence.VerifiedAt), nullableString(entry.Confidence.VerifiedBy),
@@ -550,7 +552,7 @@ func scanEntry(row *sql.Row) (*model.Entry, error) {
 	)
 
 	if err := row.Scan(
-		&idStr, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
+		&idStr, &entry.Title, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAtStr, &verBy,
 		&entry.Scope, &ttlSecs, &expiresStr,
@@ -587,7 +589,7 @@ func scanEntryFromRows(rows *sql.Rows) (*model.Entry, error) {
 	)
 
 	if err := rows.Scan(
-		&idStr, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
+		&idStr, &entry.Title, &entry.Content, &contentHash, &embBlob, &embDim, &embMod,
 		&srcType, &srcRef, &srcMeta,
 		&conf, &verAtStr, &verBy,
 		&entry.Scope, &ttlSecs, &expiresStr,

@@ -18,6 +18,7 @@ import (
 //	--scope        New scope path
 func runUpdate(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	title := fs.String("title", "", "new title (short label)")
 	content := fs.String("content", "", "new content text")
 	confidence := fs.String("confidence", "", "new confidence level (verified, inferred, uncertain)")
 	scope := fs.String("scope", "", "new scope path")
@@ -39,6 +40,10 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	entry, err := app.Entries.Get(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get entry: %w", err)
+	}
+
+	if fs.Changed("title") {
+		entry.Title = *title
 	}
 
 	// Track whether content changed so we know to re-embed.

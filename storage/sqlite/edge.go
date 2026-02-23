@@ -109,7 +109,7 @@ func (s *EdgeStore) EdgesBetween(ctx context.Context, fromID, toID model.ID) ([]
 func (s *EdgeStore) FindConflicts(ctx context.Context, entryID model.ID) ([]model.Entry, error) {
 	rows, err := s.conn(ctx).QueryContext(ctx, `
 		SELECT DISTINCT
-			e.id, e.content, e.content_hash, e.embedding, e.embedding_dim, e.embedding_model,
+			e.id, e.title, e.content, e.content_hash, e.embedding, e.embedding_dim, e.embedding_model,
 			e.source_type, e.source_ref, e.source_meta,
 			e.confidence, e.verified_at, e.verified_by,
 			e.scope, e.ttl_seconds, e.expires_at,

@@ -30,6 +30,9 @@ func (p *Printer) PrintEntry(e model.Entry) {
 		return
 	}
 	fmt.Fprintf(p.w, "ID:         %s\n", e.ID)
+	if e.Title != "" {
+		fmt.Fprintf(p.w, "Title:      %s\n", e.Title)
+	}
 	fmt.Fprintf(p.w, "Content:    %s\n", truncate(e.Content, 200))
 	fmt.Fprintf(p.w, "Scope:      %s\n", e.Scope)
 	fmt.Fprintf(p.w, "Source:     %s (%s)\n", e.Source.Reference, e.Source.Type)
@@ -81,6 +84,9 @@ func (p *Printer) PrintResults(results []query.Result) {
 	for i, r := range results {
 		fmt.Fprintf(p.w, "--- Result %d ---\n", i+1)
 		fmt.Fprintf(p.w, "ID:       %s\n", r.Entry.ID)
+		if r.Entry.Title != "" {
+			fmt.Fprintf(p.w, "Title:    %s\n", r.Entry.Title)
+		}
 		fmt.Fprintf(p.w, "Content:  %s\n", truncate(r.Entry.Content, 200))
 		fmt.Fprintf(p.w, "Scope:    %s\n", r.Entry.Scope)
 		if r.Score > 0 {
@@ -158,8 +164,14 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		if i > 0 {
 			fmt.Fprintln(p.w)
 		}
-		meta := fmt.Sprintf("[%s] (%s, source: %s)",
-			r.Entry.Scope, r.Entry.Confidence.Level, r.Entry.Source.Reference)
+		var meta string
+		if r.Entry.Title != "" {
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s)",
+				r.Entry.Scope, r.Entry.Title, r.Entry.Confidence.Level, r.Entry.Source.Reference)
+		} else {
+			meta = fmt.Sprintf("[%s] (%s, source: %s)",
+				r.Entry.Scope, r.Entry.Confidence.Level, r.Entry.Source.Reference)
+		}
 		if r.HasConflict {
 			meta += " (conflicts with existing entries)"
 		}
