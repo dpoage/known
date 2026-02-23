@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
 	"os"
 	"strings"

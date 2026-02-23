@@ -3,12 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/dpoage/known/model"
+	flag "github.com/spf13/pflag"
+	"golang.org/x/term"
 )
 
 // runDelete implements the "known delete" subcommand.
@@ -19,7 +20,7 @@ import (
 // In quiet mode, --force is required.
 func runDelete(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
-	force := fs.Bool("force", false, "skip confirmation prompt")
+	force := fs.BoolP("force", "f", false, "skip confirmation prompt")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -44,6 +45,10 @@ func runDelete(ctx context.Context, app *App, args []string) error {
 	if !*force {
 		if app.Config.Quiet {
 			return fmt.Errorf("--force is required in quiet mode")
+		}
+
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("stdin is not a terminal; use --force to confirm deletion non-interactively")
 		}
 
 		// Show what will be deleted.
