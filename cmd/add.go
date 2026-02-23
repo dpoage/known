@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
 	"strings"
 	"time"
@@ -121,3 +121,4 @@ func (f *multiFlag) Set(v string) error {
 	*f = append(*f, v)
 	return nil
 }
+func (f *multiFlag) Type() string { return "string" }

@@ -3,7 +3,7 @@ package cmd
 
 import (
 	"context"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
 	"io"
 	"os"
@@ -40,7 +40,8 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 	var gf globalFlags
 
 	fs := flag.NewFlagSet("known", flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // suppress default error output
+	fs.SetOutput(io.Discard)      // suppress default error output
+	fs.SetInterspersed(false)     // stop parsing at first non-flag (the subcommand)
 	fs.StringVar(&gf.dsn, "dsn", "", "database connection string (default: ~/.known/known.db)")
 	fs.BoolVar(&gf.json, "json", false, "output as JSON")
 	fs.BoolVar(&gf.quiet, "quiet", false, "suppress non-essential output")

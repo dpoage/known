@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
 	"sort"
 	"strings"

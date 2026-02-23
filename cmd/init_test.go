@@ -60,7 +60,7 @@ func TestRunInit(t *testing.T) {
 		{
 			name:    "invalid flag errors",
 			args:    []string{"--unknown"},
-			wantErr: "flag provided but not defined",
+			wantErr: "unknown flag",
 		},
 	}
 
