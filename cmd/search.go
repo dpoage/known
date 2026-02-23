@@ -24,6 +24,8 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 
 	if *scope == "" {
 		*scope = app.Config.DefaultScope
+	} else {
+		*scope = app.Config.QualifyScope(*scope)
 	}
 
 	if fs.NArg() < 1 {

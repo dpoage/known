@@ -16,6 +16,8 @@ func runConflicts(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
+	*scope = app.Config.QualifyScope(*scope)
+
 	// If a positional argument is given, treat it as an entry ID.
 	if fs.NArg() > 0 {
 		entryID, err := model.ParseID(fs.Arg(0))

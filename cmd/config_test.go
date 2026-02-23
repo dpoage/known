@@ -68,6 +68,38 @@ func TestExpandHome(t *testing.T) {
 	}
 }
 
+func TestQualifyScope(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		scope  string
+		want   string
+	}{
+		{name: "empty scope", prefix: "myapp", scope: "", want: ""},
+		{name: "no prefix passthrough", prefix: "", scope: "cmd", want: "cmd"},
+		{name: "bare segment prefixed", prefix: "myapp", scope: "cmd", want: "myapp.cmd"},
+		{name: "root maps to prefix", prefix: "myapp", scope: "root", want: "myapp"},
+		{name: "already qualified exact", prefix: "myapp", scope: "myapp", want: "myapp"},
+		{name: "already qualified dotted", prefix: "myapp", scope: "myapp.cmd", want: "myapp.cmd"},
+		{name: "no false match on prefix substring", prefix: "my", scope: "myself", want: "my.myself"},
+		{name: "literal slash stripped", prefix: "myapp", scope: "/services", want: "services"},
+		{name: "literal root via slash", prefix: "myapp", scope: "/root", want: "root"},
+		{name: "literal slash no prefix", prefix: "", scope: "/services", want: "services"},
+		{name: "no prefix root passthrough", prefix: "", scope: "root", want: "root"},
+		{name: "deep scope prefixed", prefix: "myapp", scope: "cmd.api", want: "myapp.cmd.api"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &AppConfig{ScopePrefix: tt.prefix}
+			got := cfg.QualifyScope(tt.scope)
+			if got != tt.want {
+				t.Errorf("QualifyScope(%q) with prefix=%q = %q, want %q", tt.scope, tt.prefix, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadAppConfig(t *testing.T) {
 	type testCase struct {
 		name        string
@@ -196,6 +228,45 @@ func TestLoadAppConfig(t *testing.T) {
 			check: func(t *testing.T, cfg *AppConfig) {
 				if cfg.DefaultScope != model.RootScope {
 					t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, model.RootScope)
+				}
+			},
+		},
+
+		// --- ScopePrefix ---
+		{
+			name:        "scope prefix at project root",
+			projectYAML: "dsn: postgres://test\nscope_prefix: myapp\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.DefaultScope != "myapp" {
+					t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, "myapp")
+				}
+			},
+		},
+		{
+			name:        "scope prefix with cwd subdir",
+			projectYAML: "dsn: postgres://test\nscope_prefix: myapp\n",
+			cwdSubdir:   "services/api",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.DefaultScope != "myapp.services.api" {
+					t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, "myapp.services.api")
+				}
+			},
+		},
+		{
+			name:        "no scope prefix preserves root behavior",
+			projectYAML: "dsn: postgres://test\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.DefaultScope != model.RootScope {
+					t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, model.RootScope)
+				}
+			},
+		},
+		{
+			name:        "scope prefix field populated from project yaml",
+			projectYAML: "dsn: postgres://test\nscope_prefix: myapp\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.ScopePrefix != "myapp" {
+					t.Errorf("ScopePrefix = %q, want %q", cfg.ScopePrefix, "myapp")
 				}
 			},
 		},

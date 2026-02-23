@@ -20,7 +20,32 @@ type AppConfig struct {
 	SearchThreshold  float64                            // default 0.3
 	DefaultTTL       map[model.SourceType]time.Duration // source type -> auto-TTL
 	ScopeRoot        string                             // directory containing .known.yaml (or from global scope_root)
+	ScopePrefix      string                             // project scope prefix from .known.yaml
 	DefaultScope     string                             // auto-derived scope from cwd relative to ScopeRoot
+}
+
+// QualifyScope prepends the project's scope prefix to a user-provided scope value.
+// Empty input returns empty. A leading "/" bypasses qualification (literal/cross-project).
+// "root" maps to the prefix itself. Already-qualified values are returned unchanged.
+func (c *AppConfig) QualifyScope(scope string) string {
+	if scope == "" {
+		return scope
+	}
+	// Leading "/" = literal (cross-project) scope.
+	if strings.HasPrefix(scope, "/") {
+		return scope[1:]
+	}
+	if c.ScopePrefix == "" {
+		return scope
+	}
+	// Already qualified — don't double-prefix.
+	if scope == c.ScopePrefix || strings.HasPrefix(scope, c.ScopePrefix+".") {
+		return scope
+	}
+	if scope == model.RootScope {
+		return c.ScopePrefix
+	}
+	return c.ScopePrefix + "." + scope
 }
 
 // loadAppConfig resolves configuration from flags, environment, project config,
@@ -87,9 +112,12 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 		}
 	}
 
-	// 5. DefaultScope: if ScopeRoot set, derive from cwd; else "root".
+	// 5. ScopePrefix + DefaultScope.
+	if projCfg != nil {
+		cfg.ScopePrefix = projCfg.ScopePrefix
+	}
 	if cfg.ScopeRoot != "" {
-		cfg.DefaultScope = deriveScope(cfg.ScopeRoot, cwd)
+		cfg.DefaultScope = deriveScope(cfg.ScopeRoot, cwd, cfg.ScopePrefix)
 	} else {
 		cfg.DefaultScope = model.RootScope
 	}

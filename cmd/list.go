@@ -27,6 +27,8 @@ func runList(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
+	*scope = app.Config.QualifyScope(*scope)
+
 	filter := storage.EntryFilter{
 		ScopePrefix:    *scope,
 		SourceType:     model.SourceType(*sourceType),

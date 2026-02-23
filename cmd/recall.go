@@ -32,6 +32,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 
 	if *scope == "" {
 		*scope = app.Config.DefaultScope
+	} else {
+		*scope = app.Config.QualifyScope(*scope)
 	}
 
 	// If no query arg, require --scope for scope-based listing.

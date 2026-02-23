@@ -15,6 +15,7 @@ const projectConfigFile = ".known.yaml"
 // projectConfig holds configuration parsed from a project-local .known.yaml file.
 type projectConfig struct {
 	DSN              string            `yaml:"dsn"`
+	ScopePrefix      string            `yaml:"scope_prefix,omitempty"`
 	MaxContentLength *int              `yaml:"max_content_length,omitempty"`
 	SearchThreshold  *float64          `yaml:"search_threshold,omitempty"`
 	DefaultTTL       map[string]string `yaml:"default_ttl,omitempty"`
@@ -53,36 +54,43 @@ func loadProjectConfig(filePath string) (*projectConfig, error) {
 
 // deriveScope computes a scope path from the relative position of cwd under scopeRoot.
 // Directory names that aren't valid scope segments (e.g., ".hidden", "123build") are
-// silently skipped. Returns "root" when cwd equals scopeRoot, is outside it, or all
+// silently skipped. When prefix is non-empty, it replaces "root" as the base scope:
+// the project root returns the prefix itself, and subdirectories return prefix + "." + path.
+// Returns "root" when prefix is empty and cwd equals scopeRoot, is outside it, or all
 // path segments are invalid.
-func deriveScope(scopeRoot, cwd string) string {
+func deriveScope(scopeRoot, cwd, prefix string) string {
+	base := model.RootScope
+	if prefix != "" {
+		base = prefix
+	}
+
 	absRoot, err := filepath.Abs(scopeRoot)
 	if err != nil {
-		return model.RootScope
+		return base
 	}
 	absRoot, err = filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		return model.RootScope
+		return base
 	}
 
 	absCwd, err := filepath.Abs(cwd)
 	if err != nil {
-		return model.RootScope
+		return base
 	}
 	absCwd, err = filepath.EvalSymlinks(absCwd)
 	if err != nil {
-		return model.RootScope
+		return base
 	}
 
 	rel, err := filepath.Rel(absRoot, absCwd)
 	if err != nil {
-		return model.RootScope
+		return base
 	}
 	if rel == "." {
-		return model.RootScope
+		return base
 	}
 	if strings.HasPrefix(rel, "..") {
-		return model.RootScope
+		return base
 	}
 
 	parts := strings.Split(rel, string(filepath.Separator))
@@ -93,7 +101,11 @@ func deriveScope(scopeRoot, cwd string) string {
 		}
 	}
 	if len(segments) == 0 {
-		return model.RootScope
+		return base
 	}
-	return strings.Join(segments, ".")
+	relScope := strings.Join(segments, ".")
+	if prefix != "" {
+		return prefix + "." + relScope
+	}
+	return relScope
 }

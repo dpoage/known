@@ -1,12 +1,13 @@
 package cmd
 
 import (
-	flag "github.com/spf13/pflag"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/dpoage/known/cmd/scaffold"
+	"github.com/dpoage/known/model"
+	flag "github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,7 +51,13 @@ func runInit(_ /* ctx */ interface{}, args []string) error {
 		}
 	}
 
-	cfg := projectConfig{DSN: resolvedDSN}
+	// Auto-populate scope_prefix from directory name if valid.
+	var scopePrefix string
+	if dirName := filepath.Base(cwd); model.IsValidScopeSegment(dirName) {
+		scopePrefix = dirName
+	}
+
+	cfg := projectConfig{DSN: resolvedDSN, ScopePrefix: scopePrefix}
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

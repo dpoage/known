@@ -28,6 +28,7 @@ func TestDeriveScope(t *testing.T) {
 		name      string
 		scopeRoot string
 		cwd       string
+		prefix    string
 		want      string
 	}{
 		{
@@ -72,13 +73,49 @@ func TestDeriveScope(t *testing.T) {
 			cwd:       filepath.Join(tmpRoot, ".git"),
 			want:      "root",
 		},
+		// --- prefix tests ---
+		{
+			name:      "prefix at root returns prefix",
+			scopeRoot: tmpRoot,
+			cwd:       tmpRoot,
+			prefix:    "myproject",
+			want:      "myproject",
+		},
+		{
+			name:      "prefix at subdir returns prefix.subdir",
+			scopeRoot: tmpRoot,
+			cwd:       filepath.Join(tmpRoot, "personal/known/cmd"),
+			prefix:    "myproject",
+			want:      "myproject.personal.known.cmd",
+		},
+		{
+			name:      "prefix with cwd outside scope root returns prefix",
+			scopeRoot: tmpRoot,
+			cwd:       filepath.Dir(tmpRoot),
+			prefix:    "myproject",
+			want:      "myproject",
+		},
+		{
+			name:      "prefix with hidden dir filtered",
+			scopeRoot: tmpRoot,
+			cwd:       filepath.Join(tmpRoot, ".hidden/pkg"),
+			prefix:    "myproject",
+			want:      "myproject.pkg",
+		},
+		{
+			name:      "prefix with all-invalid segments returns prefix",
+			scopeRoot: tmpRoot,
+			cwd:       filepath.Join(tmpRoot, ".git"),
+			prefix:    "myproject",
+			want:      "myproject",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deriveScope(tt.scopeRoot, tt.cwd)
+			got := deriveScope(tt.scopeRoot, tt.cwd, tt.prefix)
 			if got != tt.want {
-				t.Errorf("deriveScope(%q, %q) = %q, want %q", tt.scopeRoot, tt.cwd, got, tt.want)
+				t.Errorf("deriveScope(%q, %q, %q) = %q, want %q", tt.scopeRoot, tt.cwd, tt.prefix, got, tt.want)
 			}
 		})
 	}
