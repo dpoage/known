@@ -3,10 +3,12 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+
+	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/embed"
 	"github.com/dpoage/known/query"
@@ -229,6 +231,9 @@ func Run(ctx context.Context, args []string) int {
 	}
 
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

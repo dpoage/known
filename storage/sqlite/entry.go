@@ -251,6 +251,11 @@ func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error)
 func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 	entry.ContentHash = model.ComputeContentHash(entry.Content)
 
+	scopeStore := &ScopeStore{db: s.db}
+	if err := scopeStore.EnsureHierarchy(ctx, entry.Scope); err != nil {
+		return fmt.Errorf("ensure scope hierarchy: %w", err)
+	}
+
 	metaJSON, err := marshalNullableJSON(entry.Meta)
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
