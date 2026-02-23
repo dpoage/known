@@ -142,6 +142,7 @@ Commands:
   stats      Show knowledge graph statistics
   export     Export entries as JSON or JSONL
   import     Import entries from JSON or JSONL
+  completion Generate shell completions (bash, fish, zsh)
 
 Run 'known <command> --help' for details on a specific command.
 `)
@@ -176,6 +177,14 @@ func Run(ctx context.Context, args []string) int {
 
 	if subcmd == "init" {
 		if err := runInit(ctx, subArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if subcmd == "completion" {
+		if err := runCompletion(subArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
@@ -224,6 +233,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runExport(ctx, app, subArgs)
 	case "import":
 		err = runImport(ctx, app, subArgs)
+	case "__complete":
+		err = runComplete(ctx, app, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcmd)
 		usage()
