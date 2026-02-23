@@ -28,6 +28,8 @@ func runShow(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
+	*scope = app.Config.QualifyScope(*scope)
+
 	// If a positional ID arg is provided, show a single entry (existing behavior).
 	if fs.NArg() > 0 {
 		return showByID(ctx, app, fs.Arg(0))

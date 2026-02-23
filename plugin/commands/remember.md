@@ -37,7 +37,7 @@ You don't need to ask permission — just store it and tell the user what you re
    - `--source-type conversation` for facts from chat, or `--source-type file` for findings from codebase exploration
    - `--source-ref claude-code`
    - `--confidence`: Use `verified` if the user stated it as fact or confirmed it. Use `inferred` if you're deriving it from context. Use `uncertain` if it might be wrong.
-   - `--scope`: Use specific, granular scopes rather than broad ones. For example, `--scope model.architecture` rather than `--scope model`, or `--scope storage.sqlite` rather than `--scope storage`. This keeps knowledge organized and recall precise.
+   - `--scope`: Use specific, granular scopes rather than broad ones. For example, `--scope model.architecture` rather than `--scope model`, or `--scope storage.sqlite` rather than `--scope storage`. This keeps knowledge organized and recall precise. If the project has a `scope_prefix` in `.known.yaml`, `--scope` values are automatically qualified with the prefix (e.g., `--scope cmd` becomes `myproject.cmd`). To bypass qualification for cross-project scopes, prefix with `/` (e.g., `--scope /otherproject.api`).
    - `--ttl`: Omit for the default. Set explicitly for temporary facts (e.g., `168h` for a 1-week workaround).
 
 3. Run the command:

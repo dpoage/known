@@ -24,6 +24,8 @@ func runStats(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
+	*scope = app.Config.QualifyScope(*scope)
+
 	var filter storage.EntryFilter
 	if *scope != "" {
 		filter.ScopePrefix = *scope

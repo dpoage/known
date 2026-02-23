@@ -77,7 +77,7 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	}
 
 	if *scope != "" {
-		entry.Scope = *scope
+		entry.Scope = app.Config.QualifyScope(*scope)
 	}
 
 	if *sourceType != "" {
