@@ -141,7 +141,7 @@ For a typical Go web service:
 ```
 Created 6 scopes, 14 entries, 8 edges.
 
-myproject
+/myproject
   api
     handlers
     middleware

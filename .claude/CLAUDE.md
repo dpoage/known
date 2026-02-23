@@ -139,8 +139,8 @@ DSN in its `.known.yaml`, its knowledge is isolated to that database.
 
 ## Recall vs Search
 
-- **`/recall`** — Quick retrieval, plain text, tuned for LLM context. Use by default. Results inform your work — don't just display them.
-- **`/known-search`** — Full control: `--limit`, `--threshold`, `--hybrid`. Use when you need entry IDs (for show/update/delete) or fine-grained results.
+- **`/recall`** — Quick retrieval, plain text, tuned for LLM context. Use by default. Results include entry IDs in `{curly braces}` for use with link/update/delete.
+- **`/known-search`** — Full control: `--limit`, `--threshold`, `--hybrid`. Use for fine-grained results.
 
 ## Other Useful Commands
 
@@ -152,6 +152,7 @@ These aren't skills but are available directly:
 | `known update <id> --content '...'` | Modify an entry's content, confidence, or scope |
 | `known related <id>` | Find entries connected via graph edges |
 | `known link <from-id> <to-id> --type <type>` | Create a relationship between entries |
+| `known add '...' --link type:id` | Create entry + edge atomically |
 | `known conflicts` | Detect contradictory entries |
 | `known stats` | Knowledge graph statistics |
 

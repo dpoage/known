@@ -83,7 +83,10 @@ Over:
 ## Scopes
 
 Scopes organize knowledge hierarchically. The scope is auto-derived from your
-working directory relative to the `.known.yaml` root.
+working directory relative to the `.known.yaml` root. In `known scope tree`
+output, root scopes are prefixed with `/` to mark project boundaries. Within
+your own project, use bare scope names. The `/` prefix is for cross-project
+access only.
 
 - `root` — project-wide knowledge
 - `backend` — backend-specific (from `./backend/`)

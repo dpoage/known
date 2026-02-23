@@ -141,6 +141,9 @@ func printTree(p *Printer, scopes []model.Scope) {
 		// Extract the last segment for display.
 		parts := strings.Split(s.Path, ".")
 		name := parts[len(parts)-1]
+		if depth == 0 {
+			name = "/" + name
+		}
 
 		fmt.Fprintf(p.w, "%s%s\n", indent, name)
 	}

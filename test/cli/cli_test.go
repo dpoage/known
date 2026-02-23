@@ -279,11 +279,11 @@ func TestCLI_ScopeTree(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("known scope tree failed (exit %d): %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "backend") {
-		t.Fatalf("scope tree output should contain 'backend', got:\n%s", stdout)
+	if !strings.Contains(stdout, "/backend") {
+		t.Fatalf("scope tree output should contain '/backend', got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "frontend") {
-		t.Fatalf("scope tree output should contain 'frontend', got:\n%s", stdout)
+	if !strings.Contains(stdout, "/frontend") {
+		t.Fatalf("scope tree output should contain '/frontend', got:\n%s", stdout)
 	}
 }
 
