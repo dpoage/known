@@ -153,8 +153,9 @@ func (p *Printer) PrintMessage(format string, args ...any) {
 }
 
 // PrintRecallResults prints query results in a clean, LLM-optimized format.
-// Output contains only scope, confidence, source, and content — no IDs,
-// scores, timestamps, or JSON structure.
+// Output contains scope, title, confidence, source, entry ID, and content.
+// No scores, timestamps, or JSON structure. IDs are always included in curly
+// braces so agents can act on results (link, update, delete, show).
 func (p *Printer) PrintRecallResults(results []query.Result) {
 	if len(results) == 0 {
 		fmt.Fprintln(p.w, "No matching knowledge found.")
@@ -166,11 +167,11 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		}
 		var meta string
 		if r.Entry.Title != "" {
-			meta = fmt.Sprintf("[%s: %s] (%s, source: %s)",
-				r.Entry.Scope, r.Entry.Title, r.Entry.Confidence.Level, r.Entry.Source.Reference)
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s) {%s}",
+				r.Entry.Scope, r.Entry.Title, r.Entry.Confidence.Level, r.Entry.Source.Reference, r.Entry.ID)
 		} else {
-			meta = fmt.Sprintf("[%s] (%s, source: %s)",
-				r.Entry.Scope, r.Entry.Confidence.Level, r.Entry.Source.Reference)
+			meta = fmt.Sprintf("[%s] (%s, source: %s) {%s}",
+				r.Entry.Scope, r.Entry.Confidence.Level, r.Entry.Source.Reference, r.Entry.ID)
 		}
 		if r.HasConflict {
 			meta += " (conflicts with existing entries)"

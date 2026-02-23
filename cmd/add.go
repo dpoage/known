@@ -20,6 +20,7 @@ import (
 //	--confidence     Confidence level: verified, inferred, uncertain (default: "inferred")
 //	--ttl            Time-to-live duration (e.g., "24h", "168h")
 //	--meta           Metadata key=value pairs (repeatable)
+//	--link           Create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)
 func runAdd(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	title := fs.String("title", "", "short label for the entry (2-5 words)")
@@ -30,6 +31,8 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	ttl := fs.String("ttl", "", "time-to-live (e.g., 24h, 168h)")
 	var metaFlags multiFlag
 	fs.Var(&metaFlags, "meta", "metadata key=value (repeatable)")
+	var linkFlags multiFlag
+	fs.Var(&linkFlags, "link", "create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -69,12 +72,19 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	}
 
 	// Parse TTL if provided, otherwise apply default by source type.
+	// --ttl 0 means "permanent" (no TTL, no ExpiresAt), same as update.go.
 	if *ttl != "" {
-		dur, err := time.ParseDuration(*ttl)
-		if err != nil {
-			return fmt.Errorf("invalid ttl %q: %w", *ttl, err)
+		if *ttl == "0" {
+			// Explicit zero: permanent entry, skip default TTL.
+			entry.TTL = nil
+			entry.ExpiresAt = nil
+		} else {
+			dur, err := time.ParseDuration(*ttl)
+			if err != nil {
+				return fmt.Errorf("invalid ttl %q: %w", *ttl, err)
+			}
+			entry.SetTTL(dur)
 		}
-		entry.SetTTL(dur)
 	} else if d, ok := app.Config.DefaultTTL[entry.Source.Type]; ok {
 		entry.SetTTL(d)
 	}
@@ -114,6 +124,35 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	}
 
 	app.Printer.PrintEntry(*result)
+
+	// Create edges if --link flags were provided.
+	for _, linkSpec := range linkFlags {
+		edgeType, targetIDStr, ok := strings.Cut(linkSpec, ":")
+		if !ok {
+			return fmt.Errorf("invalid --link format %q: expected type:target-id (e.g. elaborates:01KJ...)", linkSpec)
+		}
+
+		et := model.EdgeType(edgeType)
+		if err := et.Validate(); err != nil {
+			return fmt.Errorf("--link %q: invalid edge type: %w", linkSpec, err)
+		}
+
+		targetID, err := model.ParseID(targetIDStr)
+		if err != nil {
+			return fmt.Errorf("--link %q: invalid target ID: %w", linkSpec, err)
+		}
+
+		if _, err := app.Entries.Get(ctx, targetID); err != nil {
+			return fmt.Errorf("--link %q: target entry %s: %w", linkSpec, targetID, err)
+		}
+
+		edge := model.NewEdge(result.ID, targetID, et)
+		if err := app.Edges.Create(ctx, &edge); err != nil {
+			return fmt.Errorf("--link %q: create edge: %w", linkSpec, err)
+		}
+		app.Printer.PrintMessage("Linked %s -[%s]-> %s", result.ID, et, targetID)
+	}
+
 	return nil
 }
 

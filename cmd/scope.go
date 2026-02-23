@@ -11,15 +11,31 @@ import (
 	"github.com/dpoage/known/storage/postgres"
 )
 
+func scopeUsage() string {
+	return `Usage: known scope <command> [args]
+
+Manage scopes.
+
+Commands:
+  list     List all scopes
+  create   Create a scope and its parent hierarchy
+  tree     Display scopes as an indented tree
+
+Run 'known scope <command> --help' for details on a specific command.`
+}
+
 func runScope(ctx context.Context, app *App, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: known scope <list|create|tree> [args]\n\nManage scopes.")
+		return fmt.Errorf("%s", scopeUsage())
 	}
 
 	subcmd := args[0]
 	subArgs := args[1:]
 
 	switch subcmd {
+	case "--help", "-h":
+		fmt.Fprintln(app.Printer.w, scopeUsage())
+		return flag.ErrHelp
 	case "list":
 		return runScopeList(ctx, app, subArgs)
 	case "create":

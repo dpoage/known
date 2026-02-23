@@ -20,7 +20,8 @@ import (
 //	known recall --scope <path>                 — list all entries in scope
 //
 // Unlike "search", recall uses hardcoded parameters tuned for LLM consumption
-// and outputs plain text without IDs, scores, timestamps, or JSON structure.
+// and outputs plain text without scores, timestamps, or JSON structure.
+// Entry IDs are always included so agents can act on results (link, update, delete).
 func runRecall(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("recall", flag.ContinueOnError)
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
@@ -91,11 +92,11 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int) error
 		}
 		var meta string
 		if e.Title != "" {
-			meta = fmt.Sprintf("[%s: %s] (%s, source: %s)",
-				e.Scope, e.Title, e.Confidence.Level, e.Source.Reference)
+			meta = fmt.Sprintf("[%s: %s] (%s, source: %s) {%s}",
+				e.Scope, e.Title, e.Confidence.Level, e.Source.Reference, e.ID)
 		} else {
-			meta = fmt.Sprintf("[%s] (%s, source: %s)",
-				e.Scope, e.Confidence.Level, e.Source.Reference)
+			meta = fmt.Sprintf("[%s] (%s, source: %s) {%s}",
+				e.Scope, e.Confidence.Level, e.Source.Reference, e.ID)
 		}
 		fmt.Fprintln(app.Printer.w, meta)
 		fmt.Fprintln(app.Printer.w, e.Content)
