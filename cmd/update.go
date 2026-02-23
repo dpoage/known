@@ -18,7 +18,7 @@ import (
 //
 //	--title        New title (short label; use --title="" to clear)
 //	--content      New content text
-//	--confidence   New confidence level (verified, inferred, uncertain)
+//	--provenance   New provenance level (verified, inferred, uncertain)
 //	--scope        New scope path
 //	--source-type  New source type (file, url, conversation, manual)
 //	--source-ref   New source reference
@@ -28,7 +28,8 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	title := fs.String("title", "", "new title (short label; use --title='' to clear)")
 	content := fs.String("content", "", "new content text")
-	confidence := fs.String("confidence", "", "new confidence level (verified, inferred, uncertain)")
+	provenance := fs.String("provenance", "", "new provenance level (verified, inferred, uncertain)")
+	observedBy := fs.String("observed-by", "", "who observed this fact (e.g., user, agent)")
 	scope := fs.String("scope", "", "new scope path")
 	sourceType := fs.String("source-type", "", "new source type (file, url, conversation, manual)")
 	sourceRef := fs.String("source-ref", "", "new source reference")
@@ -72,8 +73,11 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 		contentChanged = true
 	}
 
-	if *confidence != "" {
-		entry.Confidence.Level = model.ConfidenceLevel(*confidence)
+	if *provenance != "" {
+		entry.Provenance.Level = model.ProvenanceLevel(*provenance)
+	}
+	if *observedBy != "" {
+		entry.Freshness.ObservedBy = *observedBy
 	}
 
 	if *scope != "" {

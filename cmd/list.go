@@ -12,14 +12,15 @@ import (
 )
 
 // runList implements the "known list" subcommand — browse entries by scope,
-// source type, and confidence level without requiring a search query or ULID.
+// source type, and provenance level without requiring a search query or ULID.
 //
-// Usage: known list [--scope <path>] [--source-type <type>] [--confidence <level>] [--limit <n>] [--json]
+// Usage: known list [--scope <path>] [--source-type <type>] [--provenance <level>] [--stale <duration>] [--limit <n>] [--json]
 func runList(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	scope := fs.String("scope", "", "filter to this scope and descendants")
 	sourceType := fs.String("source-type", "", "filter by source type (file, url, conversation, manual)")
-	confidence := fs.String("confidence", "", "filter by confidence level (verified, inferred, uncertain)")
+	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
+	stale := fs.String("stale", "", "filter entries older than duration (e.g., 7d, 30d)")
 	limit := fs.Int("limit", 20, "maximum number of results")
 	jsonOut := fs.Bool("json", false, "output as JSON array")
 
@@ -30,10 +31,18 @@ func runList(ctx context.Context, app *App, args []string) error {
 	*scope = app.Config.QualifyScope(*scope)
 
 	filter := storage.EntryFilter{
-		ScopePrefix:    *scope,
-		SourceType:     model.SourceType(*sourceType),
-		ConfidenceLevel: model.ConfidenceLevel(*confidence),
-		Limit:          *limit,
+		ScopePrefix:     *scope,
+		SourceType:      model.SourceType(*sourceType),
+		ProvenanceLevel: model.ProvenanceLevel(*provenance),
+		Limit:           *limit,
+	}
+
+	if *stale != "" {
+		dur, err := parseDayDuration(*stale)
+		if err != nil {
+			return fmt.Errorf("invalid --stale %q: %w", *stale, err)
+		}
+		filter.StalerThan = dur
 	}
 
 	entries, err := app.Entries.List(ctx, filter)
@@ -64,7 +73,8 @@ func runList(ctx context.Context, app *App, args []string) error {
 			fmt.Fprintf(app.Printer.w, "Content:    %s\n", truncate(e.Content, 100))
 		}
 		fmt.Fprintf(app.Printer.w, "Scope:      %s\n", e.Scope)
-		fmt.Fprintf(app.Printer.w, "Confidence: %s\n", e.Confidence.Level)
+		fmt.Fprintf(app.Printer.w, "Provenance: %s\n", e.Provenance.Level)
+		fmt.Fprintf(app.Printer.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
 		fmt.Fprintf(app.Printer.w, "Source:     %s\n", e.Source.Type)
 		fmt.Fprintf(app.Printer.w, "Age:        %s\n", formatAge(e.CreatedAt))
 	}
@@ -74,6 +84,18 @@ func runList(ctx context.Context, app *App, args []string) error {
 	}
 
 	return nil
+}
+
+// parseDayDuration parses a duration string that may use "d" for days (e.g., "7d", "30d").
+// Falls back to time.ParseDuration for standard Go durations.
+func parseDayDuration(s string) (time.Duration, error) {
+	if len(s) > 1 && s[len(s)-1] == 'd' {
+		var days int
+		if _, err := fmt.Sscanf(s, "%dd", &days); err == nil {
+			return time.Duration(days) * 24 * time.Hour, nil
+		}
+	}
+	return time.ParseDuration(s)
 }
 
 // formatAge returns a human-friendly relative time string.

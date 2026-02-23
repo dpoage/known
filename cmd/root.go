@@ -129,7 +129,7 @@ Commands:
   update     Update an existing entry
   delete     Delete an entry
   show       Show entry details with relationships
-  list       Browse entries by scope, source type, or confidence
+  list       Browse entries by scope, source type, or provenance
   search     Search entries by semantic similarity
   recall     Retrieve knowledge optimized for LLM context
   related    Find related entries via graph traversal

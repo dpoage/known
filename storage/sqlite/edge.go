@@ -111,9 +111,10 @@ func (s *EdgeStore) FindConflicts(ctx context.Context, entryID model.ID) ([]mode
 		SELECT DISTINCT
 			e.id, e.title, e.content, e.content_hash, e.embedding, e.embedding_dim, e.embedding_model,
 			e.source_type, e.source_ref, e.source_meta,
-			e.confidence, e.verified_at, e.verified_by,
+			e.confidence,
 			e.scope, e.ttl_seconds, e.expires_at,
-			e.meta, e.version, e.created_at, e.updated_at
+			e.meta, e.version, e.created_at, e.updated_at,
+			e.observed_at, e.observed_by, e.source_hash
 		FROM entries e
 		INNER JOIN edges eg ON (
 			(eg.from_id = ? AND eg.to_id = e.id)

@@ -496,8 +496,8 @@ func TestNewEntry(t *testing.T) {
 	if entry.Scope != RootScope {
 		t.Errorf("NewEntry() scope = %q, want %q", entry.Scope, RootScope)
 	}
-	if entry.Confidence.Level != ConfidenceInferred {
-		t.Error("NewEntry() should default to inferred confidence")
+	if entry.Provenance.Level != ProvenanceInferred {
+		t.Error("NewEntry() should default to inferred provenance")
 	}
 }
 
