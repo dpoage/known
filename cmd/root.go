@@ -127,6 +127,7 @@ Commands:
   update     Update an existing entry
   delete     Delete an entry
   show       Show entry details with relationships
+  list       Browse entries by scope, source type, or confidence
   search     Search entries by semantic similarity
   recall     Retrieve knowledge optimized for LLM context
   related    Find related entries via graph traversal
@@ -195,6 +196,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runDelete(ctx, app, subArgs)
 	case "show":
 		err = runShow(ctx, app, subArgs)
+	case "list":
+		err = runList(ctx, app, subArgs)
 	case "search":
 		err = runSearch(ctx, app, subArgs)
 	case "recall":

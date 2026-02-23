@@ -362,6 +362,12 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		argIdx += 2
 	}
 
+	if filter.SourceType != "" {
+		query += fmt.Sprintf(" AND source_type = $%d", argIdx)
+		args = append(args, string(filter.SourceType))
+		argIdx++
+	}
+
 	if filter.ConfidenceLevel != "" {
 		query += fmt.Sprintf(" AND confidence = $%d", argIdx)
 		args = append(args, string(filter.ConfidenceLevel))

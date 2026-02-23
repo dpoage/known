@@ -59,12 +59,13 @@ type SimilarityResult struct {
 
 // EntryFilter provides filtering criteria for entry queries.
 type EntryFilter struct {
-	Scope          string           // exact scope match
-	ScopePrefix    string           // hierarchical scope match (scope and all descendants)
-	ConfidenceLevel model.ConfidenceLevel
-	IncludeExpired bool             // if false (default), exclude entries past ExpiresAt
-	Limit          int
-	Offset         int
+	Scope           string                // exact scope match
+	ScopePrefix     string                // hierarchical scope match (scope and all descendants)
+	SourceType      model.SourceType      // filter by source type (file, url, conversation, manual)
+	ConfidenceLevel model.ConfidenceLevel // filter by confidence level
+	IncludeExpired  bool                  // if false (default), exclude entries past ExpiresAt
+	Limit           int
+	Offset          int
 }
 
 // EdgeFilter provides filtering criteria for edge queries.
