@@ -40,6 +40,7 @@ var commands = []cmdDef{
 		{name: "source-hash"},
 		{name: "ttl"},
 		{name: "meta"},
+		{name: "label"},
 		{name: "link"},
 	}},
 	{name: "update", desc: "Update an existing entry", flags: []flagDef{
@@ -52,6 +53,7 @@ var commands = []cmdDef{
 		{name: "source-ref"},
 		{name: "ttl"},
 		{name: "meta"},
+		{name: "label"},
 	}},
 	{name: "delete", desc: "Delete an entry", flags: []flagDef{
 		{name: "force", short: "f"},
@@ -65,6 +67,7 @@ var commands = []cmdDef{
 		{name: "source-type", values: []string{"file", "url", "conversation", "manual"}},
 		{name: "provenance", values: []string{"verified", "inferred", "uncertain"}},
 		{name: "stale"},
+		{name: "label"},
 		{name: "limit"},
 		{name: "json"},
 	}},
@@ -73,11 +76,13 @@ var commands = []cmdDef{
 		{name: "limit"},
 		{name: "threshold"},
 		{name: "recency"},
+		{name: "label"},
 		{name: "hybrid"},
 		{name: "expand-depth"},
 	}},
 	{name: "recall", desc: "Retrieve knowledge optimized for LLM context", flags: []flagDef{
 		{name: "scope", dynamic: "scopes"},
+		{name: "label"},
 		{name: "limit"},
 	}},
 	{name: "related", desc: "Find related entries via graph traversal", flags: []flagDef{
@@ -97,7 +102,7 @@ var commands = []cmdDef{
 		{name: "meta"},
 	}},
 	{name: "unlink", desc: "Delete an edge"},
-	{name: "scope", desc: "Manage scopes (list, create, tree)", subs: []string{"list", "create", "tree"}},
+	{name: "scope", desc: "Manage scopes (list, create, delete, tree)", subs: []string{"list", "create", "delete", "tree"}},
 	{name: "gc", desc: "Delete expired entries"},
 	{name: "stats", desc: "Show knowledge graph statistics", flags: []flagDef{
 		{name: "scope", dynamic: "scopes"},

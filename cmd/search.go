@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
 	"time"
 
+	flag "github.com/spf13/pflag"
+
+	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/query"
 )
 
@@ -15,6 +17,8 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 	limit := fs.Int("limit", 10, "maximum number of results")
 	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
 	recency := fs.Float64("recency", 0, "recency weight (0=pure similarity, 1=pure recency)")
+	var labelFlags multiFlag
+	fs.Var(&labelFlags, "label", "filter by label (repeatable, post-filter)")
 	hybrid := fs.Bool("hybrid", false, "use hybrid vector+graph search")
 	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth for hybrid search")
 
@@ -50,6 +54,7 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 		if err != nil {
 			return fmt.Errorf("hybrid search: %w", err)
 		}
+		results = filterResultsByLabels(results, labelFlags)
 		app.Printer.PrintResults(results)
 		return nil
 	}
@@ -68,6 +73,35 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("vector search: %w", err)
 	}
 
+	results = filterResultsByLabels(results, labelFlags)
 	app.Printer.PrintResults(results)
 	return nil
+}
+
+// filterResultsByLabels post-filters query results to include only entries
+// that have all the specified labels.
+func filterResultsByLabels(results []query.Result, labels []string) []query.Result {
+	if len(labels) == 0 {
+		return results
+	}
+	var filtered []query.Result
+	for _, r := range results {
+		if entryHasAllLabels(r.Entry, labels) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func entryHasAllLabels(e model.Entry, labels []string) bool {
+	labelSet := make(map[string]bool, len(e.Labels))
+	for _, l := range e.Labels {
+		labelSet[l] = true
+	}
+	for _, l := range labels {
+		if !labelSet[l] {
+			return false
+		}
+	}
+	return true
 }

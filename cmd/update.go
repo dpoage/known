@@ -36,6 +36,8 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	ttl := fs.String("ttl", "", "new TTL (e.g., 24h, 168h; \"0\" to clear)")
 	var metaFlags multiFlag
 	fs.Var(&metaFlags, "meta", "metadata key=value (repeatable, merges; key= to delete)")
+	var labelFlags multiFlag
+	fs.Var(&labelFlags, "label", "labels (repeatable; replaces all labels; --label '' to clear)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -125,6 +127,18 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 		if len(entry.Meta) == 0 {
 			entry.Meta = nil
 		}
+	}
+
+	// Update labels if provided.
+	if fs.Changed("label") {
+		// Filter out empty strings (--label '' clears all labels).
+		var labels []string
+		for _, l := range labelFlags {
+			if l != "" {
+				labels = append(labels, l)
+			}
+		}
+		entry.Labels = labels
 	}
 
 	// Re-embed if content changed.

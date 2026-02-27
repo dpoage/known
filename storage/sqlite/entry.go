@@ -120,6 +120,12 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 		}
 		return fmt.Errorf("create entry: %w", err)
 	}
+
+	if len(entry.Labels) > 0 {
+		if err := saveLabels(ctx, s.conn(ctx), entry.ID.String(), entry.Labels); err != nil {
+			return fmt.Errorf("save labels: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -226,6 +232,18 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 		return nil, fmt.Errorf("create or update entry: %w", err)
 	}
 
+	if len(entry.Labels) > 0 {
+		// Fetch the ID of the resulting row first (may differ from entry.ID on conflict).
+		var resultID string
+		if err := conn.QueryRowContext(ctx, `SELECT id FROM entries WHERE content_hash = ? AND scope = ?`,
+			entry.ContentHash, entry.Scope).Scan(&resultID); err != nil {
+			return nil, fmt.Errorf("fetch result id: %w", err)
+		}
+		if err := saveLabels(ctx, conn, resultID, entry.Labels); err != nil {
+			return nil, fmt.Errorf("save labels: %w", err)
+		}
+	}
+
 	// Fetch the resulting row.
 	_ = result
 	row := conn.QueryRowContext(ctx, `
@@ -234,7 +252,16 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 		WHERE content_hash = ? AND scope = ?
 	`, entry.ContentHash, entry.Scope)
 
-	return scanEntry(row)
+	resultEntry, err := scanEntry(row)
+	if err != nil {
+		return nil, err
+	}
+
+	resultEntry.Labels, err = loadLabels(ctx, conn, resultEntry.ID.String())
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+	return resultEntry, nil
 }
 
 // Get retrieves an entry by ID.
@@ -251,6 +278,11 @@ func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error)
 			return nil, storage.ErrNotFound
 		}
 		return nil, fmt.Errorf("get entry: %w", err)
+	}
+
+	entry.Labels, err = loadLabels(ctx, s.conn(ctx), entry.ID.String())
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
 	}
 	return entry, nil
 }
@@ -328,6 +360,9 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 	n, _ := result.RowsAffected()
 	if n == 1 {
 		entry.Version++
+		if err := saveLabels(ctx, conn, entry.ID.String(), entry.Labels); err != nil {
+			return fmt.Errorf("save labels: %w", err)
+		}
 		return nil
 	}
 
@@ -391,6 +426,11 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		args = append(args, cutoff)
 	}
 
+	for _, label := range filter.Labels {
+		query += " AND EXISTS (SELECT 1 FROM entry_labels WHERE entry_labels.entry_id = entries.id AND entry_labels.label = ?)"
+		args = append(args, label)
+	}
+
 	if !filter.IncludeExpired {
 		now := formatTime(time.Now())
 		query += " AND (expires_at IS NULL OR expires_at > ?)"
@@ -423,7 +463,13 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		}
 		entries = append(entries, *entry)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := loadLabelsForEntries(ctx, s.conn(ctx), entries); err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+	return entries, nil
 }
 
 // SearchSimilar finds entries with embeddings similar to the query vector.
@@ -531,6 +577,20 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Distance < results[j].Distance
 	})
+
+	// Batch-load labels for result entries.
+	if len(results) > 0 {
+		resultEntries := make([]model.Entry, len(results))
+		for i := range results {
+			resultEntries[i] = results[i].Entry
+		}
+		if err := loadLabelsForEntries(ctx, s.conn(ctx), resultEntries); err != nil {
+			return nil, fmt.Errorf("load labels: %w", err)
+		}
+		for i := range results {
+			results[i].Entry = resultEntries[i]
+		}
+	}
 
 	return results, nil
 }
@@ -709,4 +769,68 @@ func nullableInt(i int) *int {
 func isUniqueConstraintError(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed") ||
 		strings.Contains(err.Error(), "constraint failed")
+}
+
+// saveLabels replaces all labels for an entry.
+func saveLabels(ctx context.Context, conn DBTX, entryID string, labels []string) error {
+	if _, err := conn.ExecContext(ctx, `DELETE FROM entry_labels WHERE entry_id = ?`, entryID); err != nil {
+		return fmt.Errorf("delete labels: %w", err)
+	}
+	for _, label := range labels {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO entry_labels (entry_id, label) VALUES (?, ?)`, entryID, label); err != nil {
+			return fmt.Errorf("insert label: %w", err)
+		}
+	}
+	return nil
+}
+
+// loadLabels returns all labels for a single entry.
+func loadLabels(ctx context.Context, conn DBTX, entryID string) ([]string, error) {
+	rows, err := conn.QueryContext(ctx, `SELECT label FROM entry_labels WHERE entry_id = ? ORDER BY label`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		labels = append(labels, l)
+	}
+	return labels, rows.Err()
+}
+
+// loadLabelsForEntries batch-loads labels for a slice of entries to avoid N+1 queries.
+func loadLabelsForEntries(ctx context.Context, conn DBTX, entries []model.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(entries))
+	args := make([]any, len(entries))
+	idxMap := make(map[string]int, len(entries))
+	for i, e := range entries {
+		placeholders[i] = "?"
+		idStr := e.ID.String()
+		args[i] = idStr
+		idxMap[idStr] = i
+	}
+	rows, err := conn.QueryContext(ctx,
+		`SELECT entry_id, label FROM entry_labels WHERE entry_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY entry_id, label`,
+		args...)
+	if err != nil {
+		return fmt.Errorf("batch load labels: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entryID, label string
+		if err := rows.Scan(&entryID, &label); err != nil {
+			return err
+		}
+		if idx, ok := idxMap[entryID]; ok {
+			entries[idx].Labels = append(entries[idx].Labels, label)
+		}
+	}
+	return rows.Err()
 }

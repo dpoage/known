@@ -33,6 +33,8 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	ttl := fs.String("ttl", "", "time-to-live (e.g., 24h, 168h)")
 	var metaFlags multiFlag
 	fs.Var(&metaFlags, "meta", "metadata key=value (repeatable)")
+	var labelFlags multiFlag
+	fs.Var(&labelFlags, "label", "label (repeatable, e.g. --label lang:go --label topic:concurrency)")
 	var linkFlags multiFlag
 	fs.Var(&linkFlags, "link", "create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)")
 
@@ -108,6 +110,17 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 			meta[k] = v
 		}
 		entry.Meta = meta
+	}
+
+	// Set labels (filter out empty strings).
+	if len(labelFlags) > 0 {
+		var labels []string
+		for _, l := range labelFlags {
+			if l != "" {
+				labels = append(labels, l)
+			}
+		}
+		entry.Labels = labels
 	}
 
 	// Generate embedding.

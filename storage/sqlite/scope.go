@@ -141,6 +141,20 @@ func (s *ScopeStore) ListDescendants(ctx context.Context, ancestorPath string) (
 	return scanScopes(rows)
 }
 
+// DeleteEmpty removes scopes that have no entries and no descendant entries.
+func (s *ScopeStore) DeleteEmpty(ctx context.Context) (int64, error) {
+	result, err := s.conn(ctx).ExecContext(ctx, `
+		DELETE FROM scopes
+		WHERE path NOT IN (SELECT DISTINCT scope FROM entries)
+		  AND NOT EXISTS (SELECT 1 FROM entries WHERE entries.scope LIKE scopes.path || '.%')
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("delete empty scopes: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
+}
+
 func scanScopes(rows *sql.Rows) ([]model.Scope, error) {
 	var scopes []model.Scope
 	for rows.Next() {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	flag "github.com/spf13/pflag"
@@ -25,6 +26,8 @@ import (
 func runRecall(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("recall", flag.ContinueOnError)
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
+	var labelFlags multiFlag
+	fs.Var(&labelFlags, "label", "filter by label (repeatable)")
 	limit := fs.Int("limit", 20, "maximum number of results")
 
 	if err := fs.Parse(args); err != nil {
@@ -42,7 +45,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		if *scope == "" {
 			return fmt.Errorf("usage: known recall <query> [--scope <path>]\n       known recall --scope <path>\n\nProvide a query for semantic search, or --scope to list entries in a scope.")
 		}
-		return recallByScope(ctx, app, *scope, *limit)
+		return recallByScope(ctx, app, *scope, *limit, labelFlags)
 	}
 
 	queryText := fs.Arg(0)
@@ -65,14 +68,16 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("recall: %w", err)
 	}
 
+	results = filterResultsByLabels(results, labelFlags)
 	app.Printer.PrintRecallResults(results)
 	return nil
 }
 
 // recallByScope lists all entries in the given scope using the recall plain-text format.
-func recallByScope(ctx context.Context, app *App, scope string, limit int) error {
+func recallByScope(ctx context.Context, app *App, scope string, limit int, labels []string) error {
 	filter := storage.EntryFilter{
 		ScopePrefix: scope,
+		Labels:      labels,
 		Limit:       limit,
 	}
 
@@ -97,6 +102,9 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int) error
 		} else {
 			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
 				e.Scope, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(), e.ID)
+		}
+		if len(e.Labels) > 0 {
+			meta += fmt.Sprintf(" [labels: %s]", strings.Join(e.Labels, ", "))
 		}
 		fmt.Fprintln(app.Printer.w, meta)
 		fmt.Fprintln(app.Printer.w, e.Content)

@@ -64,6 +64,7 @@ type EntryFilter struct {
 	ScopePrefix     string                // hierarchical scope match (scope and all descendants)
 	SourceType      model.SourceType      // filter by source type (file, url, conversation, manual)
 	ProvenanceLevel model.ProvenanceLevel // filter by provenance level
+	Labels          []string              // entries must have ALL specified labels (AND semantics)
 	StalerThan      time.Duration         // filter entries whose observed_at is older than this duration
 	IncludeExpired  bool                  // if false (default), exclude entries past ExpiresAt
 	Limit           int
@@ -170,4 +171,8 @@ type ScopeRepo interface {
 
 	// ListDescendants returns all descendant scopes of the given path.
 	ListDescendants(ctx context.Context, ancestorPath string) ([]model.Scope, error)
+
+	// DeleteEmpty removes scopes that have no entries and no descendant entries.
+	// Returns the number of scopes deleted.
+	DeleteEmpty(ctx context.Context) (int64, error)
 }
