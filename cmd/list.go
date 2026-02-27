@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	flag "github.com/spf13/pflag"
@@ -21,6 +22,8 @@ func runList(ctx context.Context, app *App, args []string) error {
 	sourceType := fs.String("source-type", "", "filter by source type (file, url, conversation, manual)")
 	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
 	stale := fs.String("stale", "", "filter entries older than duration (e.g., 7d, 30d)")
+	var labelFlags multiFlag
+	fs.Var(&labelFlags, "label", "filter by label (repeatable, AND semantics)")
 	limit := fs.Int("limit", 20, "maximum number of results")
 	jsonOut := fs.Bool("json", false, "output as JSON array")
 
@@ -34,6 +37,7 @@ func runList(ctx context.Context, app *App, args []string) error {
 		ScopePrefix:     *scope,
 		SourceType:      model.SourceType(*sourceType),
 		ProvenanceLevel: model.ProvenanceLevel(*provenance),
+		Labels:          []string(labelFlags),
 		Limit:           *limit,
 	}
 
@@ -76,6 +80,9 @@ func runList(ctx context.Context, app *App, args []string) error {
 		fmt.Fprintf(app.Printer.w, "Provenance: %s\n", e.Provenance.Level)
 		fmt.Fprintf(app.Printer.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
 		fmt.Fprintf(app.Printer.w, "Source:     %s\n", e.Source.Type)
+		if len(e.Labels) > 0 {
+			fmt.Fprintf(app.Printer.w, "Labels:     %s\n", strings.Join(e.Labels, ", "))
+		}
 		fmt.Fprintf(app.Printer.w, "Age:        %s\n", formatAge(e.CreatedAt))
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dpoage/known/model"
@@ -128,6 +129,12 @@ func (s *EntryStore) createInner(ctx context.Context, entry *model.Entry) error 
 		}
 		return fmt.Errorf("create entry: %w", err)
 	}
+
+	if len(entry.Labels) > 0 {
+		if err := saveLabels(ctx, s.conn(ctx), entry.ID.String(), entry.Labels); err != nil {
+			return fmt.Errorf("save labels: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -230,6 +237,17 @@ func (s *EntryStore) createOrUpdateInner(ctx context.Context, entry *model.Entry
 	if err != nil {
 		return nil, fmt.Errorf("create or update entry: %w", err)
 	}
+
+	if len(entry.Labels) > 0 {
+		if err := saveLabels(ctx, s.conn(ctx), result.ID.String(), entry.Labels); err != nil {
+			return nil, fmt.Errorf("save labels: %w", err)
+		}
+	}
+
+	result.Labels, err = loadLabels(ctx, s.conn(ctx), result.ID.String())
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
 	return result, nil
 }
 
@@ -247,6 +265,11 @@ func (s *EntryStore) Get(ctx context.Context, id model.ID) (*model.Entry, error)
 			return nil, storage.ErrNotFound
 		}
 		return nil, fmt.Errorf("get entry: %w", err)
+	}
+
+	entry.Labels, err = loadLabels(ctx, s.conn(ctx), entry.ID.String())
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
 	}
 	return entry, nil
 }
@@ -322,6 +345,9 @@ func (s *EntryStore) Update(ctx context.Context, entry *model.Entry) error {
 	if err == nil {
 		// Update succeeded — set the new version on the struct.
 		entry.Version = newVersion
+		if saveErr := saveLabels(ctx, s.conn(ctx), entry.ID.String(), entry.Labels); saveErr != nil {
+			return fmt.Errorf("save labels: %w", saveErr)
+		}
 		return nil
 	}
 
@@ -398,6 +424,12 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		argIdx++
 	}
 
+	for _, label := range filter.Labels {
+		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM entry_labels WHERE entry_labels.entry_id = entries.id AND entry_labels.label = $%d)", argIdx)
+		args = append(args, label)
+		argIdx++
+	}
+
 	if !filter.IncludeExpired {
 		query += " AND (expires_at IS NULL OR expires_at > NOW())"
 	}
@@ -430,7 +462,13 @@ func (s *EntryStore) List(ctx context.Context, filter storage.EntryFilter) ([]mo
 		}
 		entries = append(entries, *entry)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := loadLabelsForEntries(ctx, s.conn(ctx), entries); err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+	return entries, nil
 }
 
 // SearchSimilar finds entries with embeddings similar to the query vector.
@@ -550,7 +588,24 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 
 		results = append(results, storage.SimilarityResult{Entry: entry, Distance: dist})
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Batch-load labels for result entries.
+	if len(results) > 0 {
+		resultEntries := make([]model.Entry, len(results))
+		for i := range results {
+			resultEntries[i] = results[i].Entry
+		}
+		if err := loadLabelsForEntries(ctx, s.conn(ctx), resultEntries); err != nil {
+			return nil, fmt.Errorf("load labels: %w", err)
+		}
+		for i := range results {
+			results[i].Entry = resultEntries[i]
+		}
+	}
+	return results, nil
 }
 
 // DeleteExpired removes entries whose ExpiresAt is in the past.
@@ -692,6 +747,70 @@ func populateEntryV2(
 	}
 
 	return &entry, nil
+}
+
+// saveLabels replaces all labels for an entry.
+func saveLabels(ctx context.Context, conn DBTX, entryID string, labels []string) error {
+	if _, err := conn.Exec(ctx, `DELETE FROM entry_labels WHERE entry_id = $1`, entryID); err != nil {
+		return fmt.Errorf("delete labels: %w", err)
+	}
+	for _, label := range labels {
+		if _, err := conn.Exec(ctx, `INSERT INTO entry_labels (entry_id, label) VALUES ($1, $2)`, entryID, label); err != nil {
+			return fmt.Errorf("insert label: %w", err)
+		}
+	}
+	return nil
+}
+
+// loadLabels returns all labels for a single entry.
+func loadLabels(ctx context.Context, conn DBTX, entryID string) ([]string, error) {
+	rows, err := conn.Query(ctx, `SELECT label FROM entry_labels WHERE entry_id = $1 ORDER BY label`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		labels = append(labels, l)
+	}
+	return labels, rows.Err()
+}
+
+// loadLabelsForEntries batch-loads labels for a slice of entries to avoid N+1 queries.
+func loadLabelsForEntries(ctx context.Context, conn DBTX, entries []model.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(entries))
+	args := make([]any, len(entries))
+	idxMap := make(map[string]int, len(entries))
+	for i, e := range entries {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		idStr := e.ID.String()
+		args[i] = idStr
+		idxMap[idStr] = i
+	}
+	rows, err := conn.Query(ctx,
+		`SELECT entry_id, label FROM entry_labels WHERE entry_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY entry_id, label`,
+		args...)
+	if err != nil {
+		return fmt.Errorf("batch load labels: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entryID, label string
+		if err := rows.Scan(&entryID, &label); err != nil {
+			return err
+		}
+		if idx, ok := idxMap[entryID]; ok {
+			entries[idx].Labels = append(entries[idx].Labels, label)
+		}
+	}
+	return rows.Err()
 }
 
 // nullableString returns nil for empty strings.

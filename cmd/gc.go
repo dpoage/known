@@ -19,5 +19,15 @@ func runGC(ctx context.Context, app *App, args []string) error {
 	}
 
 	app.Printer.PrintMessage("Deleted %d expired entries.", count)
+
+	scopeCount, err := app.Scopes.DeleteEmpty(ctx)
+	if err != nil {
+		return fmt.Errorf("prune empty scopes: %w", err)
+	}
+
+	if scopeCount > 0 {
+		app.Printer.PrintMessage("Pruned %d empty scopes.", scopeCount)
+	}
+
 	return nil
 }

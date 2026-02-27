@@ -36,6 +36,9 @@ func (p *Printer) PrintEntry(e model.Entry) {
 	fmt.Fprintf(p.w, "Content:    %s\n", truncate(e.Content, 200))
 	fmt.Fprintf(p.w, "Scope:      %s\n", e.Scope)
 	fmt.Fprintf(p.w, "Source:     %s (%s)\n", e.Source.Reference, e.Source.Type)
+	if len(e.Labels) > 0 {
+		fmt.Fprintf(p.w, "Labels:     %s\n", strings.Join(e.Labels, ", "))
+	}
 	fmt.Fprintf(p.w, "Provenance: %s\n", e.Provenance.Level)
 	fmt.Fprintf(p.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
 	fmt.Fprintf(p.w, "Version:    %d\n", e.Version)
@@ -173,6 +176,9 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		} else {
 			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
 				r.Entry.Scope, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(), r.Entry.ID)
+		}
+		if len(r.Entry.Labels) > 0 {
+			meta += fmt.Sprintf(" [labels: %s]", strings.Join(r.Entry.Labels, ", "))
 		}
 		if r.HasConflict {
 			meta += " (conflicts with existing entries)"

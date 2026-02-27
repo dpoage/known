@@ -137,7 +137,7 @@ Commands:
   path       Find shortest path between entries
   link       Create an edge between entries
   unlink     Delete an edge
-  scope      Manage scopes (list, create, tree)
+  scope      Manage scopes (list, create, delete, tree)
   gc         Delete expired entries
   stats      Show knowledge graph statistics
   export     Export entries as JSON or JSONL

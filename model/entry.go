@@ -36,6 +36,7 @@ type Entry struct {
 	TTL            *Duration  `json:"ttl,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	Meta           Metadata   `json:"meta,omitempty"`
+	Labels         []string   `json:"labels,omitempty"`
 	Version        int        `json:"version"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
@@ -170,6 +171,12 @@ func (e Entry) WithFreshness(f Freshness) Entry {
 // WithMeta returns a copy of the entry with the metadata set.
 func (e Entry) WithMeta(m Metadata) Entry {
 	e.Meta = m
+	return e
+}
+
+// WithLabels returns a copy of the entry with the labels set.
+func (e Entry) WithLabels(labels []string) Entry {
+	e.Labels = labels
 	return e
 }
 
