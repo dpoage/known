@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -37,4 +38,30 @@ func TestVcsInfo(t *testing.T) {
 	// vcsInfo reads from runtime/debug.ReadBuildInfo which is available
 	// in test binaries. Just verify it doesn't panic.
 	_ = vcsInfo()
+}
+
+func TestVersionSubcommand(t *testing.T) {
+	cap := captureStdout(t)
+	code := Run(context.Background(), []string{"version"})
+	got := cap.restore()
+
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if !strings.HasPrefix(got, "known ") {
+		t.Errorf("output: got %q, want prefix %q", got, "known ")
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	cap := captureStdout(t)
+	code := Run(context.Background(), []string{"--version"})
+	got := cap.restore()
+
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if !strings.HasPrefix(got, "known ") {
+		t.Errorf("output: got %q, want prefix %q", got, "known ")
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	flag "github.com/spf13/pflag"
 
@@ -158,12 +159,14 @@ func Run(ctx context.Context, args []string) int {
 	}
 
 	// Check for --version before flag parsing (pflag would swallow it).
+	// Stop at the first non-flag argument (the subcommand) to avoid
+	// hijacking -v or --version from subcommand args.
 	for _, a := range args {
-		if a == "--version" || a == "-v" {
+		if a == "--version" {
 			runVersion()
 			return 0
 		}
-		if a == "--" {
+		if a == "--" || !strings.HasPrefix(a, "-") {
 			break
 		}
 	}
@@ -187,7 +190,7 @@ func Run(ctx context.Context, args []string) int {
 		return 0
 	}
 
-	if subcmd == "version" || subcmd == "--version" {
+	if subcmd == "version" {
 		runVersion()
 		return 0
 	}
