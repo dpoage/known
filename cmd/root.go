@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	flag "github.com/spf13/pflag"
 
@@ -143,6 +144,7 @@ Commands:
   export     Export entries as JSON or JSONL
   import     Import entries from JSON or JSONL
   completion Generate shell completions (bash, fish, zsh)
+  version    Print version information
 
 Run 'known <command> --help' for details on a specific command.
 `)
@@ -154,6 +156,19 @@ func Run(ctx context.Context, args []string) int {
 	if len(args) < 1 {
 		usage()
 		return 0
+	}
+
+	// Check for --version before flag parsing (pflag would swallow it).
+	// Stop at the first non-flag argument (the subcommand) to avoid
+	// hijacking -v or --version from subcommand args.
+	for _, a := range args {
+		if a == "--version" {
+			runVersion()
+			return 0
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			break
+		}
 	}
 
 	gf, remaining := parseGlobalFlags(args)
@@ -172,6 +187,11 @@ func Run(ctx context.Context, args []string) int {
 	// Commands that don't need app init (no DB connection).
 	if subcmd == "help" || subcmd == "--help" || subcmd == "-h" {
 		usage()
+		return 0
+	}
+
+	if subcmd == "version" {
+		runVersion()
 		return 0
 	}
 
