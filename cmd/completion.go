@@ -113,6 +113,7 @@ var commands = []cmdDef{
 	}},
 	{name: "import", desc: "Import entries from JSON or JSONL"},
 	{name: "completion", desc: "Generate shell completions (bash, fish, zsh)"},
+	{name: "version", desc: "Print version information"},
 }
 
 // globalFlagDefs are the flags available before any subcommand.
