@@ -10,6 +10,7 @@ import (
 	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/query"
 )
 
 const (
@@ -162,6 +163,17 @@ func runSessionEnd(ctx context.Context, app *App, args []string) error {
 	}
 
 	app.Printer.PrintMessage("Session %s ended.", idStr)
+
+	// Best-effort reinforcement.
+	cfg := query.DefaultReinforceConfig()
+	result, err := app.Engine.Reinforce(ctx, app.Sessions, app.DB.WithTx, cfg)
+	if err != nil {
+		app.Printer.PrintMessage("Warning: edge reinforcement: %v", err)
+	} else if result.SessionsProcessed > 0 {
+		app.Printer.PrintMessage("Reinforced %d edges from %d sessions.",
+			result.EdgesBoosted, result.SessionsProcessed)
+	}
+
 	return nil
 }
 

@@ -27,6 +27,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v known >/dev/null && known session end 2>/dev/null || true"
+          }
+        ]
+      }
     ]
   }
 }

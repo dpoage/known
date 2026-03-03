@@ -3,10 +3,12 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
 )
 
@@ -82,6 +84,24 @@ func (s *stubSessionRepo) MarkProcessed(_ context.Context, sessionID model.ID) e
 
 var _ storage.SessionRepo = (*stubSessionRepo)(nil)
 
+// stubBackend provides a pass-through WithTx for tests.
+type stubBackend struct {
+	sessions storage.SessionRepo
+	edges    storage.EdgeRepo
+}
+
+func (b *stubBackend) Entries() storage.EntryRepo    { return nil }
+func (b *stubBackend) Edges() storage.EdgeRepo       { return b.edges }
+func (b *stubBackend) Scopes() storage.ScopeRepo     { return nil }
+func (b *stubBackend) Sessions() storage.SessionRepo { return b.sessions }
+func (b *stubBackend) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+func (b *stubBackend) Close() error   { return nil }
+func (b *stubBackend) Migrate() error { return nil }
+
+var _ storage.Backend = (*stubBackend)(nil)
+
 func TestRunSession_StartCreatesSession(t *testing.T) {
 	// Override HOME to prevent reading a real ~/.known/session file.
 	t.Setenv("HOME", t.TempDir())
@@ -116,6 +136,8 @@ func TestRunSession_StartCreatesSession(t *testing.T) {
 
 func TestRunSession_EndTerminatesSession(t *testing.T) {
 	sessions := newStubSessionRepo()
+	edges := &stubEdgeRepo{}
+	db := &stubBackend{sessions: sessions, edges: edges}
 
 	// Create a session directly in the stub.
 	sessID := model.NewID()
@@ -130,7 +152,10 @@ func TestRunSession_EndTerminatesSession(t *testing.T) {
 
 	var buf bytes.Buffer
 	app := &App{
+		DB:       db,
 		Sessions: sessions,
+		Edges:    edges,
+		Engine:   query.New(nil, edges, nil),
 		Printer:  NewPrinter(&buf, false, false),
 		Config:   &AppConfig{DefaultScope: "test"},
 	}
@@ -144,6 +169,54 @@ func TestRunSession_EndTerminatesSession(t *testing.T) {
 	sess := sessions.sessions[sessID.String()]
 	if sess.EndedAt == nil {
 		t.Error("session should have ended_at set")
+	}
+}
+
+func TestRunSession_EndRunsReinforcement(t *testing.T) {
+	sessions := newStubSessionRepo()
+	edges := &stubEdgeRepo{}
+	db := &stubBackend{sessions: sessions, edges: edges}
+
+	// Create a session with recall-then-show events (triggers reinforcement).
+	sessID := model.NewID()
+	sessions.sessions[sessID.String()] = &model.Session{
+		ID:        sessID,
+		StartedAt: time.Now(),
+		Scope:     "test",
+	}
+
+	entryID := model.NewID()
+	sessions.events = []model.SessionEvent{
+		{ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall, Query: "test", CreatedAt: time.Now()},
+		{ID: model.NewID(), SessionID: sessID, EventType: model.EventShow, EntryIDs: []model.ID{entryID}, CreatedAt: time.Now()},
+	}
+
+	t.Setenv("KNOWN_SESSION", sessID.String())
+
+	var buf bytes.Buffer
+	app := &App{
+		DB:       db,
+		Sessions: sessions,
+		Edges:    edges,
+		Engine:   query.New(nil, edges, nil),
+		Printer:  NewPrinter(&buf, false, false),
+		Config:   &AppConfig{DefaultScope: "test"},
+	}
+
+	err := runSession(context.Background(), app, []string{"end"})
+	if err != nil {
+		t.Fatalf("session end: %v", err)
+	}
+
+	// Session should be marked as processed by reinforcement.
+	if !sessions.processed[sessID.String()] {
+		t.Error("session should be marked as processed after reinforcement")
+	}
+
+	// Output should mention reinforcement (0 edges boosted since stubEdgeRepo returns no edges).
+	output := buf.String()
+	if !strings.Contains(output, "Reinforced") {
+		t.Errorf("expected reinforcement message, got: %s", output)
 	}
 }
 
