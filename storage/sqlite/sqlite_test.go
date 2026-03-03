@@ -988,6 +988,161 @@ func TestEdgeCascadeDeleteOnEntry(t *testing.T) {
 	}
 }
 
+func TestEdgeUpdate(t *testing.T) {
+	ctx := context.Background()
+	edges := testDB.Edges()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("sedgeupd")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("from-upd", src).WithScope("sedgeupd")
+	e2 := model.NewEntry("to-upd", src).WithScope("sedgeupd")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create entry: %v", err)
+		}
+	}
+
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+	if err := edges.Create(ctx, &edge); err != nil {
+		t.Fatalf("Create edge: %v", err)
+	}
+
+	// Update weight.
+	newWeight := 0.8
+	edge.Weight = &newWeight
+	edge.Meta = model.Metadata{"updated": true}
+	if err := edges.Update(ctx, &edge); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := edges.Get(ctx, edge.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if got.Weight == nil || *got.Weight != 0.8 {
+		t.Errorf("Weight = %v, want 0.8", got.Weight)
+	}
+	if got.Meta.Get("updated") != true {
+		t.Errorf("Meta[updated] = %v, want true", got.Meta.Get("updated"))
+	}
+}
+
+func TestEdgeUpdateNotFound(t *testing.T) {
+	ctx := context.Background()
+	edges := testDB.Edges()
+
+	edge := model.NewEdge(model.NewID(), model.NewID(), model.EdgeRelatedTo)
+	if err := edges.Update(ctx, &edge); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestEdgeUpdateWeightBounds(t *testing.T) {
+	ctx := context.Background()
+	edges := testDB.Edges()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("sedgewb")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("from-wb", src).WithScope("sedgewb")
+	e2 := model.NewEntry("to-wb", src).WithScope("sedgewb")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create entry: %v", err)
+		}
+	}
+
+	// Create edge with weight 0.0 (lower bound).
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.0)
+	if err := edges.Create(ctx, &edge); err != nil {
+		t.Fatalf("Create edge: %v", err)
+	}
+
+	got, err := edges.Get(ctx, edge.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Weight == nil || *got.Weight != 0.0 {
+		t.Errorf("Weight = %v, want 0.0", got.Weight)
+	}
+
+	// Update to weight 1.0 (upper bound).
+	maxWeight := 1.0
+	edge.Weight = &maxWeight
+	if err := edges.Update(ctx, &edge); err != nil {
+		t.Fatalf("Update to 1.0: %v", err)
+	}
+
+	got, err = edges.Get(ctx, edge.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if got.Weight == nil || *got.Weight != 1.0 {
+		t.Errorf("Weight = %v, want 1.0", got.Weight)
+	}
+}
+
+func TestEdgeUpdateNilWeight(t *testing.T) {
+	ctx := context.Background()
+	edges := testDB.Edges()
+	entries := testDB.Entries()
+	scopes := testDB.Scopes()
+
+	scope := model.NewScope("sedgenilw")
+	if err := scopes.Upsert(ctx, &scope); err != nil {
+		t.Fatalf("Upsert scope: %v", err)
+	}
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("from-nilw", src).WithScope("sedgenilw")
+	e2 := model.NewEntry("to-nilw", src).WithScope("sedgenilw")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create entry: %v", err)
+		}
+	}
+
+	// Create edge with nil weight.
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo)
+	if err := edges.Create(ctx, &edge); err != nil {
+		t.Fatalf("Create edge: %v", err)
+	}
+
+	got, err := edges.Get(ctx, edge.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Weight != nil {
+		t.Errorf("Weight = %v, want nil", got.Weight)
+	}
+
+	// Update nil weight to a value.
+	w := 0.75
+	edge.Weight = &w
+	if err := edges.Update(ctx, &edge); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err = edges.Get(ctx, edge.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if got.Weight == nil || *got.Weight != 0.75 {
+		t.Errorf("Weight = %v, want 0.75", got.Weight)
+	}
+}
+
 // =============================================================================
 // Concurrency / Version Tests
 // =============================================================================

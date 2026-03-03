@@ -73,6 +73,25 @@ func (s *EdgeStore) Get(ctx context.Context, id model.ID) (*model.Edge, error) {
 	return edge, nil
 }
 
+// Update modifies an existing edge's weight and metadata.
+func (s *EdgeStore) Update(ctx context.Context, edge *model.Edge) error {
+	metaJSON, err := marshalNullableJSON(edge.Meta)
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+
+	tag, err := s.conn(ctx).Exec(ctx, `
+		UPDATE edges SET weight = $1, meta = $2 WHERE id = $3
+	`, edge.Weight, metaJSON, edge.ID.String())
+	if err != nil {
+		return fmt.Errorf("update edge: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
+}
+
 // Delete removes an edge by ID.
 func (s *EdgeStore) Delete(ctx context.Context, id model.ID) error {
 	tag, err := s.conn(ctx).Exec(ctx, `DELETE FROM edges WHERE id = $1`, id.String())

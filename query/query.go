@@ -187,6 +187,15 @@ func blendScore(similarity, freshness, recencyWeight float64) float64 {
 	return (1-w)*similarity + w*freshness
 }
 
+// edgeWeight returns the effective weight of an edge.
+// If the weight is nil (unset), it defaults to 1.0 (full strength).
+func edgeWeight(edge model.Edge) float64 {
+	if edge.Weight == nil {
+		return 1.0
+	}
+	return *edge.Weight
+}
+
 func clamp(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo

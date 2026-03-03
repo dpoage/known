@@ -209,6 +209,15 @@ func (m *mockEdgeRepo) Get(_ context.Context, id model.ID) (*model.Edge, error) 
 	return &clone, nil
 }
 
+func (m *mockEdgeRepo) Update(_ context.Context, edge *model.Edge) error {
+	if _, ok := m.edges[edge.ID.String()]; !ok {
+		return storage.ErrNotFound
+	}
+	clone := *edge
+	m.edges[edge.ID.String()] = &clone
+	return nil
+}
+
 func (m *mockEdgeRepo) Delete(_ context.Context, id model.ID) error {
 	if _, ok := m.edges[id.String()]; !ok {
 		return storage.ErrNotFound
@@ -1224,6 +1233,143 @@ func TestSearchHybrid_EdgeTypeFilter(t *testing.T) {
 	if foundE3 {
 		t.Error("dependency entry should NOT be in expansion results (filtered by edge type)")
 	}
+}
+
+func TestSearchHybrid_EdgeWeightAffectsScore(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	e1 := mustCreateEntry(t, f.entryRepo, makeEntry("source", "root", []float32{0.95, 0.1, 0.0}))
+	e2 := mustCreateEntry(t, f.entryRepo, makeEntry("strong connection", "root", nil))
+	e3 := mustCreateEntry(t, f.entryRepo, makeEntry("weak connection", "root", nil))
+
+	strongWeight := 0.9
+	weakWeight := 0.3
+
+	strongEdge := model.NewEdge(e1.ID, e2.ID, model.EdgeElaborates)
+	strongEdge.Weight = &strongWeight
+	if err := f.edgeRepo.Create(ctx, &strongEdge); err != nil {
+		t.Fatalf("create strong edge: %v", err)
+	}
+
+	weakEdge := model.NewEdge(e1.ID, e3.ID, model.EdgeElaborates)
+	weakEdge.Weight = &weakWeight
+	if err := f.edgeRepo.Create(ctx, &weakEdge); err != nil {
+		t.Fatalf("create weak edge: %v", err)
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test",
+			Scope: "root",
+			Limit: 5,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+
+	var e2Score, e3Score float64
+	for _, r := range results {
+		if r.Entry.ID == e2.ID {
+			e2Score = r.Score
+		}
+		if r.Entry.ID == e3.ID {
+			e3Score = r.Score
+		}
+	}
+
+	if e2Score != 0.9 {
+		t.Errorf("strong edge result score = %f, want 0.9", e2Score)
+	}
+	if e3Score != 0.3 {
+		t.Errorf("weak edge result score = %f, want 0.3", e3Score)
+	}
+	if e2Score <= e3Score {
+		t.Errorf("strong edge score (%f) should be greater than weak edge score (%f)", e2Score, e3Score)
+	}
+}
+
+func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	e1 := mustCreateEntry(t, f.entryRepo, makeEntry("source", "root", []float32{0.95, 0.1, 0.0}))
+	e2 := mustCreateEntry(t, f.entryRepo, makeEntry("connected with nil weight", "root", nil))
+
+	// Create edge with nil weight (no WithWeight call).
+	mustCreateEdge(t, f.edgeRepo, e1.ID, e2.ID, model.EdgeElaborates)
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test",
+			Scope: "root",
+			Limit: 5,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+
+	for _, r := range results {
+		if r.Entry.ID == e2.ID {
+			if r.Score != 1.0 {
+				t.Errorf("nil weight expansion score = %f, want 1.0", r.Score)
+			}
+			return
+		}
+	}
+	t.Error("expanded entry e2 not found in results")
+}
+
+func TestEdgeWeight_Helper(t *testing.T) {
+	// Test the edgeWeight function directly.
+	t.Run("nil weight returns 1.0", func(t *testing.T) {
+		edge := model.NewEdge(model.NewID(), model.NewID(), model.EdgeRelatedTo)
+		score := edgeWeight(edge)
+		if score != 1.0 {
+			t.Errorf("edgeWeight(nil) = %f, want 1.0", score)
+		}
+	})
+
+	t.Run("explicit weight returned", func(t *testing.T) {
+		w := 0.5
+		edge := model.Edge{Weight: &w}
+		score := edgeWeight(edge)
+		if score != 0.5 {
+			t.Errorf("edgeWeight(0.5) = %f, want 0.5", score)
+		}
+	})
+
+	t.Run("zero weight", func(t *testing.T) {
+		w := 0.0
+		edge := model.Edge{Weight: &w}
+		score := edgeWeight(edge)
+		if score != 0.0 {
+			t.Errorf("edgeWeight(0.0) = %f, want 0.0", score)
+		}
+	})
+
+	t.Run("max weight", func(t *testing.T) {
+		w := 1.0
+		edge := model.Edge{Weight: &w}
+		score := edgeWeight(edge)
+		if score != 1.0 {
+			t.Errorf("edgeWeight(1.0) = %f, want 1.0", score)
+		}
+	})
 }
 
 // =============================================================================

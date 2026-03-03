@@ -125,6 +125,10 @@ type EdgeRepo interface {
 	// Get retrieves an edge by ID. Returns ErrNotFound if it does not exist.
 	Get(ctx context.Context, id model.ID) (*model.Edge, error)
 
+	// Update modifies an existing edge's weight and metadata.
+	// Returns ErrNotFound if the edge does not exist.
+	Update(ctx context.Context, edge *model.Edge) error
+
 	// Delete removes an edge by ID. Returns ErrNotFound if it does not exist.
 	Delete(ctx context.Context, id model.ID) error
 
