@@ -209,6 +209,15 @@ func (m *mockEdgeRepo) Get(_ context.Context, id model.ID) (*model.Edge, error) 
 	return &clone, nil
 }
 
+func (m *mockEdgeRepo) Update(_ context.Context, edge *model.Edge) error {
+	if _, ok := m.edges[edge.ID.String()]; !ok {
+		return storage.ErrNotFound
+	}
+	clone := *edge
+	m.edges[edge.ID.String()] = &clone
+	return nil
+}
+
 func (m *mockEdgeRepo) Delete(_ context.Context, id model.ID) error {
 	if _, ok := m.edges[id.String()]; !ok {
 		return storage.ErrNotFound
