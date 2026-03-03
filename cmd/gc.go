@@ -34,7 +34,7 @@ func runGC(ctx context.Context, app *App, args []string) error {
 
 	// Reinforce edge weights based on session usage signals.
 	cfg := query.DefaultReinforceConfig()
-	result, err := app.Engine.Reinforce(ctx, app.Sessions, cfg)
+	result, err := app.Engine.Reinforce(ctx, app.Sessions, app.DB.WithTx, cfg)
 	if err != nil {
 		app.Printer.PrintMessage("Warning: edge reinforcement: %v", err)
 	} else if result.SessionsProcessed > 0 {

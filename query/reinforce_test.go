@@ -75,6 +75,11 @@ func (m *mockSessionRepo) MarkProcessed(_ context.Context, sessionID model.ID) e
 	return nil
 }
 
+// noopTx is a pass-through TxFunc for testing (no real transaction needed).
+func noopTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 func TestReinforce_ActionAfterRecall(t *testing.T) {
 	ctx := context.Background()
 
@@ -119,7 +124,7 @@ func TestReinforce_ActionAfterRecall(t *testing.T) {
 	})
 
 	cfg := DefaultReinforceConfig()
-	result, err := engine.Reinforce(ctx, sessions, cfg)
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -180,7 +185,7 @@ func TestReinforce_NoRecallNoBoost(t *testing.T) {
 		CreatedAt: now,
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -231,7 +236,7 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -281,7 +286,7 @@ func TestReinforce_NilWeightBoosted(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -312,7 +317,7 @@ func TestReinforce_OpenSessionIgnored(t *testing.T) {
 		StartedAt: time.Now(),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -356,7 +361,7 @@ func TestReinforce_IdempotentProcessing(t *testing.T) {
 
 	// First run.
 	cfg := DefaultReinforceConfig()
-	r1, err := engine.Reinforce(ctx, sessions, cfg)
+	r1, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce(1): %v", err)
 	}
@@ -369,7 +374,7 @@ func TestReinforce_IdempotentProcessing(t *testing.T) {
 	weightAfterFirst := *got.Weight
 
 	// Second run — session already processed.
-	r2, err := engine.Reinforce(ctx, sessions, cfg)
+	r2, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce(2): %v", err)
 	}
@@ -417,7 +422,7 @@ func TestReinforce_SearchAlsoTriggersRecall(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -477,7 +482,7 @@ func TestReinforce_MultipleSessions(t *testing.T) {
 	})
 
 	cfg := DefaultReinforceConfig()
-	result, err := engine.Reinforce(ctx, sessions, cfg)
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -531,7 +536,7 @@ func TestReinforce_LinkActionBoostsEdge(t *testing.T) {
 	})
 
 	cfg := DefaultReinforceConfig()
-	result, err := engine.Reinforce(ctx, sessions, cfg)
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}

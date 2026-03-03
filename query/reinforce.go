@@ -31,10 +31,16 @@ type ReinforceResult struct {
 	EdgesBoosted      int
 }
 
+// TxFunc wraps a function in a database transaction. The function receives
+// a context that carries the transaction; all repo operations using that
+// context participate in the same transaction.
+type TxFunc func(ctx context.Context, fn func(ctx context.Context) error) error
+
 // Reinforce analyzes unprocessed sessions for action-after-recall patterns
-// and boosts connected edge weights. Sessions are marked as processed
-// afterward (idempotent via session_reinforcements table).
-func (e *Engine) Reinforce(ctx context.Context, sessions storage.SessionRepo, cfg ReinforceConfig) (*ReinforceResult, error) {
+// and boosts connected edge weights. Each session's edge boosts and
+// mark-as-processed are wrapped in a transaction to prevent double-boosting
+// on partial failure. Sessions are idempotent via session_reinforcements table.
+func (e *Engine) Reinforce(ctx context.Context, sessions storage.SessionRepo, withTx TxFunc, cfg ReinforceConfig) (*ReinforceResult, error) {
 	unprocessed, err := sessions.ListUnprocessedSessions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list unprocessed sessions: %w", err)
@@ -43,16 +49,23 @@ func (e *Engine) Reinforce(ctx context.Context, sessions storage.SessionRepo, cf
 	result := &ReinforceResult{}
 
 	for _, session := range unprocessed {
-		boosted, err := e.processSession(ctx, sessions, session.ID, cfg)
+		var boosted int
+		err := withTx(ctx, func(txCtx context.Context) error {
+			var err error
+			boosted, err = e.processSession(txCtx, sessions, session.ID, cfg)
+			if err != nil {
+				return fmt.Errorf("process session %s: %w", session.ID, err)
+			}
+			if err := sessions.MarkProcessed(txCtx, session.ID); err != nil {
+				return fmt.Errorf("mark processed %s: %w", session.ID, err)
+			}
+			return nil
+		})
 		if err != nil {
-			return nil, fmt.Errorf("process session %s: %w", session.ID, err)
+			return nil, err
 		}
 		result.EdgesBoosted += boosted
 		result.SessionsProcessed++
-
-		if err := sessions.MarkProcessed(ctx, session.ID); err != nil {
-			return nil, fmt.Errorf("mark processed %s: %w", session.ID, err)
-		}
 	}
 
 	return result, nil
