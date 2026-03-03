@@ -8,9 +8,25 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
 )
+
+// validProvenanceLevels lists the accepted --provenance values.
+var validProvenanceLevels = map[model.ProvenanceLevel]bool{
+	model.ProvenanceVerified:  true,
+	model.ProvenanceInferred:  true,
+	model.ProvenanceUncertain: true,
+}
+
+// validSourceTypes lists the accepted --source values.
+var validSourceTypes = map[model.SourceType]bool{
+	model.SourceFile:         true,
+	model.SourceURL:          true,
+	model.SourceConversation: true,
+	model.SourceManual:       true,
+}
 
 // runRecall implements the "known recall" subcommand — an LLM-optimized
 // retrieval command that returns clean, context-ready text.
@@ -20,8 +36,7 @@ import (
 //	known recall <query> [--scope <path>]       — semantic search
 //	known recall --scope <path>                 — list all entries in scope
 //
-// Unlike "search", recall uses hardcoded parameters tuned for LLM consumption
-// and outputs plain text without scores, timestamps, or JSON structure.
+// Flags allow tuning the search parameters while preserving LLM-friendly output.
 // Entry IDs are always included so agents can act on results (link, update, delete).
 func runRecall(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("recall", flag.ContinueOnError)
@@ -29,9 +44,28 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	var labelFlags multiFlag
 	fs.Var(&labelFlags, "label", "filter by label (repeatable)")
 	limit := fs.Int("limit", 20, "maximum number of results")
+	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
+	recency := fs.Float64("recency", 0.1, "recency weight (0=pure similarity, 1=pure recency)")
+	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth (hops from each vector result)")
+	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
+	source := fs.String("source", "", "filter by source type (file, url, conversation, manual)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Validate provenance if provided.
+	if *provenance != "" {
+		if !validProvenanceLevels[model.ProvenanceLevel(*provenance)] {
+			return fmt.Errorf("invalid --provenance %q: must be one of verified, inferred, uncertain", *provenance)
+		}
+	}
+
+	// Validate source if provided.
+	if *source != "" {
+		if !validSourceTypes[model.SourceType(*source)] {
+			return fmt.Errorf("invalid --source %q: must be one of file, url, conversation, manual", *source)
+		}
 	}
 
 	if *scope == "" {
@@ -45,7 +79,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		if *scope == "" {
 			return fmt.Errorf("usage: known recall <query> [--scope <path>]\n       known recall --scope <path>\n\nProvide a query for semantic search, or --scope to list entries in a scope.")
 		}
-		return recallByScope(ctx, app, *scope, *limit, labelFlags)
+		return recallByScope(ctx, app, *scope, *limit, labelFlags,
+			model.ProvenanceLevel(*provenance), model.SourceType(*source))
 	}
 
 	queryText := fs.Arg(0)
@@ -55,11 +90,11 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 			Text:            queryText,
 			Scope:           *scope,
 			Limit:           5,
-			Threshold:       0.3,
-			RecencyWeight:   0.1,
+			Threshold:       *threshold,
+			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
 		},
-		ExpandDepth:     1,
+		ExpandDepth:     *expandDepth,
 		ExpandDirection: query.Both,
 	}
 
@@ -69,16 +104,22 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	}
 
 	results = filterResultsByLabels(results, labelFlags)
+	results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
+	results = filterResultsBySource(results, model.SourceType(*source))
 	app.Printer.PrintRecallResults(results)
 	return nil
 }
 
 // recallByScope lists all entries in the given scope using the recall plain-text format.
-func recallByScope(ctx context.Context, app *App, scope string, limit int, labels []string) error {
+func recallByScope(ctx context.Context, app *App, scope string, limit int, labels []string,
+	provenance model.ProvenanceLevel, source model.SourceType) error {
+
 	filter := storage.EntryFilter{
-		ScopePrefix: scope,
-		Labels:      labels,
-		Limit:       limit,
+		ScopePrefix:     scope,
+		Labels:          labels,
+		ProvenanceLevel: provenance,
+		SourceType:      source,
+		Limit:           limit,
 	}
 
 	entries, err := app.Entries.List(ctx, filter)
@@ -111,4 +152,34 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int, label
 	}
 
 	return nil
+}
+
+// filterResultsByProvenance post-filters query results to include only entries
+// with the specified provenance level. Returns results unchanged if level is empty.
+func filterResultsByProvenance(results []query.Result, level model.ProvenanceLevel) []query.Result {
+	if level == "" {
+		return results
+	}
+	var filtered []query.Result
+	for _, r := range results {
+		if r.Entry.Provenance.Level == level {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+// filterResultsBySource post-filters query results to include only entries
+// with the specified source type. Returns results unchanged if sourceType is empty.
+func filterResultsBySource(results []query.Result, sourceType model.SourceType) []query.Result {
+	if sourceType == "" {
+		return results
+	}
+	var filtered []query.Result
+	for _, r := range results {
+		if r.Entry.Source.Type == sourceType {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }

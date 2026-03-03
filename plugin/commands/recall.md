@@ -1,6 +1,6 @@
 ---
 description: Retrieve knowledge relevant to a query
-argument-hint: <query>
+argument-hint: <query> [flags]
 ---
 
 Retrieve knowledge relevant to a query, optimized for LLM context.
@@ -30,6 +30,19 @@ known recall '<query>'
 
 4. If no results are returned, tell the user no matching knowledge was found. Suggest `/known:search` with a lower `--threshold` to broaden the search.
 
+### Available flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scope` | auto | Scope to search within |
+| `--limit` | 20 | Maximum results (scope-listing mode) |
+| `--threshold` | 0.3 | Minimum similarity score (0-1) |
+| `--recency` | 0.1 | Recency weight (0=similarity only, 1=recency only) |
+| `--expand-depth` | 1 | Graph expansion depth (hops from each vector result) |
+| `--provenance` | | Filter by provenance level: `verified`, `inferred`, `uncertain` |
+| `--source` | | Filter by source type: `file`, `url`, `conversation`, `manual` |
+| `--label` | | Filter by label (repeatable, AND semantics) |
+
 ## Scope
 
 The scope is auto-derived from the current working directory. To search a different scope, pass `--scope`:
@@ -48,9 +61,12 @@ known recall 'database connection pooling config'
 known recall 'authentication flow' --scope backend
 known recall 'deployment process'
 known recall 'API conventions and patterns' --scope backend.api
+known recall 'auth decisions' --provenance verified
+known recall 'config values' --source file --threshold 0.5
+known recall 'patterns' --provenance inferred --recency 0.3
 ```
 
 ## Recall vs Search
 
-- **`/known:recall`** — Quick retrieval, plain text output tuned for LLM context. Use by default.
+- **`/known:recall`** — Quick retrieval, plain text output tuned for LLM context. Use by default. Supports filtering and tuning via flags.
 - **`/known:search`** — Full control: `--limit`, `--threshold`, `--hybrid`, `--json`. Use when you need entry IDs (for show/update/delete) or fine-grained results.
