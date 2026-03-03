@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
+
+	flag "github.com/spf13/pflag"
+
+	"github.com/dpoage/known/query"
 )
 
 func runGC(ctx context.Context, app *App, args []string) error {
@@ -27,6 +30,16 @@ func runGC(ctx context.Context, app *App, args []string) error {
 
 	if scopeCount > 0 {
 		app.Printer.PrintMessage("Pruned %d empty scopes.", scopeCount)
+	}
+
+	// Reinforce edge weights based on session usage signals.
+	cfg := query.DefaultReinforceConfig()
+	result, err := app.Engine.Reinforce(ctx, app.Sessions, cfg)
+	if err != nil {
+		app.Printer.PrintMessage("Warning: edge reinforcement: %v", err)
+	} else if result.SessionsProcessed > 0 {
+		app.Printer.PrintMessage("Reinforced %d edges from %d sessions.",
+			result.EdgesBoosted, result.SessionsProcessed)
 	}
 
 	return nil
