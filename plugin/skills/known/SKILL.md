@@ -34,16 +34,16 @@ Install: `go install github.com/dpoage/known/cmd/known@latest`
 
 ## When to Recall
 
-Use `/known:recall` when you're about to explore or make decisions in an area where
-knowledge may already exist. Recall is cheaper than re-reading source files.
+Recall before exploring. If you're about to read files or make decisions in an
+area where knowledge may exist, recall first — it's faster than re-reading source.
 
 ```bash
 known recall 'deployment process'
 known recall 'database schema decisions' --scope backend
 ```
 
-Recall is scoped — it searches within the scope auto-derived from your working directory.
-Override with `--scope` to search a different area.
+Recall is scoped to your working directory. Override with `--scope` to search
+a different area. The defaults work well — add flags only when tuning results.
 
 ## When to Store
 
@@ -97,8 +97,8 @@ other `backend.*` descendants.
 
 ## Recall vs Search
 
-- **`/known:recall`** — Quick retrieval, plain text, tuned for LLM context. Use by default.
-- **`/known:search`** — Full control: `--limit`, `--threshold`, `--hybrid`. Use when you need entry IDs or fine-grained results.
+- **`/known:recall`** — Plain text output tuned for LLM context. Supports filtering and tuning via flags. Use by default.
+- **`/known:search`** — Structured output with scores and optional JSON. Use when you need exact similarity scores or machine-readable results.
 
 ## Other Useful CLI Commands
 
