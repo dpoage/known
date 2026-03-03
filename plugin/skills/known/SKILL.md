@@ -97,8 +97,8 @@ other `backend.*` descendants.
 
 ## Recall vs Search
 
-- **`/known:recall`** — Quick retrieval, plain text, tuned for LLM context. Use by default.
-- **`/known:search`** — Full control: `--limit`, `--threshold`, `--hybrid`. Use when you need entry IDs or fine-grained results.
+- **`/known:recall`** — Plain text output tuned for LLM context. Supports filtering and tuning via flags. Use by default.
+- **`/known:search`** — Structured output with scores and optional JSON. Use when you need exact similarity scores or machine-readable results.
 
 ## Other Useful CLI Commands
 

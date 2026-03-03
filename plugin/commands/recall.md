@@ -32,6 +32,10 @@ known recall '<query>'
 
 ### Available flags
 
+The defaults are tuned for general use — most recalls need no flags beyond `--scope`.
+Only add `--provenance` or `--source` if a previous recall returned clearly irrelevant
+results that you can identify by metadata.
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--scope` | auto | Scope to search within |
@@ -68,5 +72,5 @@ known recall 'patterns' --provenance inferred --recency 0.3
 
 ## Recall vs Search
 
-- **`/known:recall`** — Quick retrieval, plain text output tuned for LLM context. Use by default. Supports filtering and tuning via flags.
-- **`/known:search`** — Full control: `--limit`, `--threshold`, `--hybrid`, `--json`. Use when you need entry IDs (for show/update/delete) or fine-grained results.
+- **`/known:recall`** — Plain text output tuned for LLM context. Supports filtering and tuning via flags. Use by default.
+- **`/known:search`** — Structured output with scores and optional JSON. Use when you need exact similarity scores or machine-readable results.
