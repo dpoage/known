@@ -91,6 +91,14 @@ func (e Edge) Validate() error {
 	return nil
 }
 
+// EffectiveWeight returns the edge's weight, defaulting to 1.0 if unset.
+func (e Edge) EffectiveWeight() float64 {
+	if e.Weight == nil {
+		return 1.0
+	}
+	return *e.Weight
+}
+
 // WithWeight returns a copy of the edge with the specified weight.
 func (e Edge) WithWeight(w float64) Edge {
 	e.Weight = &w

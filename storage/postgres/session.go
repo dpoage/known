@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -30,8 +29,8 @@ func (s *SessionStore) CreateSession(ctx context.Context, session *model.Session
 		session.ID.String(),
 		session.StartedAt,
 		session.EndedAt,
-		nullString(session.Scope),
-		nullString(session.Agent),
+		nullableString(session.Scope),
+		nullableString(session.Agent),
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -87,11 +86,11 @@ func (s *SessionStore) GetSession(ctx context.Context, id model.ID) (*model.Sess
 }
 
 func (s *SessionStore) LogEvent(ctx context.Context, event *model.SessionEvent) error {
-	entryIDsJSON, err := marshalIDSlice(event.EntryIDs)
+	entryIDsJSON, err := storage.MarshalIDSlice(event.EntryIDs)
 	if err != nil {
 		return fmt.Errorf("marshal entry_ids: %w", err)
 	}
-	edgeIDsJSON, err := marshalIDSlice(event.EdgeIDs)
+	edgeIDsJSON, err := storage.MarshalIDSlice(event.EdgeIDs)
 	if err != nil {
 		return fmt.Errorf("marshal edge_ids: %w", err)
 	}
@@ -105,7 +104,7 @@ func (s *SessionStore) LogEvent(ctx context.Context, event *model.SessionEvent) 
 		string(event.EventType),
 		entryIDsJSON,
 		edgeIDsJSON,
-		nullString(event.Query),
+		nullableString(event.Query),
 		event.CreatedAt,
 	)
 	if err != nil {
@@ -149,11 +148,11 @@ func (s *SessionStore) ListEvents(ctx context.Context, sessionID model.ID) ([]mo
 		if err != nil {
 			return nil, fmt.Errorf("parse session id: %w", err)
 		}
-		eIDs, err := unmarshalIDSlice(entryIDs)
+		eIDs, err := storage.UnmarshalIDSlice(entryIDs)
 		if err != nil {
 			return nil, fmt.Errorf("unmarshal entry_ids: %w", err)
 		}
-		edIDs, err := unmarshalIDSlice(edgeIDs)
+		edIDs, err := storage.UnmarshalIDSlice(edgeIDs)
 		if err != nil {
 			return nil, fmt.Errorf("unmarshal edge_ids: %w", err)
 		}
@@ -224,48 +223,4 @@ func (s *SessionStore) MarkProcessed(ctx context.Context, sessionID model.ID) er
 		return fmt.Errorf("mark processed: %w", err)
 	}
 	return nil
-}
-
-// Helper functions
-
-func nullString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func marshalIDSlice(ids []model.ID) (*string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	strs := make([]string, len(ids))
-	for i, id := range ids {
-		strs[i] = id.String()
-	}
-	b, err := json.Marshal(strs)
-	if err != nil {
-		return nil, err
-	}
-	s := string(b)
-	return &s, nil
-}
-
-func unmarshalIDSlice(data *string) ([]model.ID, error) {
-	if data == nil || *data == "" {
-		return nil, nil
-	}
-	var strs []string
-	if err := json.Unmarshal([]byte(*data), &strs); err != nil {
-		return nil, err
-	}
-	ids := make([]model.ID, len(strs))
-	for i, s := range strs {
-		id, err := model.ParseID(s)
-		if err != nil {
-			return nil, fmt.Errorf("parse id %q: %w", s, err)
-		}
-		ids[i] = id
-	}
-	return ids, nil
 }

@@ -1335,39 +1335,39 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 }
 
 func TestEdgeWeight_Helper(t *testing.T) {
-	// Test the edgeWeight function directly.
+	// Test the Edge.EffectiveWeight method.
 	t.Run("nil weight returns 1.0", func(t *testing.T) {
 		edge := model.NewEdge(model.NewID(), model.NewID(), model.EdgeRelatedTo)
-		score := edgeWeight(edge)
+		score := edge.EffectiveWeight()
 		if score != 1.0 {
-			t.Errorf("edgeWeight(nil) = %f, want 1.0", score)
+			t.Errorf("EffectiveWeight(nil) = %f, want 1.0", score)
 		}
 	})
 
 	t.Run("explicit weight returned", func(t *testing.T) {
 		w := 0.5
 		edge := model.Edge{Weight: &w}
-		score := edgeWeight(edge)
+		score := edge.EffectiveWeight()
 		if score != 0.5 {
-			t.Errorf("edgeWeight(0.5) = %f, want 0.5", score)
+			t.Errorf("EffectiveWeight(0.5) = %f, want 0.5", score)
 		}
 	})
 
 	t.Run("zero weight", func(t *testing.T) {
 		w := 0.0
 		edge := model.Edge{Weight: &w}
-		score := edgeWeight(edge)
+		score := edge.EffectiveWeight()
 		if score != 0.0 {
-			t.Errorf("edgeWeight(0.0) = %f, want 0.0", score)
+			t.Errorf("EffectiveWeight(0.0) = %f, want 0.0", score)
 		}
 	})
 
 	t.Run("max weight", func(t *testing.T) {
 		w := 1.0
 		edge := model.Edge{Weight: &w}
-		score := edgeWeight(edge)
+		score := edge.EffectiveWeight()
 		if score != 1.0 {
-			t.Errorf("edgeWeight(1.0) = %f, want 1.0", score)
+			t.Errorf("EffectiveWeight(1.0) = %f, want 1.0", score)
 		}
 	})
 }

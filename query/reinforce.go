@@ -96,7 +96,7 @@ func (e *Engine) processSession(ctx context.Context, sessions storage.SessionRep
 			}
 			seen[edge.ID.String()] = true
 
-			newWeight := edgeWeight(edge) + cfg.BoostAmount
+			newWeight := edge.EffectiveWeight() + cfg.BoostAmount
 			if newWeight > cfg.MaxWeight {
 				newWeight = cfg.MaxWeight
 			}
