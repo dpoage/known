@@ -101,6 +101,11 @@ func (d *DB) Scopes() storage.ScopeRepo {
 	return &ScopeStore{db: d.db}
 }
 
+// Sessions returns the SessionRepo implementation.
+func (d *DB) Sessions() storage.SessionRepo {
+	return &SessionStore{db: d.db}
+}
+
 // Migrate runs all pending database migrations.
 func (d *DB) Migrate() error {
 	// Create migration tracking table.

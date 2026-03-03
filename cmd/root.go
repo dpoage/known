@@ -18,14 +18,16 @@ import (
 
 // App holds the shared dependencies for all CLI commands.
 type App struct {
-	DB       storage.Backend
-	Entries  storage.EntryRepo
-	Edges    storage.EdgeRepo
-	Scopes   storage.ScopeRepo
-	Embedder embed.Embedder
-	Engine   *query.Engine
-	Printer  *Printer
-	Config   *AppConfig
+	DB        storage.Backend
+	Entries   storage.EntryRepo
+	Edges     storage.EdgeRepo
+	Scopes    storage.ScopeRepo
+	Sessions  storage.SessionRepo
+	SessionID string // active session ID read from ~/.known/session
+	Embedder  embed.Embedder
+	Engine    *query.Engine
+	Printer   *Printer
+	Config    *AppConfig
 }
 
 // globalFlags holds the flags parsed from the root command.
@@ -78,13 +80,17 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 	}
 
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Scopes:  db.Scopes(),
-		Printer: NewPrinter(os.Stdout, cfg.JSON, cfg.Quiet),
-		Config:  cfg,
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Scopes:   db.Scopes(),
+		Sessions: db.Sessions(),
+		Printer:  NewPrinter(os.Stdout, cfg.JSON, cfg.Quiet),
+		Config:   cfg,
 	}
+
+	// Read active session ID (best-effort).
+	app.SessionID = readSessionID()
 
 	if needsEmbedder {
 		embedCfg := embed.LoadConfig()
@@ -139,7 +145,8 @@ Commands:
   link       Create an edge between entries
   unlink     Delete an edge
   scope      Manage scopes (list, create, delete, tree)
-  gc         Delete expired entries
+  gc         Delete expired entries and reinforce edges
+  session    Manage agent sessions (start, end)
   stats      Show knowledge graph statistics
   export     Export entries as JSON or JSONL
   import     Import entries from JSON or JSONL
@@ -184,7 +191,7 @@ func Run(ctx context.Context, args []string) int {
 	// Commands that generate embeddings need the embedder initialized.
 	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update" || subcmd == "recall"
 
-	// Commands that don't need app init (no DB connection).
+	// Commands that don't need app init (no DB, no session).
 	if subcmd == "help" || subcmd == "--help" || subcmd == "-h" {
 		usage()
 		return 0
@@ -261,6 +268,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runExport(ctx, app, subArgs)
 	case "import":
 		err = runImport(ctx, app, subArgs)
+	case "session":
+		err = runSession(ctx, app, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcmd)
 		usage()
@@ -274,5 +283,9 @@ func Run(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+
+	// Best-effort session event logging after successful commands.
+	logSessionEvent(ctx, app, subcmd, subArgs)
+
 	return 0
 }
