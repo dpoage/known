@@ -75,6 +75,11 @@ func (m *mockSessionRepo) MarkProcessed(_ context.Context, sessionID model.ID) e
 	return nil
 }
 
+// noopTx is a pass-through TxFunc for testing (no real transaction needed).
+func noopTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 func TestReinforce_ActionAfterRecall(t *testing.T) {
 	ctx := context.Background()
 
@@ -119,7 +124,7 @@ func TestReinforce_ActionAfterRecall(t *testing.T) {
 	})
 
 	cfg := DefaultReinforceConfig()
-	result, err := engine.Reinforce(ctx, sessions, cfg)
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -180,7 +185,7 @@ func TestReinforce_NoRecallNoBoost(t *testing.T) {
 		CreatedAt: now,
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -231,7 +236,7 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -281,7 +286,7 @@ func TestReinforce_NilWeightBoosted(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -312,7 +317,7 @@ func TestReinforce_OpenSessionIgnored(t *testing.T) {
 		StartedAt: time.Now(),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -356,7 +361,7 @@ func TestReinforce_IdempotentProcessing(t *testing.T) {
 
 	// First run.
 	cfg := DefaultReinforceConfig()
-	r1, err := engine.Reinforce(ctx, sessions, cfg)
+	r1, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce(1): %v", err)
 	}
@@ -369,7 +374,7 @@ func TestReinforce_IdempotentProcessing(t *testing.T) {
 	weightAfterFirst := *got.Weight
 
 	// Second run — session already processed.
-	r2, err := engine.Reinforce(ctx, sessions, cfg)
+	r2, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce(2): %v", err)
 	}
@@ -417,13 +422,133 @@ func TestReinforce_SearchAlsoTriggersRecall(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, DefaultReinforceConfig())
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
 
 	if result.EdgesBoosted == 0 {
 		t.Error("expected edges boosted from search→show pattern")
+	}
+}
+
+func TestReinforce_MultipleSessions(t *testing.T) {
+	ctx := context.Background()
+
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	e3 := model.NewEntry("e3", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+	entryRepo.Create(ctx, &e3)
+
+	edge12 := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+	edge23 := model.NewEdge(e2.ID, e3.ID, model.EdgeRelatedTo).WithWeight(0.7)
+	edgeRepo.Create(ctx, &edge12)
+	edgeRepo.Create(ctx, &edge23)
+
+	now := time.Now()
+
+	// Session 1: recall → show e1 (should boost edge12).
+	s1ID := model.NewID()
+	ended1 := now.Add(time.Minute)
+	sessions.CreateSession(ctx, &model.Session{ID: s1ID, StartedAt: now, EndedAt: &ended1})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: s1ID, EventType: model.EventRecall,
+		Query: "q1", CreatedAt: now,
+	})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: s1ID, EventType: model.EventShow,
+		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+	})
+
+	// Session 2: recall → update e3 (should boost edge23).
+	s2ID := model.NewID()
+	ended2 := now.Add(2 * time.Minute)
+	sessions.CreateSession(ctx, &model.Session{ID: s2ID, StartedAt: now.Add(time.Minute), EndedAt: &ended2})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: s2ID, EventType: model.EventRecall,
+		Query: "q2", CreatedAt: now.Add(time.Minute),
+	})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: s2ID, EventType: model.EventUpdate,
+		EntryIDs: []model.ID{e3.ID}, CreatedAt: now.Add(time.Minute + time.Second),
+	})
+
+	cfg := DefaultReinforceConfig()
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+	if err != nil {
+		t.Fatalf("Reinforce: %v", err)
+	}
+
+	if result.SessionsProcessed != 2 {
+		t.Errorf("SessionsProcessed = %d, want 2", result.SessionsProcessed)
+	}
+	if result.EdgesBoosted < 2 {
+		t.Errorf("EdgesBoosted = %d, want >= 2", result.EdgesBoosted)
+	}
+
+	// Both edges should have been boosted.
+	got12, _ := edgeRepo.Get(ctx, edge12.ID)
+	if *got12.Weight <= 0.5 {
+		t.Errorf("edge12 weight = %f, want > 0.5", *got12.Weight)
+	}
+	got23, _ := edgeRepo.Get(ctx, edge23.ID)
+	if *got23.Weight <= 0.7 {
+		t.Errorf("edge23 weight = %f, want > 0.7", *got23.Weight)
+	}
+}
+
+func TestReinforce_LinkActionBoostsEdge(t *testing.T) {
+	ctx := context.Background()
+
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+	edgeRepo.Create(ctx, &edge)
+
+	sessID := model.NewID()
+	now := time.Now()
+	ended := now.Add(time.Minute)
+	sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+		Query: "q", CreatedAt: now,
+	})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventLink,
+		EntryIDs: []model.ID{e1.ID, e2.ID}, CreatedAt: now.Add(time.Second),
+	})
+
+	cfg := DefaultReinforceConfig()
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+	if err != nil {
+		t.Fatalf("Reinforce: %v", err)
+	}
+
+	if result.EdgesBoosted == 0 {
+		t.Error("expected edges boosted from recall→link pattern")
+	}
+
+	got, _ := edgeRepo.Get(ctx, edge.ID)
+	want := 0.5 + cfg.BoostAmount
+	if *got.Weight != want {
+		t.Errorf("edge weight = %f, want %f", *got.Weight, want)
 	}
 }
 

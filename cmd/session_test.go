@@ -277,20 +277,65 @@ func TestCommandToEventType(t *testing.T) {
 	}
 }
 
+func TestLogSessionEvent_LinkLogsBothEntryIDs(t *testing.T) {
+	sessions := newStubSessionRepo()
+	sessID := model.NewID()
+	sessions.sessions[sessID.String()] = &model.Session{
+		ID:        sessID,
+		StartedAt: time.Now(),
+	}
+
+	fromID := model.NewID()
+	toID := model.NewID()
+	var buf bytes.Buffer
+	app := &App{
+		Sessions:  sessions,
+		SessionID: sessID.String(),
+		Printer:   NewPrinter(&buf, false, true),
+		Config:    &AppConfig{DefaultScope: "test"},
+	}
+
+	logSessionEvent(context.Background(), app, "link", []string{
+		fromID.String(), toID.String(), "--type", "related-to",
+	})
+
+	if len(sessions.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(sessions.events))
+	}
+
+	ev := sessions.events[0]
+	if ev.EventType != model.EventLink {
+		t.Errorf("event type = %s, want link", ev.EventType)
+	}
+	if len(ev.EntryIDs) != 2 {
+		t.Fatalf("entry_ids length = %d, want 2", len(ev.EntryIDs))
+	}
+	if ev.EntryIDs[0] != fromID || ev.EntryIDs[1] != toID {
+		t.Errorf("entry_ids = %v, want [%s, %s]", ev.EntryIDs, fromID, toID)
+	}
+}
+
 func TestExtractQuery(t *testing.T) {
 	tests := []struct {
+		name string
 		args []string
 		want string
 	}{
-		{[]string{"test query"}, "test query"},
-		{[]string{"--scope", "foo", "query text"}, "query text"},
-		{[]string{}, ""},
+		{"single quoted arg", []string{"test query"}, "test query"},
+		{"flag with value before query", []string{"--scope", "foo", "query text"}, "query text"},
+		{"empty args", []string{}, ""},
+		{"flag with equals", []string{"--scope=foo", "query text"}, "query text"},
+		{"double dash separator", []string{"--", "query text"}, "query text"},
+		{"only flags", []string{"--scope", "foo"}, ""},
+		{"short flag with value", []string{"-s", "foo", "query text"}, "query text"},
 	}
 
 	for _, tt := range tests {
-		got := extractQuery(tt.args)
-		if got != tt.want {
-			t.Errorf("extractQuery(%v) = %q, want %q", tt.args, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractQuery(tt.args)
+			if got != tt.want {
+				t.Errorf("extractQuery(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
 	}
 }
