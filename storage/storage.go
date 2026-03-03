@@ -145,12 +145,37 @@ type EdgeRepo interface {
 	FindConflicts(ctx context.Context, entryID model.ID) ([]model.Entry, error)
 }
 
+// SessionRepo defines persistence operations for session tracking.
+type SessionRepo interface {
+	// CreateSession persists a new session.
+	CreateSession(ctx context.Context, session *model.Session) error
+
+	// EndSession sets the ended_at timestamp on a session.
+	EndSession(ctx context.Context, id model.ID) error
+
+	// GetSession retrieves a session by ID. Returns ErrNotFound if it does not exist.
+	GetSession(ctx context.Context, id model.ID) (*model.Session, error)
+
+	// LogEvent persists a session event.
+	LogEvent(ctx context.Context, event *model.SessionEvent) error
+
+	// ListEvents returns all events for a session, ordered by created_at.
+	ListEvents(ctx context.Context, sessionID model.ID) ([]model.SessionEvent, error)
+
+	// ListUnprocessedSessions returns ended sessions not yet in session_reinforcements.
+	ListUnprocessedSessions(ctx context.Context) ([]model.Session, error)
+
+	// MarkProcessed records that a session's events have been processed for reinforcement.
+	MarkProcessed(ctx context.Context, sessionID model.ID) error
+}
+
 // Backend is the top-level interface for a storage backend (postgres, sqlite, etc.).
 // It provides access to the individual repositories and manages connections/transactions.
 type Backend interface {
 	Entries() EntryRepo
 	Edges() EdgeRepo
 	Scopes() ScopeRepo
+	Sessions() SessionRepo
 	WithTx(ctx context.Context, fn func(context.Context) error) error
 	Close() error
 	Migrate() error

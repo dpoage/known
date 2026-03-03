@@ -1605,6 +1605,223 @@ func TestEntryScopeAutoCreationIdempotent(t *testing.T) {
 }
 
 // =============================================================================
+// Session Tests
+// =============================================================================
+
+func TestSessionCreateAndGet(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	session := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+		Scope:     "test.scope",
+		Agent:     "claude",
+	}
+
+	if err := sessions.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	got, err := sessions.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+
+	if got.Scope != "test.scope" {
+		t.Errorf("Scope = %q, want %q", got.Scope, "test.scope")
+	}
+	if got.Agent != "claude" {
+		t.Errorf("Agent = %q, want %q", got.Agent, "claude")
+	}
+	if got.EndedAt != nil {
+		t.Errorf("EndedAt should be nil, got %v", got.EndedAt)
+	}
+}
+
+func TestSessionGetNotFound(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	_, err := sessions.GetSession(ctx, model.NewID())
+	if err != storage.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestSessionEnd(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	session := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+	}
+	if err := sessions.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if err := sessions.EndSession(ctx, session.ID); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	got, err := sessions.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.EndedAt == nil {
+		t.Error("EndedAt should be set after EndSession")
+	}
+}
+
+func TestSessionEndNotFound(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	err := sessions.EndSession(ctx, model.NewID())
+	if err != storage.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestSessionLogAndListEvents(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	session := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+	}
+	if err := sessions.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	entryID := model.NewID()
+	event1 := &model.SessionEvent{
+		ID:        model.NewID(),
+		SessionID: session.ID,
+		EventType: model.EventRecall,
+		Query:     "test query",
+		CreatedAt: time.Now(),
+	}
+	event2 := &model.SessionEvent{
+		ID:        model.NewID(),
+		SessionID: session.ID,
+		EventType: model.EventShow,
+		EntryIDs:  []model.ID{entryID},
+		CreatedAt: time.Now(),
+	}
+
+	for _, ev := range []*model.SessionEvent{event1, event2} {
+		if err := sessions.LogEvent(ctx, ev); err != nil {
+			t.Fatalf("LogEvent: %v", err)
+		}
+	}
+
+	events, err := sessions.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	if events[0].EventType != model.EventRecall {
+		t.Errorf("events[0].EventType = %s, want recall", events[0].EventType)
+	}
+	if events[0].Query != "test query" {
+		t.Errorf("events[0].Query = %q, want %q", events[0].Query, "test query")
+	}
+	if events[1].EventType != model.EventShow {
+		t.Errorf("events[1].EventType = %s, want show", events[1].EventType)
+	}
+	if len(events[1].EntryIDs) != 1 || events[1].EntryIDs[0] != entryID {
+		t.Errorf("events[1].EntryIDs = %v, want [%s]", events[1].EntryIDs, entryID)
+	}
+}
+
+func TestSessionListUnprocessed(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	// Create two sessions: one open, one ended.
+	openSession := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+	}
+	endedSession := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+	}
+
+	for _, s := range []*model.Session{openSession, endedSession} {
+		if err := sessions.CreateSession(ctx, s); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+	}
+
+	if err := sessions.EndSession(ctx, endedSession.ID); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	unprocessed, err := sessions.ListUnprocessedSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListUnprocessedSessions: %v", err)
+	}
+
+	// Should include ended session but not open session.
+	found := false
+	for _, s := range unprocessed {
+		if s.ID == openSession.ID {
+			t.Error("open session should not appear in unprocessed list")
+		}
+		if s.ID == endedSession.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ended session should appear in unprocessed list")
+	}
+}
+
+func TestSessionMarkProcessed(t *testing.T) {
+	ctx := context.Background()
+	sessions := testDB.Sessions()
+
+	session := &model.Session{
+		ID:        model.NewID(),
+		StartedAt: time.Now(),
+	}
+	if err := sessions.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := sessions.EndSession(ctx, session.ID); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	if err := sessions.MarkProcessed(ctx, session.ID); err != nil {
+		t.Fatalf("MarkProcessed: %v", err)
+	}
+
+	// Should no longer appear in unprocessed list.
+	unprocessed, err := sessions.ListUnprocessedSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListUnprocessedSessions: %v", err)
+	}
+	for _, s := range unprocessed {
+		if s.ID == session.ID {
+			t.Error("processed session should not appear in unprocessed list")
+		}
+	}
+
+	// MarkProcessed is idempotent.
+	if err := sessions.MarkProcessed(ctx, session.ID); err != nil {
+		t.Errorf("MarkProcessed (idempotent): %v", err)
+	}
+}
+
+// =============================================================================
 // Interface Compliance Tests
 // =============================================================================
 
@@ -1612,6 +1829,7 @@ func TestInterfaceCompliance(t *testing.T) {
 	var _ storage.EntryRepo = (*sqlite.EntryStore)(nil)
 	var _ storage.EdgeRepo = (*sqlite.EdgeStore)(nil)
 	var _ storage.ScopeRepo = (*sqlite.ScopeStore)(nil)
+	var _ storage.SessionRepo = (*sqlite.SessionStore)(nil)
 	var _ storage.Backend = (*sqlite.DB)(nil)
 }
 

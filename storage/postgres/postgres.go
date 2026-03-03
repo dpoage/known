@@ -156,3 +156,8 @@ func (db *DB) Edges() storage.EdgeRepo {
 func (db *DB) Scopes() storage.ScopeRepo {
 	return &ScopeStore{pool: db.Pool}
 }
+
+// Sessions returns the SessionRepo implementation backed by this DB.
+func (db *DB) Sessions() storage.SessionRepo {
+	return &SessionStore{pool: db.Pool}
+}

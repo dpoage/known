@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v known >/dev/null && known scope tree 2>/dev/null || true"
+            "command": "command -v known >/dev/null && { known scope tree 2>/dev/null; known session start 2>/dev/null; } || true"
           }
         ]
       }
