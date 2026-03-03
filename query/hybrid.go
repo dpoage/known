@@ -142,6 +142,7 @@ func (e *Engine) expandFromEntry(
 
 			results = append(results, Result{
 				Entry:    *neighborEntry,
+				Score:    edgeWeight(edge),
 				Reach:    ReachExpansion,
 				Depth:    current.depth + 1,
 				EdgePath: []model.Edge{edge},
