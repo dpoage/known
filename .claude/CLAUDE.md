@@ -39,6 +39,7 @@ If no scope tree appeared, the knowledge graph may be empty — proceed normally
 | `/recall` | Retrieve knowledge relevant to a query |
 | `/forget` | Find and delete an entry |
 | `/known-search` | Search with full control over flags |
+| `/discover` | Walk a codebase and store architectural knowledge |
 
 ## When to Recall
 
@@ -123,7 +124,7 @@ DSN in its `.known.yaml`, its knowledge is isolated to that database.
 | `url` | From a web page or API doc |
 | `manual` | User entered directly |
 
-## Confidence Levels
+## Provenance Levels
 
 | Level | When |
 |-------|------|
@@ -139,19 +140,19 @@ DSN in its `.known.yaml`, its knowledge is isolated to that database.
 
 ## Recall vs Search
 
-- **`/recall`** — Quick retrieval, plain text, tuned for LLM context. Use by default. Results include entry IDs in `{curly braces}` for use with link/update/delete.
-- **`/known-search`** — Full control: `--limit`, `--threshold`, `--hybrid`. Use for fine-grained results.
+- **`/recall`** — Plain text output tuned for LLM context. Supports filtering and tuning via flags. Use by default.
+- **`/known-search`** — Structured output with scores and optional JSON. Use when you need exact similarity scores or machine-readable results.
 
-## Other Useful Commands
+## Other Useful CLI Commands
 
-These aren't skills but are available directly:
+These are available directly (not as plugin commands):
 
 | Command | Purpose |
 |---------|---------|
 | `known show <id>` | Full entry details with relationships |
-| `known update <id> --content '...'` | Modify an entry's content, confidence, or scope |
-| `known related <id>` | Find entries connected via graph edges |
-| `known link <from-id> <to-id> --type <type>` | Create a relationship between entries |
+| `known update <id> --content '...'` | Modify an entry |
+| `known related <id>` | Find connected entries via graph edges |
+| `known link <from> <to> --type <type>` | Create a relationship (standalone) |
 | `known add '...' --link type:id` | Create entry + edge atomically |
 | `known conflicts` | Detect contradictory entries |
 | `known stats` | Knowledge graph statistics |

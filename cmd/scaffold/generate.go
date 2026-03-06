@@ -1,14 +1,14 @@
 //go:build ignore
 
-// Generate standalone SKILL.md files from plugin command sources.
+// Generate standalone templates from plugin sources.
 //
-// Plugin commands in plugin/commands/*.md are the canonical source.
-// This tool transforms them into standalone skill files at
-// cmd/scaffold/templates/skills/<name>/SKILL.md by:
+// This tool generates two kinds of output:
 //
-//   - Stripping YAML frontmatter
-//   - Adding a # /<name> header and ## Usage block
-//   - Replacing /known: prefixed references with /
+//  1. Per-skill SKILL.md files from plugin/commands/*.md → cmd/scaffold/templates/skills/
+//  2. CLAUDE.md from plugin/skills/known/SKILL.md → cmd/scaffold/templates/CLAUDE.md
+//
+// Both apply the same substitutions: strip YAML frontmatter, replace /known:
+// prefixed references with standalone names.
 //
 // Usage:
 //
@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,7 @@ var commands = []command{
 	{src: "recall", title: "Retrieve knowledge from known"},
 	{src: "forget", title: "Delete an entry from known"},
 	{src: "search", dst: "known-search", title: "Search entries with full control"},
+	{src: "discover", title: "Walk a codebase and store architectural knowledge"},
 }
 
 func main() {
@@ -53,36 +55,39 @@ func main() {
 		srcPath := filepath.Join(root, "plugin", "commands", cmd.src+".md")
 		dstPath := filepath.Join(root, "cmd", "scaffold", "templates", "skills", dst, "SKILL.md")
 
-		if err := generate(srcPath, dstPath, cmd, dst); err != nil {
+		if err := generateSkill(srcPath, dstPath, cmd, dst); err != nil {
 			fmt.Fprintf(os.Stderr, "error generating %s: %v\n", dst, err)
 			os.Exit(1)
 		}
 		fmt.Printf("generated %s\n", dstPath)
 	}
+
+	// Generate CLAUDE.md from the master plugin SKILL.md.
+	skillSrc := filepath.Join(root, "plugin", "skills", "known", "SKILL.md")
+	claudeDst := filepath.Join(root, "cmd", "scaffold", "templates", "CLAUDE.md")
+	if err := generateCLAUDE(skillSrc, claudeDst); err != nil {
+		fmt.Fprintf(os.Stderr, "error generating CLAUDE.md: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("generated %s\n", claudeDst)
 }
 
-func generate(srcPath, dstPath string, cmd command, skillName string) error {
-	f, err := os.Open(srcPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
+// stripFrontmatter reads a markdown file, strips YAML frontmatter and the
+// blank line following it, and returns the remaining content lines along with
+// any key-value pairs found in the frontmatter block.
+func stripFrontmatter(r io.Reader) (lines []string, meta map[string]string, err error) {
+	meta = make(map[string]string)
 	var (
-		lines        []string
 		inFrontmatter bool
-		frontmatterDone bool
-		argHint      string
-		description  string
+		skipNextBlank bool
 	)
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	lineNum := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineNum++
 
-		// Parse frontmatter.
 		if lineNum == 1 && line == "---" {
 			inFrontmatter = true
 			continue
@@ -90,33 +95,53 @@ func generate(srcPath, dstPath string, cmd command, skillName string) error {
 		if inFrontmatter {
 			if line == "---" {
 				inFrontmatter = false
-				frontmatterDone = true
+				skipNextBlank = true
 				continue
 			}
-			if strings.HasPrefix(line, "argument-hint:") {
-				argHint = strings.TrimSpace(strings.TrimPrefix(line, "argument-hint:"))
-			}
-			if strings.HasPrefix(line, "description:") {
-				description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			if i := strings.Index(line, ":"); i > 0 {
+				meta[line[:i]] = strings.TrimSpace(line[i+1:])
 			}
 			continue
 		}
-
-		// Skip the blank line immediately after frontmatter.
-		if frontmatterDone && line == "" {
-			frontmatterDone = false
+		if skipNextBlank && line == "" {
+			skipNextBlank = false
 			continue
 		}
-		frontmatterDone = false
+		skipNextBlank = false
 
 		lines = append(lines, line)
 	}
-	if err := scanner.Err(); err != nil {
+	return lines, meta, scanner.Err()
+}
+
+// applySubstitutions replaces /known: prefixed references with standalone names.
+// The search-specific rule must precede the general rule to avoid corruption.
+func applySubstitutions(line string) string {
+	line = strings.ReplaceAll(line, "/known:search", "/known-search")
+	line = strings.ReplaceAll(line, "/known:", "/")
+	return line
+}
+
+// writeFile creates parent directories and writes content atomically.
+func writeFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
 
-	// Use frontmatter description as fallback if no explicit title.
-	_ = description
+func generateSkill(srcPath, dstPath string, cmd command, skillName string) error {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	lines, meta, err := stripFrontmatter(f)
+	if err != nil {
+		return err
+	}
+	argHint := meta["argument-hint"]
 
 	// Build the standalone header + usage block.
 	var out strings.Builder
@@ -146,22 +171,51 @@ func generate(srcPath, dstPath string, cmd command, skillName string) error {
 
 	// Write remaining lines with substitutions.
 	for ; i < len(lines); i++ {
-		line := lines[i]
+		out.WriteString(applySubstitutions(lines[i]))
+		out.WriteString("\n")
+	}
 
-		// Replace /known:<name> with standalone skill names.
-		// /known:search -> /known-search (standalone name differs).
-		// All others: /known:<x> -> /<x>.
-		line = strings.ReplaceAll(line, "/known:search", "/known-search")
-		line = strings.ReplaceAll(line, "/known:", "/")
+	return writeFile(dstPath, out.String())
+}
+
+// generateCLAUDE transforms the master plugin SKILL.md into a standalone CLAUDE.md.
+// It strips frontmatter, replaces /known: prefixes with standalone names, and
+// renames "Commands" to "Skills" in the table.
+func generateCLAUDE(srcPath, dstPath string) error {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	lines, _, err := stripFrontmatter(f)
+	if err != nil {
+		return err
+	}
+
+	var out strings.Builder
+	inSkillsSection := false
+	for _, line := range lines {
+		line = applySubstitutions(line)
+
+		// Rename the "Commands" section (skill listing) to "Skills".
+		// Only rename the table header in that section, not in "Other Useful CLI Commands".
+		if line == "## Commands" {
+			line = "## Skills"
+			inSkillsSection = true
+		} else if strings.HasPrefix(line, "## ") {
+			inSkillsSection = false
+		}
+		if inSkillsSection {
+			line = strings.ReplaceAll(line, "| Command |", "| Skill |")
+			line = strings.ReplaceAll(line, "|---------|", "|-------|")
+		}
 
 		out.WriteString(line)
 		out.WriteString("\n")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(dstPath, []byte(out.String()), 0o644)
+	return writeFile(dstPath, out.String())
 }
 
 // findRoot walks up from cwd looking for go.mod.
