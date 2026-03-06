@@ -53,16 +53,33 @@ func resolveEntry(ctx context.Context, app *App, arg string) (model.ID, error) {
 // searchEntries tries semantic search first (lazily initializing the embedder),
 // falling back to substring search if the embedder is unavailable or returns no results.
 func searchEntries(ctx context.Context, app *App, q string) ([]model.Entry, error) {
-	if results, err := searchSemantic(ctx, app, q); err == nil && len(results) > 0 {
+	results, err := searchSemantic(ctx, app, q)
+	if err == nil && len(results) > 0 {
 		return results, nil
+	}
+	// Fall back to text search only when the embedder is unavailable (not configured,
+	// missing API key, etc.) or returned no results. Propagate real errors.
+	if err != nil && !isEmbedderUnavailable(err) {
+		return nil, fmt.Errorf("semantic search: %w", err)
 	}
 
 	// Fallback: substring search.
 	return searchByText(ctx, app, q)
 }
 
+// isEmbedderUnavailable returns true when the error indicates the embedder
+// could not be initialized (missing config, API key, etc.) as opposed to a
+// transient or infrastructure failure.
+func isEmbedderUnavailable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "embedder unavailable")
+}
+
 // searchSemantic performs a vector similarity search using the query engine.
 // It lazily initializes the embedder if not already present.
+//
+// NOTE: This mutates app.Embedder and app.Engine as a side effect. Safe for the
+// short-lived CLI process, but will need revisiting for long-lived contexts
+// (e.g., the planned HTTP server mode).
 func searchSemantic(ctx context.Context, app *App, q string) ([]model.Entry, error) {
 	if app.Embedder == nil {
 		embedCfg := embed.LoadConfig()
@@ -95,14 +112,10 @@ func searchSemantic(ctx context.Context, app *App, q string) ([]model.Entry, err
 // searchByText finds entries whose title or content contains the query substring.
 // Used as a fallback when semantic search is unavailable.
 func searchByText(ctx context.Context, app *App, q string) ([]model.Entry, error) {
-	scope := app.Config.DefaultScope
-	scopePrefix := ""
-	if scope != model.RootScope {
-		scopePrefix = scope
-	}
+	scope := resolveScope(app)
 
 	filter := storage.EntryFilter{
-		ScopePrefix: scopePrefix,
+		ScopePrefix: scope,
 		Limit:       200,
 	}
 

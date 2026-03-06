@@ -13,7 +13,6 @@ import (
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
-	"github.com/dpoage/known/storage/postgres"
 )
 
 func scopeUsage() string {
@@ -89,19 +88,7 @@ func runScopeCreate(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("invalid scope path: %w", err)
 	}
 
-	// EnsureHierarchy is on the concrete ScopeStore, not the interface.
-	scopeStore, ok := app.Scopes.(*postgres.ScopeStore)
-	if !ok {
-		// Fallback: upsert the scope directly.
-		scope := model.NewScope(path)
-		if err := app.Scopes.Upsert(ctx, &scope); err != nil {
-			return fmt.Errorf("create scope: %w", err)
-		}
-		app.Printer.PrintMessage("Scope %s created.", path)
-		return nil
-	}
-
-	if err := scopeStore.EnsureHierarchy(ctx, path); err != nil {
+	if err := app.Scopes.EnsureHierarchy(ctx, path); err != nil {
 		return fmt.Errorf("ensure hierarchy: %w", err)
 	}
 

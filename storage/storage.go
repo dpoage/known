@@ -192,6 +192,11 @@ type ScopeRepo interface {
 	// Upsert creates or updates a scope. The path is the natural key.
 	Upsert(ctx context.Context, scope *model.Scope) error
 
+	// EnsureHierarchy ensures that all ancestor scopes exist for a given scope path.
+	// For example, given "project.auth.oauth", it ensures "project", "project.auth",
+	// and "project.auth.oauth" all exist.
+	EnsureHierarchy(ctx context.Context, path string) error
+
 	// Get retrieves a scope by path. Returns ErrNotFound if it does not exist.
 	Get(ctx context.Context, path string) (*model.Scope, error)
 

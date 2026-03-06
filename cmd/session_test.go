@@ -94,7 +94,12 @@ func (b *stubBackend) Entries() storage.EntryRepo    { return nil }
 func (b *stubBackend) Edges() storage.EdgeRepo       { return b.edges }
 func (b *stubBackend) Scopes() storage.ScopeRepo     { return nil }
 func (b *stubBackend) Sessions() storage.SessionRepo { return b.sessions }
-func (b *stubBackend) Labels() storage.LabelLister   { return nil }
+func (b *stubBackend) Labels() storage.LabelLister   { return &stubLabelLister{} }
+
+// stubLabelLister is a no-op LabelLister for tests.
+type stubLabelLister struct{}
+
+func (s *stubLabelLister) ListLabels(_ context.Context) ([]string, error) { return nil, nil }
 func (b *stubBackend) WithTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
