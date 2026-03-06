@@ -608,6 +608,25 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	return results, nil
 }
 
+// ListLabels returns all distinct labels across all entries, sorted alphabetically.
+func (s *EntryStore) ListLabels(ctx context.Context) ([]string, error) {
+	rows, err := s.conn(ctx).Query(ctx, `SELECT DISTINCT label FROM entry_labels ORDER BY label`)
+	if err != nil {
+		return nil, fmt.Errorf("list labels: %w", err)
+	}
+	defer rows.Close()
+
+	var labels []string
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, fmt.Errorf("scan label: %w", err)
+		}
+		labels = append(labels, label)
+	}
+	return labels, rows.Err()
+}
+
 // DeleteExpired removes entries whose ExpiresAt is in the past.
 func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
 	tag, err := s.conn(ctx).Exec(ctx, `

@@ -44,12 +44,12 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() == 0 {
-		return fmt.Errorf("entry ID is required\nUsage: known update <id> [flags]")
+		return fmt.Errorf("entry ID or query is required\nUsage: known update <id|query> [flags]")
 	}
 
-	id, err := model.ParseID(fs.Arg(0))
+	id, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("invalid entry ID: %w", err)
+		return err
 	}
 
 	// Fetch current entry.

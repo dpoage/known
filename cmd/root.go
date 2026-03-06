@@ -144,6 +144,7 @@ Commands:
   path       Find shortest path between entries
   link       Create an edge between entries
   unlink     Delete an edge
+  label      Manage labels (list)
   scope      Manage scopes (list, create, delete, tree)
   gc         Delete expired entries and reinforce edges
   session    Manage agent sessions (start, end)
@@ -258,6 +259,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runLink(ctx, app, subArgs)
 	case "unlink":
 		err = runUnlink(ctx, app, subArgs)
+	case "label":
+		err = runLabel(ctx, app, subArgs)
 	case "scope":
 		err = runScope(ctx, app, subArgs)
 	case "gc":

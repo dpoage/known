@@ -20,3 +20,17 @@ Scopes are auto-derived from your working directory. Override with `--scope`.
 | `/recall` | Retrieve knowledge relevant to a query |
 | `/forget` | Find and delete an entry |
 | `/known-search` | Search with full control over flags |
+
+## Labels
+
+Labels let you tag and filter knowledge entries. Use `--label` (repeatable) on
+`add`, `update`, `list`, `search`, and `recall`:
+
+```bash
+known add 'Rate limit is 100 req/s' --label rate-limiting --label backend
+known recall 'rate limits' --label backend
+known list --label rate-limiting
+known label list   # enumerate all labels in the graph
+```
+
+Labels use AND semantics: `--label a --label b` returns entries with both labels.

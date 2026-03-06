@@ -21,12 +21,12 @@ func runRelated(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: known related <id> [flags]\n\nFind related entries via graph traversal.")
+		return fmt.Errorf("usage: known related <id|query> [flags]\n\nFind related entries via graph traversal.")
 	}
 
-	startID, err := model.ParseID(fs.Arg(0))
+	startID, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("invalid ID: %w", err)
+		return err
 	}
 
 	dir, err := parseDirection(*direction)

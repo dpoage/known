@@ -106,6 +106,11 @@ func (d *DB) Sessions() storage.SessionRepo {
 	return &SessionStore{db: d.db}
 }
 
+// Labels returns the LabelLister implementation.
+func (d *DB) Labels() storage.LabelLister {
+	return &EntryStore{db: d.db}
+}
+
 // Migrate runs all pending database migrations.
 func (d *DB) Migrate() error {
 	// Create migration tracking table.

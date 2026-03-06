@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dpoage/known/model"
 	flag "github.com/spf13/pflag"
 	"golang.org/x/term"
 )
@@ -27,12 +26,12 @@ func runDelete(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() == 0 {
-		return fmt.Errorf("entry ID is required\nUsage: known delete <id> [--force]")
+		return fmt.Errorf("entry ID or query is required\nUsage: known delete <id|query> [--force]")
 	}
 
-	id, err := model.ParseID(fs.Arg(0))
+	id, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("invalid entry ID: %w", err)
+		return err
 	}
 
 	// Fetch the entry to confirm it exists (and to display it).

@@ -40,7 +40,7 @@ var commands = []cmdDef{
 		{name: "source-hash"},
 		{name: "ttl"},
 		{name: "meta"},
-		{name: "label"},
+		{name: "label", dynamic: "labels"},
 		{name: "link"},
 	}},
 	{name: "update", desc: "Update an existing entry", flags: []flagDef{
@@ -53,7 +53,7 @@ var commands = []cmdDef{
 		{name: "source-ref"},
 		{name: "ttl"},
 		{name: "meta"},
-		{name: "label"},
+		{name: "label", dynamic: "labels"},
 	}},
 	{name: "delete", desc: "Delete an entry", flags: []flagDef{
 		{name: "force", short: "f"},
@@ -67,7 +67,7 @@ var commands = []cmdDef{
 		{name: "source-type", values: []string{"file", "url", "conversation", "manual"}},
 		{name: "provenance", values: []string{"verified", "inferred", "uncertain"}},
 		{name: "stale"},
-		{name: "label"},
+		{name: "label", dynamic: "labels"},
 		{name: "limit"},
 		{name: "json"},
 	}},
@@ -76,13 +76,13 @@ var commands = []cmdDef{
 		{name: "limit"},
 		{name: "threshold"},
 		{name: "recency"},
-		{name: "label"},
+		{name: "label", dynamic: "labels"},
 		{name: "hybrid"},
 		{name: "expand-depth"},
 	}},
 	{name: "recall", desc: "Retrieve knowledge optimized for LLM context", flags: []flagDef{
 		{name: "scope", dynamic: "scopes"},
-		{name: "label"},
+		{name: "label", dynamic: "labels"},
 		{name: "limit"},
 	}},
 	{name: "related", desc: "Find related entries via graph traversal", flags: []flagDef{
@@ -102,6 +102,7 @@ var commands = []cmdDef{
 		{name: "meta"},
 	}},
 	{name: "unlink", desc: "Delete an edge"},
+	{name: "label", desc: "Manage labels (list)", subs: []string{"list"}},
 	{name: "scope", desc: "Manage scopes (list, create, delete, tree)", subs: []string{"list", "create", "delete", "tree"}},
 	{name: "gc", desc: "Delete expired entries"},
 	{name: "stats", desc: "Show knowledge graph statistics", flags: []flagDef{
@@ -176,6 +177,15 @@ func runCompleteLight(ctx context.Context, gf globalFlags, args []string) error 
 		}
 		for _, s := range scopes {
 			fmt.Fprintln(os.Stdout, s.Path)
+		}
+		return nil
+	case "labels":
+		labels, err := db.Labels().ListLabels(ctx)
+		if err != nil {
+			return err
+		}
+		for _, l := range labels {
+			fmt.Fprintln(os.Stdout, l)
 		}
 		return nil
 	default:

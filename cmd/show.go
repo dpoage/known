@@ -43,11 +43,12 @@ func runShow(ctx context.Context, app *App, args []string) error {
 	return fmt.Errorf("usage: known show <id>\n       known show --scope <path>\n\nProvide an entry ID or --scope to browse entries.")
 }
 
-// showByID displays a single entry by its ULID with full detail and edges.
+// showByID displays a single entry with full detail and edges.
+// idStr may be a ULID or a content query.
 func showByID(ctx context.Context, app *App, idStr string) error {
-	id, err := model.ParseID(idStr)
+	id, err := resolveEntry(ctx, app, idStr)
 	if err != nil {
-		return fmt.Errorf("invalid entry ID: %w", err)
+		return err
 	}
 
 	// Fetch the entry.

@@ -21,17 +21,17 @@ func runLink(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() < 2 {
-		return fmt.Errorf("usage: known link <from-id> <to-id> [flags]\n\nCreate an edge between two entries.")
+		return fmt.Errorf("usage: known link <from> <to> [flags]\n\nCreate an edge between two entries. Arguments can be IDs or content queries.")
 	}
 
-	fromID, err := model.ParseID(fs.Arg(0))
+	fromID, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("invalid from ID: %w", err)
+		return fmt.Errorf("from: %w", err)
 	}
 
-	toID, err := model.ParseID(fs.Arg(1))
+	toID, err := resolveEntry(ctx, app, fs.Arg(1))
 	if err != nil {
-		return fmt.Errorf("invalid to ID: %w", err)
+		return fmt.Errorf("to: %w", err)
 	}
 
 	// Validate both entries exist.

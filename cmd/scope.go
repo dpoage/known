@@ -254,12 +254,46 @@ func runScopeTree(ctx context.Context, app *App, args []string) error {
 		return nil
 	}
 
-	printTree(app.Printer, scopes)
+	currentScope := app.Config.DefaultScope
+	printTree(app.Printer, scopes, currentScope)
 	return nil
 }
 
-// printTree displays scopes as an indented tree with usage context.
-func printTree(p *Printer, scopes []model.Scope) {
+// scopeNode is a tree node used to build the scope hierarchy for display.
+type scopeNode struct {
+	name     string // last segment of the path
+	path     string // full dot-separated path
+	children []*scopeNode
+}
+
+// buildScopeTree groups sorted scopes into a forest of scopeNodes.
+func buildScopeTree(scopes []model.Scope) []*scopeNode {
+	roots := []*scopeNode{}
+	index := map[string]*scopeNode{}
+
+	for _, s := range scopes {
+		parts := strings.Split(s.Path, ".")
+		node := &scopeNode{name: parts[len(parts)-1], path: s.Path}
+		index[s.Path] = node
+
+		if len(parts) == 1 {
+			roots = append(roots, node)
+		} else {
+			parentPath := strings.Join(parts[:len(parts)-1], ".")
+			if parent, ok := index[parentPath]; ok {
+				parent.children = append(parent.children, node)
+			} else {
+				// Orphan — treat as root.
+				roots = append(roots, node)
+			}
+		}
+	}
+	return roots
+}
+
+// printTree displays scopes as a filesystem-style tree with usage context.
+// When currentScope matches a scope path, that line is annotated with a marker.
+func printTree(p *Printer, scopes []model.Scope, currentScope string) {
 	// Sort by path to ensure parents come before children.
 	sort.Slice(scopes, func(i, j int) bool {
 		return scopes[i].Path < scopes[j].Path
@@ -267,19 +301,44 @@ func printTree(p *Printer, scopes []model.Scope) {
 
 	fmt.Fprintln(p.w, "Knowledge available — use /recall before exploring:")
 
-	for _, s := range scopes {
-		depth := strings.Count(s.Path, ".")
-		indent := strings.Repeat("  ", depth)
-
-		// Extract the last segment for display.
-		parts := strings.Split(s.Path, ".")
-		name := parts[len(parts)-1]
-		if depth == 0 {
-			name = "/" + name
-		}
-
-		fmt.Fprintf(p.w, "%s%s\n", indent, name)
+	roots := buildScopeTree(scopes)
+	for i, root := range roots {
+		isLast := i == len(roots)-1
+		printNode(p, root, "", isLast, true, currentScope)
 	}
 
 	fmt.Fprintf(p.w, "Example: known recall '<topic>' --scope <scope>\n")
+}
+
+// printNode recursively prints a scope node with box-drawing characters.
+func printNode(p *Printer, node *scopeNode, prefix string, isLast bool, isRoot bool, currentScope string) {
+	connector := "├── "
+	if isLast {
+		connector = "└── "
+	}
+
+	marker := ""
+	if currentScope != "" && currentScope != model.RootScope && node.path == currentScope {
+		marker = "  <-- you are here"
+	}
+
+	if isRoot {
+		fmt.Fprintf(p.w, "%s%s\n", node.name, marker)
+	} else {
+		fmt.Fprintf(p.w, "%s%s%s%s\n", prefix, connector, node.name, marker)
+	}
+
+	childPrefix := prefix
+	if !isRoot {
+		if isLast {
+			childPrefix += "    "
+		} else {
+			childPrefix += "│   "
+		}
+	}
+
+	for i, child := range node.children {
+		childIsLast := i == len(node.children)-1
+		printNode(p, child, childPrefix, childIsLast, false, currentScope)
+	}
 }

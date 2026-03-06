@@ -161,3 +161,8 @@ func (db *DB) Scopes() storage.ScopeRepo {
 func (db *DB) Sessions() storage.SessionRepo {
 	return &SessionStore{pool: db.Pool}
 }
+
+// Labels returns the LabelLister implementation backed by this DB.
+func (db *DB) Labels() storage.LabelLister {
+	return &EntryStore{pool: db.Pool}
+}

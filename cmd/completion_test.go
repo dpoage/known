@@ -135,12 +135,18 @@ func TestDynamicCompletionInBash(t *testing.T) {
 	if !strings.Contains(script, "known __complete scopes") {
 		t.Error("bash script missing dynamic scope completion")
 	}
+	if !strings.Contains(script, "known __complete labels") {
+		t.Error("bash script missing dynamic label completion")
+	}
 }
 
 func TestDynamicCompletionInFish(t *testing.T) {
 	script := generateFish()
 	if !strings.Contains(script, "known __complete scopes") {
 		t.Error("fish script missing dynamic scope completion")
+	}
+	if !strings.Contains(script, "known __complete labels") {
+		t.Error("fish script missing dynamic label completion")
 	}
 }
 
@@ -151,6 +157,26 @@ func TestDynamicCompletionInZsh(t *testing.T) {
 	}
 	if !strings.Contains(script, "__known_complete_scopes") {
 		t.Error("zsh script missing helper function __known_complete_scopes")
+	}
+	if !strings.Contains(script, "known __complete labels") {
+		t.Error("zsh script missing dynamic label completion")
+	}
+	if !strings.Contains(script, "__known_complete_labels") {
+		t.Error("zsh script missing helper function __known_complete_labels")
+	}
+}
+
+func TestRunCompleteLight_Labels(t *testing.T) {
+	ctx := context.Background()
+	cap := captureStdout(t)
+	err := runCompleteLight(ctx, globalFlags{dsn: ":memory:"}, []string{"labels"})
+	out := cap.restore()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// :memory: DB has no labels, so output should be empty.
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty output for fresh DB, got %q", out)
 	}
 }
 

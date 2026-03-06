@@ -2,10 +2,9 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
 
-	"github.com/dpoage/known/model"
+	flag "github.com/spf13/pflag"
 )
 
 func runConflicts(ctx context.Context, app *App, args []string) error {
@@ -18,11 +17,11 @@ func runConflicts(ctx context.Context, app *App, args []string) error {
 
 	*scope = app.Config.QualifyScope(*scope)
 
-	// If a positional argument is given, treat it as an entry ID.
+	// If a positional argument is given, treat it as an entry ID or query.
 	if fs.NArg() > 0 {
-		entryID, err := model.ParseID(fs.Arg(0))
+		entryID, err := resolveEntry(ctx, app, fs.Arg(0))
 		if err != nil {
-			return fmt.Errorf("invalid ID: %w", err)
+			return err
 		}
 
 		results, err := app.Engine.FindConflicts(ctx, entryID)

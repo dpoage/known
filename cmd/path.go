@@ -2,10 +2,9 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
 
-	"github.com/dpoage/known/model"
+	flag "github.com/spf13/pflag"
 )
 
 func runPath(ctx context.Context, app *App, args []string) error {
@@ -17,17 +16,17 @@ func runPath(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() < 2 {
-		return fmt.Errorf("usage: known path <from-id> <to-id> [flags]\n\nFind the shortest path between two entries.")
+		return fmt.Errorf("usage: known path <from> <to> [flags]\n\nFind the shortest path between two entries. Arguments can be IDs or content queries.")
 	}
 
-	fromID, err := model.ParseID(fs.Arg(0))
+	fromID, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("invalid from ID: %w", err)
+		return fmt.Errorf("from: %w", err)
 	}
 
-	toID, err := model.ParseID(fs.Arg(1))
+	toID, err := resolveEntry(ctx, app, fs.Arg(1))
 	if err != nil {
-		return fmt.Errorf("invalid to ID: %w", err)
+		return fmt.Errorf("to: %w", err)
 	}
 
 	results, err := app.Engine.FindPath(ctx, fromID, toID, *maxDepth)

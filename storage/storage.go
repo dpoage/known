@@ -169,6 +169,11 @@ type SessionRepo interface {
 	MarkProcessed(ctx context.Context, sessionID model.ID) error
 }
 
+// LabelLister can enumerate all distinct labels in the knowledge graph.
+type LabelLister interface {
+	ListLabels(ctx context.Context) ([]string, error)
+}
+
 // Backend is the top-level interface for a storage backend (postgres, sqlite, etc.).
 // It provides access to the individual repositories and manages connections/transactions.
 type Backend interface {
@@ -176,6 +181,7 @@ type Backend interface {
 	Edges() EdgeRepo
 	Scopes() ScopeRepo
 	Sessions() SessionRepo
+	Labels() LabelLister
 	WithTx(ctx context.Context, fn func(context.Context) error) error
 	Close() error
 	Migrate() error
