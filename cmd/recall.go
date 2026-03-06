@@ -43,10 +43,10 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
 	var labelFlags multiFlag
 	fs.Var(&labelFlags, "label", "filter by label (repeatable)")
-	limit := fs.Int("limit", 20, "maximum number of results")
-	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
-	recency := fs.Float64("recency", 0.1, "recency weight (0=pure similarity, 1=pure recency)")
-	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth (hops from each vector result)")
+	limit := fs.Int("limit", app.Config.RecallLimit, "maximum number of results")
+	threshold := fs.Float64("threshold", app.Config.SearchThreshold, "minimum similarity score (0-1)")
+	recency := fs.Float64("recency", app.Config.RecallRecency, "recency weight (0=pure similarity, 1=pure recency)")
+	expandDepth := fs.Int("expand-depth", app.Config.RecallExpandDepth, "graph expansion depth (hops from each vector result)")
 	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
 	source := fs.String("source", "", "filter by source type (file, url, conversation, manual)")
 
@@ -89,7 +89,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		Vector: query.VectorOptions{
 			Text:            queryText,
 			Scope:           *scope,
-			Limit:           5,
+			Limit:           *limit,
 			Threshold:       *threshold,
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,

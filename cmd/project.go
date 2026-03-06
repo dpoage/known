@@ -18,6 +18,9 @@ type projectConfig struct {
 	ScopePrefix      string            `yaml:"scope_prefix,omitempty"`
 	MaxContentLength *int              `yaml:"max_content_length,omitempty"`
 	SearchThreshold  *float64          `yaml:"search_threshold,omitempty"`
+	RecallLimit      *int              `yaml:"recall_limit,omitempty"`
+	RecallExpandDepth *int             `yaml:"recall_expand_depth,omitempty"`
+	RecallRecency    *float64          `yaml:"recall_recency,omitempty"`
 	DefaultTTL       map[string]string `yaml:"default_ttl,omitempty"`
 }
 

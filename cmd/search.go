@@ -14,8 +14,8 @@ import (
 func runSearch(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
-	limit := fs.Int("limit", 10, "maximum number of results")
-	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
+	limit := fs.Int("limit", app.Config.RecallLimit, "maximum number of results")
+	threshold := fs.Float64("threshold", app.Config.SearchThreshold, "minimum similarity score (0-1)")
 	recency := fs.Float64("recency", 0, "recency weight (0=pure similarity, 1=pure recency)")
 	var labelFlags multiFlag
 	fs.Var(&labelFlags, "label", "filter by label (repeatable, post-filter)")
