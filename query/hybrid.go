@@ -30,14 +30,15 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 	}
 
 	// Phase 1b: Text search (when enabled) — fuse with RRF.
+	// Text search is best-effort: if the backend doesn't support it
+	// (e.g. Postgres), we fall back to vector-only results.
 	if opts.TextSearch {
 		textOpts := opts.Vector
 		textOpts.Threshold = 0 // BM25 scores are on a different scale; don't filter.
 		textResults, textErr := e.SearchText(ctx, textOpts)
-		if textErr != nil {
-			return nil, fmt.Errorf("hybrid text phase: %w", textErr)
+		if textErr == nil && len(textResults) > 0 {
+			vectorResults = fuseByRRF(vectorResults, textResults, opts.rrfK())
 		}
-		vectorResults = fuseByRRF(vectorResults, textResults, opts.rrfK())
 		// Cap fused results to the requested limit so graph expansion
 		// doesn't do 2x work from the combined result set.
 		if opts.Vector.Limit > 0 && len(vectorResults) > opts.Vector.Limit {
