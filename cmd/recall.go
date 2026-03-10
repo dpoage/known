@@ -43,12 +43,13 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
 	var labelFlags multiFlag
 	fs.Var(&labelFlags, "label", "filter by label (repeatable)")
-	limit := fs.Int("limit", 20, "maximum number of results")
-	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
-	recency := fs.Float64("recency", 0.1, "recency weight (0=pure similarity, 1=pure recency)")
-	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth (hops from each vector result)")
+	limit := fs.Int("limit", app.Config.RecallLimit, "maximum number of results")
+	threshold := fs.Float64("threshold", app.Config.SearchThreshold, "minimum similarity score (0-1)")
+	recency := fs.Float64("recency", app.Config.RecallRecency, "recency weight (0=pure similarity, 1=pure recency)")
+	expandDepth := fs.Int("expand-depth", app.Config.RecallExpandDepth, "graph expansion depth (hops from each vector result)")
 	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
 	source := fs.String("source", "", "filter by source type (file, url, conversation, manual)")
+	textOnly := fs.Bool("text", false, "use full-text search (FTS5) instead of vector search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -85,17 +86,45 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 
 	queryText := fs.Arg(0)
 
+	// Pure text mode: use FTS5 directly, skip graph expansion.
+	if *textOnly {
+		// BM25 scores use a different scale than cosine similarity, so the
+		// default similarity threshold would filter out most text results.
+		textThreshold := *threshold
+		if !fs.Changed("threshold") {
+			textThreshold = 0
+		}
+		textOpts := query.VectorOptions{
+			Text:            queryText,
+			Scope:           *scope,
+			Limit:           *limit,
+			Threshold:       textThreshold,
+			RecencyWeight:   *recency,
+			RecencyHalfLife: 7 * 24 * time.Hour,
+		}
+		results, err := app.Engine.SearchText(ctx, textOpts)
+		if err != nil {
+			return fmt.Errorf("recall: %w", err)
+		}
+		results = filterResultsByLabels(results, labelFlags)
+		results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
+		results = filterResultsBySource(results, model.SourceType(*source))
+		app.Printer.PrintRecallResults(results)
+		return nil
+	}
+
 	opts := query.HybridOptions{
 		Vector: query.VectorOptions{
 			Text:            queryText,
 			Scope:           *scope,
-			Limit:           5,
+			Limit:           *limit,
 			Threshold:       *threshold,
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
 		},
 		ExpandDepth:     *expandDepth,
 		ExpandDirection: query.Both,
+		TextSearch:      true,
 	}
 
 	results, err := app.Engine.SearchHybrid(ctx, opts)

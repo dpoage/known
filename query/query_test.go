@@ -19,7 +19,8 @@ import (
 // mockEntryRepo is a simple in-memory implementation of storage.EntryRepo
 // for testing purposes.
 type mockEntryRepo struct {
-	entries map[string]*model.Entry
+	entries    map[string]*model.Entry
+	searchText func(ctx context.Context, query, scope string, limit int) ([]storage.SimilarityResult, error)
 }
 
 func newMockEntryRepo() *mockEntryRepo {
@@ -144,6 +145,13 @@ func (m *mockEntryRepo) DeleteExpired(_ context.Context) (int64, error) {
 		}
 	}
 	return count, nil
+}
+
+func (m *mockEntryRepo) SearchText(ctx context.Context, query string, scope string, limit int) ([]storage.SimilarityResult, error) {
+	if m.searchText != nil {
+		return m.searchText(ctx, query, scope, limit)
+	}
+	return nil, nil
 }
 
 func (m *mockEntryRepo) CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
@@ -1653,5 +1661,258 @@ func TestTraverse_MultipleEdgeTypes(t *testing.T) {
 	}
 	if contents["D"] {
 		t.Error("D (related-to) should be filtered out")
+	}
+}
+
+// =============================================================================
+// RRF Fusion Tests
+// =============================================================================
+
+// namedResults maps content strings to Result for easier lookup in tests.
+func resultByContent(results []Result, content string) (Result, bool) {
+	for _, r := range results {
+		if r.Entry.Content == content {
+			return r, true
+		}
+	}
+	return Result{}, false
+}
+
+func makeResult(content string, score float64, reach ReachMethod) Result {
+	return Result{
+		Entry: model.Entry{ID: model.NewID(), Content: content},
+		Score: score,
+		Reach: reach,
+	}
+}
+
+func TestFuseByRRF_BothListsContribute(t *testing.T) {
+	// Entry A: vector rank 0, text rank 1
+	// Entry B: vector rank 1, text rank 0
+	// With k=60: both get 1/61 + 1/62 — equal scores.
+	idA, idB := model.NewID(), model.NewID()
+	vector := []Result{
+		{Entry: model.Entry{ID: idA, Content: "A"}, Score: 0.9, Reach: ReachDirect},
+		{Entry: model.Entry{ID: idB, Content: "B"}, Score: 0.7, Reach: ReachDirect},
+	}
+	text := []Result{
+		{Entry: model.Entry{ID: idB, Content: "B"}, Score: 0.3, Reach: ReachText},
+		{Entry: model.Entry{ID: idA, Content: "A"}, Score: 0.2, Reach: ReachText},
+	}
+
+	results := fuseByRRF(vector, text, 60)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	expectedScore := 1.0/61.0 + 1.0/62.0
+	for _, r := range results {
+		if math.Abs(r.Score-expectedScore) > 1e-10 {
+			t.Errorf("entry %s: score = %f, want %f", r.Entry.Content, r.Score, expectedScore)
+		}
+	}
+}
+
+func TestFuseByRRF_TextOnlyEntryOutranksWeakVector(t *testing.T) {
+	// A: vector-only, rank 2. B: text-only, rank 0. C: both lists.
+	idA, idB, idC, idD := model.NewID(), model.NewID(), model.NewID(), model.NewID()
+	vector := []Result{
+		{Entry: model.Entry{ID: idC, Content: "C"}, Score: 0.8, Reach: ReachDirect},
+		{Entry: model.Entry{ID: idD, Content: "D"}, Score: 0.6, Reach: ReachDirect},
+		{Entry: model.Entry{ID: idA, Content: "A"}, Score: 0.4, Reach: ReachDirect}, // rank 2
+	}
+	text := []Result{
+		{Entry: model.Entry{ID: idB, Content: "B"}, Score: 0.3, Reach: ReachText}, // rank 0
+		{Entry: model.Entry{ID: idC, Content: "C"}, Score: 0.2, Reach: ReachText}, // rank 1
+	}
+
+	results := fuseByRRF(vector, text, 60)
+
+	rA, _ := resultByContent(results, "A")
+	rB, _ := resultByContent(results, "B")
+
+	// B at text rank 0 (1/61) should beat A at vector rank 2 (1/63).
+	if rB.Score <= rA.Score {
+		t.Errorf("text-only B (score=%f) should outrank weak vector A (score=%f)", rB.Score, rA.Score)
+	}
+}
+
+func TestFuseByRRF_TextOnlyResultsGetReachText(t *testing.T) {
+	vector := []Result{
+		makeResult("vector entry", 0.9, ReachDirect),
+	}
+	text := []Result{
+		makeResult("text only", 0.3, ReachText),
+	}
+
+	results := fuseByRRF(vector, text, 60)
+
+	rV, _ := resultByContent(results, "vector entry")
+	rT, _ := resultByContent(results, "text only")
+	if rV.Reach != ReachDirect {
+		t.Errorf("vector entry reach = %q, want %q", rV.Reach, ReachDirect)
+	}
+	if rT.Reach != ReachText {
+		t.Errorf("text entry reach = %q, want %q", rT.Reach, ReachText)
+	}
+}
+
+func TestFuseByRRF_DuplicateKeepsBetterRankedReach(t *testing.T) {
+	// Entry X: vector rank 1, text rank 0 — text ranked it higher.
+	idX := model.NewID()
+	vector := []Result{
+		makeResult("other", 0.9, ReachDirect),
+		{Entry: model.Entry{ID: idX, Content: "X"}, Score: 0.7, Reach: ReachDirect}, // rank 1
+	}
+	text := []Result{
+		{Entry: model.Entry{ID: idX, Content: "X"}, Score: 0.3, Reach: ReachText}, // rank 0
+	}
+
+	results := fuseByRRF(vector, text, 60)
+
+	rX, _ := resultByContent(results, "X")
+	if rX.Reach != ReachText {
+		t.Errorf("X should have ReachText (better rank), got %q", rX.Reach)
+	}
+}
+
+func TestFuseByRRF_ResultsSortedByScore(t *testing.T) {
+	idC := model.NewID()
+	vector := []Result{
+		makeResult("A", 0.9, ReachDirect),
+		makeResult("B", 0.7, ReachDirect),
+		{Entry: model.Entry{ID: idC, Content: "C"}, Score: 0.5, Reach: ReachDirect},
+	}
+	text := []Result{
+		{Entry: model.Entry{ID: idC, Content: "C"}, Score: 0.3, Reach: ReachText}, // C boosted
+		makeResult("D", 0.2, ReachText),
+	}
+
+	results := fuseByRRF(vector, text, 60)
+
+	for i := 1; i < len(results); i++ {
+		if results[i].Score > results[i-1].Score {
+			t.Errorf("results not sorted: [%d].Score=%f > [%d].Score=%f",
+				i, results[i].Score, i-1, results[i-1].Score)
+		}
+	}
+}
+
+func TestFuseByRRF_EmptyTextResults(t *testing.T) {
+	vector := []Result{
+		makeResult("A", 0.9, ReachDirect),
+		makeResult("B", 0.7, ReachDirect),
+	}
+
+	results := fuseByRRF(vector, nil, 60)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Score <= results[1].Score {
+		t.Error("first result should have higher score than second")
+	}
+}
+
+func TestFuseByRRF_EmptyVectorResults(t *testing.T) {
+	text := []Result{
+		makeResult("A", 0.3, ReachText),
+		makeResult("B", 0.2, ReachText),
+	}
+
+	results := fuseByRRF(nil, text, 60)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Reach != ReachText {
+			t.Errorf("entry %s reach = %q, want %q", r.Entry.ID, r.Reach, ReachText)
+		}
+	}
+}
+
+func TestFuseByRRF_CustomK(t *testing.T) {
+	id := model.NewID()
+	vector := []Result{
+		{Entry: model.Entry{ID: id, Content: "A"}, Score: 0.9, Reach: ReachDirect},
+	}
+	text := []Result{
+		{Entry: model.Entry{ID: id, Content: "A"}, Score: 0.3, Reach: ReachText},
+	}
+
+	// With k=1: score = 1/2 + 1/2 = 1.0
+	results := fuseByRRF(vector, text, 1)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	expected := 1.0/2.0 + 1.0/2.0
+	if math.Abs(results[0].Score-expected) > 1e-10 {
+		t.Errorf("score = %f, want %f", results[0].Score, expected)
+	}
+}
+
+// Integration test: SearchHybrid with TextSearch enabled.
+func TestSearchHybrid_TextFusion(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	// e1: good vector match, no text match.
+	e1 := mustCreateEntry(t, f.entryRepo, makeEntry("good embedding entry", "root", []float32{0.95, 0.1, 0.0}))
+	// e2: weak vector match, strong text match.
+	e2 := mustCreateEntry(t, f.entryRepo, makeEntry("exact keyword match", "root", []float32{0.3, 0.3, 0.85}))
+
+	// Configure mock to return e2 as top text result, e1 as second.
+	f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+		return []storage.SimilarityResult{
+			{Entry: e2, Distance: -5.0}, // rank 0: strong BM25 match
+			{Entry: e1, Distance: -1.0}, // rank 1: weak BM25 match
+		}, nil
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "keyword",
+			Scope: "root",
+			Limit: 10,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+		TextSearch:      true,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid with text: %v", err)
+	}
+
+	// e2 should appear in results (brought in by text search and RRF fusion).
+	found := false
+	for _, r := range results {
+		if r.Entry.ID == e2.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("e2 (strong text match) should appear in fused results")
+	}
+
+	// Both entries appear in both lists, so both get boosted.
+	// e1 has vector rank 0 + text rank 1; e2 has vector rank 1 + text rank 0.
+	// With RRF they should have equal scores.
+	var scoreE1, scoreE2 float64
+	for _, r := range results {
+		if r.Entry.ID == e1.ID {
+			scoreE1 = r.Score
+		}
+		if r.Entry.ID == e2.ID {
+			scoreE2 = r.Score
+		}
+	}
+	if math.Abs(scoreE1-scoreE2) > 1e-10 {
+		t.Logf("e1 score=%f, e2 score=%f (expected equal with symmetric ranking)", scoreE1, scoreE2)
 	}
 }

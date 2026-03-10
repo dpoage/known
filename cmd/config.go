@@ -13,15 +13,18 @@ import (
 
 // AppConfig holds the resolved configuration for the CLI.
 type AppConfig struct {
-	DSN              string
-	JSON             bool
-	Quiet            bool
-	MaxContentLength int                                // default 4096
-	SearchThreshold  float64                            // default 0.3
-	DefaultTTL       map[model.SourceType]time.Duration // source type -> auto-TTL
-	ScopeRoot        string                             // directory containing .known.yaml (or from global scope_root)
-	ScopePrefix      string                             // project scope prefix from .known.yaml
-	DefaultScope     string                             // auto-derived scope from cwd relative to ScopeRoot
+	DSN               string
+	JSON              bool
+	Quiet             bool
+	MaxContentLength  int                                // default 4096
+	SearchThreshold   float64                            // default 0.4
+	RecallLimit       int                                // default 5
+	RecallExpandDepth int                                // default 0
+	RecallRecency     float64                            // default 0.1
+	DefaultTTL        map[model.SourceType]time.Duration // source type -> auto-TTL
+	ScopeRoot         string                             // directory containing .known.yaml (or from global scope_root)
+	ScopePrefix       string                             // project scope prefix from .known.yaml
+	DefaultScope      string                             // auto-derived scope from cwd relative to ScopeRoot
 }
 
 // QualifyScope prepends the project's scope prefix to a user-provided scope value.
@@ -131,14 +134,38 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	}
 
 	// 7. SearchThreshold: project > global > hardcoded default.
-	cfg.SearchThreshold = 0.3
+	cfg.SearchThreshold = 0.4
 	if projCfg != nil && projCfg.SearchThreshold != nil {
 		cfg.SearchThreshold = *projCfg.SearchThreshold
 	} else if viper.IsSet("search_threshold") {
 		cfg.SearchThreshold = viper.GetFloat64("search_threshold")
 	}
 
-	// 8. DefaultTTL: hardcoded defaults, overridable by project then global.
+	// 8. RecallLimit: project > global > hardcoded default.
+	cfg.RecallLimit = 5
+	if projCfg != nil && projCfg.RecallLimit != nil {
+		cfg.RecallLimit = *projCfg.RecallLimit
+	} else if viper.IsSet("recall_limit") {
+		cfg.RecallLimit = viper.GetInt("recall_limit")
+	}
+
+	// 9. RecallExpandDepth: project > global > hardcoded default.
+	cfg.RecallExpandDepth = 0
+	if projCfg != nil && projCfg.RecallExpandDepth != nil {
+		cfg.RecallExpandDepth = *projCfg.RecallExpandDepth
+	} else if viper.IsSet("recall_expand_depth") {
+		cfg.RecallExpandDepth = viper.GetInt("recall_expand_depth")
+	}
+
+	// 10. RecallRecency: project > global > hardcoded default.
+	cfg.RecallRecency = 0.1
+	if projCfg != nil && projCfg.RecallRecency != nil {
+		cfg.RecallRecency = *projCfg.RecallRecency
+	} else if viper.IsSet("recall_recency") {
+		cfg.RecallRecency = viper.GetFloat64("recall_recency")
+	}
+
+	// 11. DefaultTTL: hardcoded defaults, overridable by project then global.
 	cfg.DefaultTTL = map[model.SourceType]time.Duration{
 		model.SourceConversation: 7 * 24 * time.Hour,  // 7 days
 		model.SourceManual:       90 * 24 * time.Hour, // 90 days

@@ -14,13 +14,14 @@ import (
 func runSearch(ctx context.Context, app *App, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	scope := fs.String("scope", "", "scope to search within (default: auto from cwd)")
-	limit := fs.Int("limit", 10, "maximum number of results")
-	threshold := fs.Float64("threshold", 0.3, "minimum similarity score (0-1)")
+	limit := fs.Int("limit", app.Config.RecallLimit, "maximum number of results")
+	threshold := fs.Float64("threshold", app.Config.SearchThreshold, "minimum similarity score (0-1)")
 	recency := fs.Float64("recency", 0, "recency weight (0=pure similarity, 1=pure recency)")
 	var labelFlags multiFlag
 	fs.Var(&labelFlags, "label", "filter by label (repeatable, post-filter)")
 	hybrid := fs.Bool("hybrid", false, "use hybrid vector+graph search")
 	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth for hybrid search")
+	textOnly := fs.Bool("text", false, "use full-text search (FTS5) instead of vector search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -38,6 +39,31 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 
 	queryText := fs.Arg(0)
 
+	if *textOnly && !*hybrid {
+		// BM25 scores use a different scale than cosine similarity, so the
+		// default similarity threshold would filter out most text results.
+		// Only apply threshold if explicitly set by the user.
+		textThreshold := *threshold
+		if !fs.Changed("threshold") {
+			textThreshold = 0
+		}
+		opts := query.VectorOptions{
+			Text:            queryText,
+			Scope:           *scope,
+			Limit:           *limit,
+			Threshold:       textThreshold,
+			RecencyWeight:   *recency,
+			RecencyHalfLife: 7 * 24 * time.Hour,
+		}
+		results, err := app.Engine.SearchText(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("text search: %w", err)
+		}
+		results = filterResultsByLabels(results, labelFlags)
+		app.Printer.PrintResults(results)
+		return nil
+	}
+
 	if *hybrid {
 		opts := query.HybridOptions{
 			Vector: query.VectorOptions{
@@ -49,6 +75,9 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 			},
 			ExpandDepth:     *expandDepth,
 			ExpandDirection: query.Both,
+		}
+		if *textOnly {
+			opts.TextSearch = true
 		}
 		results, err := app.Engine.SearchHybrid(ctx, opts)
 		if err != nil {

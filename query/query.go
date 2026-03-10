@@ -26,6 +26,8 @@ const (
 	// ReachExpansion means the result was found via hybrid graph expansion
 	// after an initial vector search.
 	ReachExpansion ReachMethod = "expansion"
+	// ReachText means the result was found via full-text search.
+	ReachText ReachMethod = "text"
 )
 
 // Result is a single query result with full metadata, provenance, scores,
@@ -125,6 +127,25 @@ type HybridOptions struct {
 
 	// ExpandEdgeTypes filters expansion to only follow these edge types.
 	ExpandEdgeTypes []model.EdgeType
+
+	// TextSearch enables FTS5 text search alongside vector search.
+	// When true, runs both vector and text search, then fuses rankings
+	// using Reciprocal Rank Fusion (RRF).
+	TextSearch bool
+
+	// RRFk is the RRF smoothing constant. Higher values reduce the
+	// influence of high-ranked results. Standard default is 60.
+	// Zero means use the default (60).
+	RRFk int
+}
+
+const defaultRRFk = 60
+
+func (o HybridOptions) rrfK() int {
+	if o.RRFk > 0 {
+		return o.RRFk
+	}
+	return defaultRRFk
 }
 
 // Engine provides query operations over the knowledge graph.
@@ -167,6 +188,16 @@ func distanceToScore(distance float64, metric storage.SimilarityMetric) float64 
 	return clamp(score, 0, 1)
 }
 
+// bm25ToScore converts a raw FTS5 BM25 rank to a 0-1 similarity score.
+// FTS5 rank is negative (more negative = more relevant).
+// Uses: score = 1.0 / (1.0 + abs(rank))
+func bm25ToScore(rank float64) float64 {
+	if rank >= 0 {
+		return 0
+	}
+	return 1.0 / (1.0 + math.Abs(rank))
+}
+
 // freshnessScore computes a time-decay freshness value between 0 and 1.
 // It uses exponential decay: freshness = exp(-ln(2) * age / halfLife).
 func freshnessScore(createdAt time.Time, halfLife time.Duration) float64 {
@@ -198,9 +229,12 @@ func clamp(v, lo, hi float64) float64 {
 }
 
 // enrichConflicts checks each result for contradicts edges and populates
-// the HasConflict and Conflicts fields.
+// the HasConflict and Conflicts fields. Skips results that are already enriched.
 func (e *Engine) enrichConflicts(ctx context.Context, results []Result) error {
 	for i := range results {
+		if results[i].HasConflict || results[i].Conflicts != nil {
+			continue
+		}
 		conflicts, err := e.edges.FindConflicts(ctx, results[i].Entry.ID)
 		if err != nil {
 			return err

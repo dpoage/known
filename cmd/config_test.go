@@ -323,8 +323,77 @@ func TestLoadAppConfig(t *testing.T) {
 			name: "search threshold hardcoded default",
 			gf:   globalFlags{dsn: "postgres://test"},
 			check: func(t *testing.T, cfg *AppConfig) {
-				if cfg.SearchThreshold != 0.3 {
-					t.Errorf("SearchThreshold = %f, want 0.3", cfg.SearchThreshold)
+				if cfg.SearchThreshold != 0.4 {
+					t.Errorf("SearchThreshold = %f, want 0.4", cfg.SearchThreshold)
+				}
+			},
+		},
+
+		// --- RecallLimit cascade ---
+		{
+			name:        "recall limit from project config",
+			projectYAML: "dsn: postgres://test\nrecall_limit: 10\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallLimit != 10 {
+					t.Errorf("RecallLimit = %d, want 10", cfg.RecallLimit)
+				}
+			},
+		},
+		{
+			name:       "recall limit from global config",
+			globalYAML: "dsn: postgres://test\nrecall_limit: 15\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallLimit != 15 {
+					t.Errorf("RecallLimit = %d, want 15", cfg.RecallLimit)
+				}
+			},
+		},
+		{
+			name: "recall limit hardcoded default",
+			gf:   globalFlags{dsn: "postgres://test"},
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallLimit != 5 {
+					t.Errorf("RecallLimit = %d, want 5", cfg.RecallLimit)
+				}
+			},
+		},
+
+		// --- RecallExpandDepth cascade ---
+		{
+			name:        "recall expand depth from project config",
+			projectYAML: "dsn: postgres://test\nrecall_expand_depth: 2\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallExpandDepth != 2 {
+					t.Errorf("RecallExpandDepth = %d, want 2", cfg.RecallExpandDepth)
+				}
+			},
+		},
+		{
+			name: "recall expand depth hardcoded default",
+			gf:   globalFlags{dsn: "postgres://test"},
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallExpandDepth != 0 {
+					t.Errorf("RecallExpandDepth = %d, want 0", cfg.RecallExpandDepth)
+				}
+			},
+		},
+
+		// --- RecallRecency cascade ---
+		{
+			name:        "recall recency from project config",
+			projectYAML: "dsn: postgres://test\nrecall_recency: 0.3\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallRecency != 0.3 {
+					t.Errorf("RecallRecency = %f, want 0.3", cfg.RecallRecency)
+				}
+			},
+		},
+		{
+			name: "recall recency hardcoded default",
+			gf:   globalFlags{dsn: "postgres://test"},
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.RecallRecency != 0.1 {
+					t.Errorf("RecallRecency = %f, want 0.1", cfg.RecallRecency)
 				}
 			},
 		},

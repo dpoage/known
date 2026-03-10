@@ -608,6 +608,11 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	return results, nil
 }
 
+// SearchText is not implemented for PostgreSQL. Use SearchSimilar for vector search.
+func (s *EntryStore) SearchText(ctx context.Context, query string, scope string, limit int) ([]storage.SimilarityResult, error) {
+	return nil, fmt.Errorf("full-text search not implemented for PostgreSQL backend")
+}
+
 // ListLabels returns all distinct labels across all entries, sorted alphabetically.
 func (s *EntryStore) ListLabels(ctx context.Context) ([]string, error) {
 	rows, err := s.conn(ctx).Query(ctx, `SELECT DISTINCT label FROM entry_labels ORDER BY label`)

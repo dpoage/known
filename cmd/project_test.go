@@ -181,6 +181,9 @@ func TestLoadProjectConfig(t *testing.T) {
 		content := `dsn: postgres://localhost/test
 max_content_length: 8192
 search_threshold: 0.5
+recall_limit: 10
+recall_expand_depth: 2
+recall_recency: 0.3
 default_ttl:
   conversation: 168h
   manual: 720h
@@ -201,6 +204,15 @@ default_ttl:
 		}
 		if cfg.SearchThreshold == nil || *cfg.SearchThreshold != 0.5 {
 			t.Errorf("SearchThreshold = %v, want 0.5", cfg.SearchThreshold)
+		}
+		if cfg.RecallLimit == nil || *cfg.RecallLimit != 10 {
+			t.Errorf("RecallLimit = %v, want 10", cfg.RecallLimit)
+		}
+		if cfg.RecallExpandDepth == nil || *cfg.RecallExpandDepth != 2 {
+			t.Errorf("RecallExpandDepth = %v, want 2", cfg.RecallExpandDepth)
+		}
+		if cfg.RecallRecency == nil || *cfg.RecallRecency != 0.3 {
+			t.Errorf("RecallRecency = %v, want 0.3", cfg.RecallRecency)
 		}
 		if cfg.DefaultTTL["conversation"] != "168h" {
 			t.Errorf("DefaultTTL[conversation] = %q, want %q", cfg.DefaultTTL["conversation"], "168h")
