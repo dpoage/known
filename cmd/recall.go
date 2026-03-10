@@ -49,6 +49,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	expandDepth := fs.Int("expand-depth", app.Config.RecallExpandDepth, "graph expansion depth (hops from each vector result)")
 	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
 	source := fs.String("source", "", "filter by source type (file, url, conversation, manual)")
+	textOnly := fs.Bool("text", false, "use full-text search (FTS5) instead of vector search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -84,6 +85,27 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	}
 
 	queryText := fs.Arg(0)
+
+	// Pure text mode: use FTS5 directly, skip graph expansion.
+	if *textOnly {
+		textOpts := query.VectorOptions{
+			Text:            queryText,
+			Scope:           *scope,
+			Limit:           *limit,
+			Threshold:       *threshold,
+			RecencyWeight:   *recency,
+			RecencyHalfLife: 7 * 24 * time.Hour,
+		}
+		results, err := app.Engine.SearchText(ctx, textOpts)
+		if err != nil {
+			return fmt.Errorf("recall: %w", err)
+		}
+		results = filterResultsByLabels(results, labelFlags)
+		results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
+		results = filterResultsBySource(results, model.SourceType(*source))
+		app.Printer.PrintRecallResults(results)
+		return nil
+	}
 
 	opts := query.HybridOptions{
 		Vector: query.VectorOptions{

@@ -47,6 +47,9 @@ func (s *stubEntryRepo) SearchSimilar(context.Context, []float32, string, storag
 	return nil, nil
 }
 func (s *stubEntryRepo) DeleteExpired(context.Context) (int64, error) { return 0, nil }
+func (s *stubEntryRepo) SearchText(context.Context, string, string, int) ([]storage.SimilarityResult, error) {
+	return nil, nil
+}
 
 // stubEdgeRepo captures created edges for inspection.
 type stubEdgeRepo struct {

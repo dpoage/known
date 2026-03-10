@@ -21,6 +21,7 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 	fs.Var(&labelFlags, "label", "filter by label (repeatable, post-filter)")
 	hybrid := fs.Bool("hybrid", false, "use hybrid vector+graph search")
 	expandDepth := fs.Int("expand-depth", 1, "graph expansion depth for hybrid search")
+	textOnly := fs.Bool("text", false, "use full-text search (FTS5) instead of vector search")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -38,6 +39,24 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 
 	queryText := fs.Arg(0)
 
+	if *textOnly && !*hybrid {
+		opts := query.VectorOptions{
+			Text:            queryText,
+			Scope:           *scope,
+			Limit:           *limit,
+			Threshold:       *threshold,
+			RecencyWeight:   *recency,
+			RecencyHalfLife: 7 * 24 * time.Hour,
+		}
+		results, err := app.Engine.SearchText(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("text search: %w", err)
+		}
+		results = filterResultsByLabels(results, labelFlags)
+		app.Printer.PrintResults(results)
+		return nil
+	}
+
 	if *hybrid {
 		opts := query.HybridOptions{
 			Vector: query.VectorOptions{
@@ -49,6 +68,9 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 			},
 			ExpandDepth:     *expandDepth,
 			ExpandDirection: query.Both,
+		}
+		if *textOnly {
+			opts.TextSearch = true
 		}
 		results, err := app.Engine.SearchHybrid(ctx, opts)
 		if err != nil {

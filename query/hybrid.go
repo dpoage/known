@@ -26,6 +26,15 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 		return nil, fmt.Errorf("hybrid vector phase: %w", err)
 	}
 
+	// Phase 1b: Text search (when enabled).
+	if opts.TextSearch {
+		textResults, textErr := e.SearchText(ctx, opts.Vector)
+		if textErr != nil {
+			return nil, fmt.Errorf("hybrid text phase: %w", textErr)
+		}
+		vectorResults = mergeTextResults(vectorResults, textResults)
+	}
+
 	// Track seen entries to deduplicate.
 	seen := make(map[string]bool)
 	var allResults []Result
@@ -156,4 +165,27 @@ func (e *Engine) expandFromEntry(
 	}
 
 	return results, nil
+}
+
+// mergeTextResults merges text search results into vector results.
+// For duplicate entries (same ID), keeps the result with the higher score.
+// New text-only results are appended.
+func mergeTextResults(vectorResults, textResults []Result) []Result {
+	byID := make(map[string]int, len(vectorResults))
+	for i, r := range vectorResults {
+		byID[r.Entry.ID.String()] = i
+	}
+	for _, tr := range textResults {
+		id := tr.Entry.ID.String()
+		if idx, exists := byID[id]; exists {
+			// Keep the higher score.
+			if tr.Score > vectorResults[idx].Score {
+				vectorResults[idx].Score = tr.Score
+			}
+		} else {
+			byID[id] = len(vectorResults)
+			vectorResults = append(vectorResults, tr)
+		}
+	}
+	return vectorResults
 }

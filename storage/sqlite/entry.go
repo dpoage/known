@@ -578,18 +578,107 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		return results[i].Distance < results[j].Distance
 	})
 
-	// Batch-load labels for result entries.
-	if len(results) > 0 {
-		resultEntries := make([]model.Entry, len(results))
-		for i := range results {
-			resultEntries[i] = results[i].Entry
+	if err := loadLabelsForResults(ctx, s.conn(ctx), results); err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
+	}
+
+	return results, nil
+}
+
+// SearchText finds entries matching a full-text query within the given scope.
+// Uses a two-pass approach matching SearchSimilar's pattern:
+//  1. Fetch IDs and BM25 ranks from the FTS5 index.
+//  2. Fetch full entry rows for the top results by ID.
+//
+// The Distance field holds the raw FTS5 rank (negative; more negative = more relevant).
+func (s *EntryStore) SearchText(ctx context.Context, query string, scope string, limit int) ([]storage.SimilarityResult, error) {
+	if query == "" {
+		return nil, fmt.Errorf("query text must not be empty")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	now := formatTime(time.Now())
+	conn := s.conn(ctx)
+
+	// Pass 1: fetch only IDs and ranks from FTS5 to avoid reading full rows
+	// (including embedding BLOBs) for all matches.
+	rows, err := conn.QueryContext(ctx, `
+		SELECT e.id, fts.rank
+		FROM entries_fts fts
+		JOIN entries e ON e.rowid = fts.rowid
+		WHERE entries_fts MATCH ?
+		  AND (e.scope = ? OR e.scope LIKE ?)
+		  AND (e.expires_at IS NULL OR e.expires_at > ?)
+		ORDER BY fts.rank
+		LIMIT ?
+	`, query, scope, scope+".%", now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search text (scan): %w", err)
+	}
+
+	type candidate struct {
+		id   string
+		rank float64
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.rank); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan text candidate: %w", err)
 		}
-		if err := loadLabelsForEntries(ctx, s.conn(ctx), resultEntries); err != nil {
-			return nil, fmt.Errorf("load labels: %w", err)
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate text candidates: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	// Pass 2: fetch full rows for the winners.
+	placeholders := make([]string, len(candidates))
+	args := make([]any, len(candidates))
+	rankByID := make(map[string]float64, len(candidates))
+	for i, c := range candidates {
+		placeholders[i] = "?"
+		args[i] = c.id
+		rankByID[c.id] = c.rank
+	}
+
+	fetchQuery := `SELECT ` + entryColumns + ` FROM entries WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	fetchRows, err := conn.QueryContext(ctx, fetchQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search text (fetch): %w", err)
+	}
+	defer fetchRows.Close()
+
+	results := make([]storage.SimilarityResult, 0, len(candidates))
+	for fetchRows.Next() {
+		entry, err := scanEntryFromRows(fetchRows)
+		if err != nil {
+			return nil, fmt.Errorf("scan text result: %w", err)
 		}
-		for i := range results {
-			results[i].Entry = resultEntries[i]
-		}
+		results = append(results, storage.SimilarityResult{
+			Entry:    *entry,
+			Distance: rankByID[entry.ID.String()],
+		})
+	}
+	if err := fetchRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate text results: %w", err)
+	}
+
+	// Re-sort by rank (IN query doesn't preserve order).
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Distance < results[j].Distance
+	})
+
+	if err := loadLabelsForResults(ctx, s.conn(ctx), results); err != nil {
+		return nil, fmt.Errorf("load labels: %w", err)
 	}
 
 	return results, nil
@@ -819,6 +908,24 @@ func loadLabels(ctx context.Context, conn DBTX, entryID string) ([]string, error
 		labels = append(labels, l)
 	}
 	return labels, rows.Err()
+}
+
+// loadLabelsForResults batch-loads labels for a slice of SimilarityResults.
+func loadLabelsForResults(ctx context.Context, conn DBTX, results []storage.SimilarityResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	entries := make([]model.Entry, len(results))
+	for i := range results {
+		entries[i] = results[i].Entry
+	}
+	if err := loadLabelsForEntries(ctx, conn, entries); err != nil {
+		return err
+	}
+	for i := range results {
+		results[i].Entry = entries[i]
+	}
+	return nil
 }
 
 // loadLabelsForEntries batch-loads labels for a slice of entries to avoid N+1 queries.

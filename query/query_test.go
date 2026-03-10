@@ -146,6 +146,10 @@ func (m *mockEntryRepo) DeleteExpired(_ context.Context) (int64, error) {
 	return count, nil
 }
 
+func (m *mockEntryRepo) SearchText(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+	return nil, nil
+}
+
 func (m *mockEntryRepo) CreateOrUpdate(ctx context.Context, entry *model.Entry) (*model.Entry, error) {
 	existing, _ := m.Get(ctx, entry.ID)
 	if existing != nil {

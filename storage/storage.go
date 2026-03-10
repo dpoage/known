@@ -112,6 +112,11 @@ type EntryRepo interface {
 	// The dimension parameter must match the embedding dimension of stored entries.
 	SearchSimilar(ctx context.Context, query []float32, scope string, metric SimilarityMetric, limit int) ([]SimilarityResult, error)
 
+	// SearchText finds entries matching a full-text query within the given scope.
+	// Results are ordered by BM25 relevance (most relevant first).
+	// The Distance field holds the raw BM25 rank (negative; more negative = more relevant).
+	SearchText(ctx context.Context, query string, scope string, limit int) ([]SimilarityResult, error)
+
 	// DeleteExpired removes entries whose ExpiresAt is in the past.
 	// Returns the number of entries deleted.
 	DeleteExpired(ctx context.Context) (int64, error)

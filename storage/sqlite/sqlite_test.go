@@ -1822,6 +1822,294 @@ func TestSessionMarkProcessed(t *testing.T) {
 }
 
 // =============================================================================
+// FTS5 Full-Text Search Tests
+// =============================================================================
+
+func TestSearchTextBasicKeyword(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("The payments API uses Bearer tokens for authentication", src).WithScope("sfts1")
+	e1.Title = "Auth Tokens"
+	e2 := model.NewEntry("Database connection pooling uses pgbouncer", src).WithScope("sfts1")
+	e2.Title = "DB Pooling"
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	results, err := entries.SearchText(ctx, "Bearer tokens", "sfts1", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result for 'Bearer tokens'")
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected first result to be e1, got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextPhraseSearch(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("The bearer token is passed in the Authorization header", src).WithScope("sfts2")
+	e2 := model.NewEntry("A token may bear different meanings in linguistics", src).WithScope("sfts2")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	// Phrase search: only e1 has "bearer token" as adjacent words.
+	results, err := entries.SearchText(ctx, `"bearer token"`, "sfts2", 10)
+	if err != nil {
+		t.Fatalf("SearchText phrase: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for phrase 'bearer token', got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected e1, got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextBooleanOperators(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("auth token validation middleware", src).WithScope("sfts3")
+	e2 := model.NewEntry("auth cookie session management", src).WithScope("sfts3")
+	e3 := model.NewEntry("token refresh endpoint", src).WithScope("sfts3")
+	for _, e := range []*model.Entry{&e1, &e2, &e3} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	// AND: only e1 has both "auth" and "token"
+	results, err := entries.SearchText(ctx, "auth AND token", "sfts3", 10)
+	if err != nil {
+		t.Fatalf("SearchText AND: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'auth AND token', got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected e1, got %v", results[0].Entry.ID)
+	}
+
+	// NOT: auth entries excluding cookie
+	results, err = entries.SearchText(ctx, "auth NOT cookie", "sfts3", 10)
+	if err != nil {
+		t.Fatalf("SearchText NOT: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'auth NOT cookie', got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected e1 for 'auth NOT cookie', got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextPrefixSearch(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("authentication flow uses OAuth2", src).WithScope("sfts4")
+	e2 := model.NewEntry("authorization middleware checks roles", src).WithScope("sfts4")
+	e3 := model.NewEntry("database migration scripts", src).WithScope("sfts4")
+	for _, e := range []*model.Entry{&e1, &e2, &e3} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	// Prefix: "auth*" should match both authentication and authorization.
+	results, err := entries.SearchText(ctx, "auth*", "sfts4", 10)
+	if err != nil {
+		t.Fatalf("SearchText prefix: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for 'auth*', got %d", len(results))
+	}
+}
+
+func TestSearchTextScopeFiltering(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("unique keyword xyzzy in scope A", src).WithScope("sfts5a")
+	e2 := model.NewEntry("unique keyword xyzzy in scope B", src).WithScope("sfts5b")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	results, err := entries.SearchText(ctx, "xyzzy", "sfts5a", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result in scope sfts5a, got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected e1, got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextScopeHierarchy(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("unique keyword plugh in parent", src).WithScope("sfts6")
+	e2 := model.NewEntry("unique keyword plugh in child", src).WithScope("sfts6.child")
+	e3 := model.NewEntry("unique keyword plugh in other", src).WithScope("sfts6other")
+	for _, e := range []*model.Entry{&e1, &e2, &e3} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	results, err := entries.SearchText(ctx, "plugh", "sfts6", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results in scope sfts6 hierarchy, got %d", len(results))
+	}
+	ids := map[model.ID]bool{results[0].Entry.ID: true, results[1].Entry.ID: true}
+	if !ids[e1.ID] || !ids[e2.ID] {
+		t.Errorf("expected e1 and e2 in results, got %v", ids)
+	}
+}
+
+func TestSearchTextExpiredExcluded(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("unique keyword waldo not expired", src).WithScope("sfts7")
+	if err := entries.Create(ctx, &e1); err != nil {
+		t.Fatalf("Create e1: %v", err)
+	}
+
+	e2 := model.NewEntry("unique keyword waldo is expired", src).WithScope("sfts7")
+	past := time.Now().Add(-1 * time.Hour)
+	e2.ExpiresAt = &past
+	if err := entries.Create(ctx, &e2); err != nil {
+		t.Fatalf("Create e2: %v", err)
+	}
+
+	results, err := entries.SearchText(ctx, "waldo", "sfts7", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (expired excluded), got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected non-expired entry e1, got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextBM25Ranking(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	// e1 mentions "elasticsearch" once in a long text.
+	e1 := model.NewEntry("We use elasticsearch for log aggregation along with many other services and tools in our infrastructure", src).WithScope("sfts8")
+	// e2 mentions "elasticsearch" multiple times (higher relevance).
+	e2 := model.NewEntry("elasticsearch cluster configuration: elasticsearch.yml sets the elasticsearch node name and elasticsearch discovery settings", src).WithScope("sfts8")
+	for _, e := range []*model.Entry{&e1, &e2} {
+		if err := entries.Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	results, err := entries.SearchText(ctx, "elasticsearch", "sfts8", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	// e2 should rank higher (more relevant, more negative rank = first).
+	if results[0].Entry.ID != e2.ID {
+		t.Errorf("expected e2 (more relevant) first, got %v", results[0].Entry.ID)
+	}
+}
+
+func TestSearchTextEmptyResults(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	results, err := entries.SearchText(ctx, "nonexistentkeywordxyz123", "sfts9", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestSearchTextLabelsLoaded(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("unique keyword quux with labels", src).WithScope("sfts10")
+	e1.Labels = []string{"api", "auth"}
+	if err := entries.Create(ctx, &e1); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	results, err := entries.SearchText(ctx, "quux", "sfts10", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Entry.Labels) != 2 {
+		t.Errorf("expected 2 labels, got %d: %v", len(results[0].Entry.Labels), results[0].Entry.Labels)
+	}
+}
+
+func TestSearchTextTitleMatch(t *testing.T) {
+	ctx := context.Background()
+	entries := testDB.Entries()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("Some generic content here", src).WithScope("sfts11")
+	e1.Title = "UniqueSearchableTitle"
+	if err := entries.Create(ctx, &e1); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	results, err := entries.SearchText(ctx, "UniqueSearchableTitle", "sfts11", 10)
+	if err != nil {
+		t.Fatalf("SearchText: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for title match, got %d", len(results))
+	}
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("expected e1, got %v", results[0].Entry.ID)
+	}
+}
+
+// =============================================================================
 // Interface Compliance Tests
 // =============================================================================
 
