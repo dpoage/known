@@ -40,11 +40,18 @@ func runSearch(ctx context.Context, app *App, args []string) error {
 	queryText := fs.Arg(0)
 
 	if *textOnly && !*hybrid {
+		// BM25 scores use a different scale than cosine similarity, so the
+		// default similarity threshold would filter out most text results.
+		// Only apply threshold if explicitly set by the user.
+		textThreshold := *threshold
+		if !fs.Changed("threshold") {
+			textThreshold = 0
+		}
 		opts := query.VectorOptions{
 			Text:            queryText,
 			Scope:           *scope,
 			Limit:           *limit,
-			Threshold:       *threshold,
+			Threshold:       textThreshold,
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
 		}

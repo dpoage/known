@@ -88,11 +88,17 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 
 	// Pure text mode: use FTS5 directly, skip graph expansion.
 	if *textOnly {
+		// BM25 scores use a different scale than cosine similarity, so the
+		// default similarity threshold would filter out most text results.
+		textThreshold := *threshold
+		if !fs.Changed("threshold") {
+			textThreshold = 0
+		}
 		textOpts := query.VectorOptions{
 			Text:            queryText,
 			Scope:           *scope,
 			Limit:           *limit,
-			Threshold:       *threshold,
+			Threshold:       textThreshold,
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
 		}
