@@ -124,6 +124,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		},
 		ExpandDepth:     *expandDepth,
 		ExpandDirection: query.Both,
+		TextSearch:      true,
 	}
 
 	results, err := app.Engine.SearchHybrid(ctx, opts)

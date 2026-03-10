@@ -11,10 +11,13 @@ import (
 
 // SearchHybrid performs a vector similarity search followed by graph expansion.
 //
-// First, it runs a vector search using the provided options. Then, for each
-// vector result, it expands outward along graph edges up to the specified
-// depth. The final result set contains both direct vector matches and entries
-// discovered through graph expansion, deduplicated by entry ID.
+// When TextSearch is enabled, it also runs an FTS5 text search and fuses the
+// two result lists using Reciprocal Rank Fusion (RRF). RRF ranks by position
+// rather than raw score, so incompatible scales (cosine vs BM25) don't matter.
+//
+// After fusion (or pure vector search), each result is expanded outward along
+// graph edges up to ExpandDepth hops. The final result set is deduplicated by
+// entry ID.
 func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result, error) {
 	if opts.ExpandDepth <= 0 {
 		opts.ExpandDepth = 1
@@ -26,13 +29,20 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 		return nil, fmt.Errorf("hybrid vector phase: %w", err)
 	}
 
-	// Phase 1b: Text search (when enabled).
+	// Phase 1b: Text search (when enabled) — fuse with RRF.
 	if opts.TextSearch {
-		textResults, textErr := e.SearchText(ctx, opts.Vector)
+		textOpts := opts.Vector
+		textOpts.Threshold = 0 // BM25 scores are on a different scale; don't filter.
+		textResults, textErr := e.SearchText(ctx, textOpts)
 		if textErr != nil {
 			return nil, fmt.Errorf("hybrid text phase: %w", textErr)
 		}
-		vectorResults = mergeTextResults(vectorResults, textResults)
+		vectorResults = fuseByRRF(vectorResults, textResults, opts.rrfK())
+		// Cap fused results to the requested limit so graph expansion
+		// doesn't do 2x work from the combined result set.
+		if opts.Vector.Limit > 0 && len(vectorResults) > opts.Vector.Limit {
+			vectorResults = vectorResults[:opts.Vector.Limit]
+		}
 	}
 
 	// Track seen entries to deduplicate.
@@ -167,25 +177,60 @@ func (e *Engine) expandFromEntry(
 	return results, nil
 }
 
-// mergeTextResults merges text search results into vector results.
-// For duplicate entries (same ID), keeps the result with the higher score.
-// New text-only results are appended.
-func mergeTextResults(vectorResults, textResults []Result) []Result {
-	byID := make(map[string]int, len(vectorResults))
-	for i, r := range vectorResults {
-		byID[r.Entry.ID.String()] = i
+// fuseByRRF merges vector and text results using Reciprocal Rank Fusion.
+//
+// RRF scores each entry as: score = Σ 1/(k + rank) across the result lists
+// where rank is the 1-based position in each list. This uses only rank
+// position, so incompatible score scales (cosine vs BM25) are irrelevant.
+//
+// For entries found by both methods, the Reach field is set to the method
+// that ranked the entry higher. The original per-method scores are discarded
+// in favor of the fused RRF score.
+func fuseByRRF(vectorResults, textResults []Result, k int) []Result {
+	type fusedEntry struct {
+		result   Result
+		rrfScore float64
+		bestRank int // lowest rank across lists (for Reach attribution)
 	}
-	for _, tr := range textResults {
-		id := tr.Entry.ID.String()
-		if idx, exists := byID[id]; exists {
-			// Keep the higher score.
-			if tr.Score > vectorResults[idx].Score {
-				vectorResults[idx].Score = tr.Score
-			}
-		} else {
-			byID[id] = len(vectorResults)
-			vectorResults = append(vectorResults, tr)
+
+	fused := make(map[model.ID]*fusedEntry, len(vectorResults)+len(textResults))
+
+	// Score vector results by rank position.
+	for rank, r := range vectorResults {
+		score := 1.0 / float64(k+rank+1) // rank is 0-based, RRF uses 1-based
+		fused[r.Entry.ID] = &fusedEntry{
+			result:   r,
+			rrfScore: score,
+			bestRank: rank,
 		}
 	}
-	return vectorResults
+
+	// Score text results by rank position and merge.
+	for rank, r := range textResults {
+		score := 1.0 / float64(k+rank+1)
+		if fe, exists := fused[r.Entry.ID]; exists {
+			fe.rrfScore += score
+			// Attribute Reach to whichever method ranked higher; ties favor vector.
+			if rank < fe.bestRank {
+				fe.bestRank = rank
+				fe.result.Reach = ReachText
+			}
+		} else {
+			r.Reach = ReachText
+			fused[r.Entry.ID] = &fusedEntry{
+				result:   r,
+				rrfScore: score,
+				bestRank: rank,
+			}
+		}
+	}
+
+	// Collect and sort by fused score.
+	results := make([]Result, 0, len(fused))
+	for _, fe := range fused {
+		fe.result.Score = fe.rrfScore
+		results = append(results, fe.result)
+	}
+	sortResultsByScore(results)
+	return results
 }

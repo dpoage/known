@@ -129,8 +129,23 @@ type HybridOptions struct {
 	ExpandEdgeTypes []model.EdgeType
 
 	// TextSearch enables FTS5 text search alongside vector search.
-	// When true, runs both vector and text search, deduplicates by ID, takes best score.
+	// When true, runs both vector and text search, then fuses rankings
+	// using Reciprocal Rank Fusion (RRF).
 	TextSearch bool
+
+	// RRFk is the RRF smoothing constant. Higher values reduce the
+	// influence of high-ranked results. Standard default is 60.
+	// Zero means use the default (60).
+	RRFk int
+}
+
+const defaultRRFk = 60
+
+func (o HybridOptions) rrfK() int {
+	if o.RRFk > 0 {
+		return o.RRFk
+	}
+	return defaultRRFk
 }
 
 // Engine provides query operations over the knowledge graph.
