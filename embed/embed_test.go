@@ -793,5 +793,5 @@ func (f *fakeEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float3
 	return out, nil
 }
 
-func (f *fakeEmbedder) Dimensions() int  { return f.dims }
+func (f *fakeEmbedder) Dimensions() int   { return f.dims }
 func (f *fakeEmbedder) ModelName() string { return f.model }

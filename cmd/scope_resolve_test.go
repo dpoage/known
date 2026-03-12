@@ -15,9 +15,9 @@ type stubScopeRepo struct {
 	scopes []model.Scope
 }
 
-func (s *stubScopeRepo) Upsert(context.Context, *model.Scope) error      { return nil }
-func (s *stubScopeRepo) EnsureHierarchy(context.Context, string) error    { return nil }
-func (s *stubScopeRepo) Delete(context.Context, string) error             { return nil }
+func (s *stubScopeRepo) Upsert(context.Context, *model.Scope) error    { return nil }
+func (s *stubScopeRepo) EnsureHierarchy(context.Context, string) error { return nil }
+func (s *stubScopeRepo) Delete(context.Context, string) error          { return nil }
 func (s *stubScopeRepo) ListChildren(context.Context, string) ([]model.Scope, error) {
 	return nil, nil
 }

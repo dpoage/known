@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/model"
 )

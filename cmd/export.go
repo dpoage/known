@@ -3,8 +3,8 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	flag "github.com/spf13/pflag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"

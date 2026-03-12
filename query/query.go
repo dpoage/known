@@ -33,14 +33,14 @@ const (
 // Result is a single query result with full metadata, provenance, scores,
 // conflict flags, and information about how the result was reached.
 type Result struct {
-	Entry      model.Entry  `json:"entry"`
-	Score      float64      `json:"score"`                 // similarity score (higher is better, 0-1)
-	Distance   float64      `json:"distance"`              // raw distance from vector search (lower is closer)
-	Reach      ReachMethod  `json:"reach"`                 // how this result was discovered
-	Depth      int          `json:"depth"`                 // graph traversal depth (0 for direct search)
-	EdgePath   []model.Edge `json:"edge_path,omitempty"`   // edges traversed to reach this result
-	HasConflict bool        `json:"has_conflict"`          // whether conflicts exist for this entry
-	Conflicts  []model.ID   `json:"conflicts,omitempty"`   // IDs of conflicting entries
+	Entry       model.Entry  `json:"entry"`
+	Score       float64      `json:"score"`               // similarity score (higher is better, 0-1)
+	Distance    float64      `json:"distance"`            // raw distance from vector search (lower is closer)
+	Reach       ReachMethod  `json:"reach"`               // how this result was discovered
+	Depth       int          `json:"depth"`               // graph traversal depth (0 for direct search)
+	EdgePath    []model.Edge `json:"edge_path,omitempty"` // edges traversed to reach this result
+	HasConflict bool         `json:"has_conflict"`        // whether conflicts exist for this entry
+	Conflicts   []model.ID   `json:"conflicts,omitempty"` // IDs of conflicting entries
 }
 
 // ConflictPair represents a pair of entries connected by a contradicts edge.

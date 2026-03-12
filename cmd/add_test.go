@@ -64,7 +64,7 @@ func (s *stubEdgeRepo) Get(context.Context, model.ID) (*model.Edge, error) {
 	return nil, storage.ErrNotFound
 }
 func (s *stubEdgeRepo) Update(context.Context, *model.Edge) error { return nil }
-func (s *stubEdgeRepo) Delete(context.Context, model.ID) error   { return nil }
+func (s *stubEdgeRepo) Delete(context.Context, model.ID) error    { return nil }
 func (s *stubEdgeRepo) EdgesFrom(context.Context, model.ID, storage.EdgeFilter) ([]model.Edge, error) {
 	return nil, nil
 }
@@ -95,7 +95,7 @@ func (e *stubEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 	}
 	return out, nil
 }
-func (e *stubEmbedder) Dimensions() int  { return e.dims }
+func (e *stubEmbedder) Dimensions() int   { return e.dims }
 func (e *stubEmbedder) ModelName() string { return "stub" }
 
 // newTestApp constructs a minimal App suitable for calling runAdd.

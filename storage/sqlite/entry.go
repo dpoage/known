@@ -722,25 +722,25 @@ func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
 // scanEntry scans a single entry from a *sql.Row.
 func scanEntry(row *sql.Row) (*model.Entry, error) {
 	var (
-		entry          model.Entry
-		idStr          string
-		contentHash    string
-		embBlob        []byte
-		embDim         *int
-		embMod         *string
-		srcType        string
-		srcRef         string
-		srcMeta        []byte
-		conf           string
-		ttlSecs        *int64
-		expiresStr     *string
-		metaJ          []byte
-		version        int
-		createdStr     string
-		updatedStr     string
-		observedAtStr  *string
-		observedBy     *string
-		sourceHash     *string
+		entry         model.Entry
+		idStr         string
+		contentHash   string
+		embBlob       []byte
+		embDim        *int
+		embMod        *string
+		srcType       string
+		srcRef        string
+		srcMeta       []byte
+		conf          string
+		ttlSecs       *int64
+		expiresStr    *string
+		metaJ         []byte
+		version       int
+		createdStr    string
+		updatedStr    string
+		observedAtStr *string
+		observedBy    *string
+		sourceHash    *string
 	)
 
 	if err := row.Scan(
@@ -762,25 +762,25 @@ func scanEntry(row *sql.Row) (*model.Entry, error) {
 // scanEntryFromRows scans a single entry from *sql.Rows.
 func scanEntryFromRows(rows *sql.Rows) (*model.Entry, error) {
 	var (
-		entry          model.Entry
-		idStr          string
-		contentHash    string
-		embBlob        []byte
-		embDim         *int
-		embMod         *string
-		srcType        string
-		srcRef         string
-		srcMeta        []byte
-		conf           string
-		ttlSecs        *int64
-		expiresStr     *string
-		metaJ          []byte
-		version        int
-		createdStr     string
-		updatedStr     string
-		observedAtStr  *string
-		observedBy     *string
-		sourceHash     *string
+		entry         model.Entry
+		idStr         string
+		contentHash   string
+		embBlob       []byte
+		embDim        *int
+		embMod        *string
+		srcType       string
+		srcRef        string
+		srcMeta       []byte
+		conf          string
+		ttlSecs       *int64
+		expiresStr    *string
+		metaJ         []byte
+		version       int
+		createdStr    string
+		updatedStr    string
+		observedAtStr *string
+		observedBy    *string
+		sourceHash    *string
 	)
 
 	if err := rows.Scan(
