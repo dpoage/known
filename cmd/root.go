@@ -27,6 +27,7 @@ type App struct {
 	Embedder  embed.Embedder
 	Engine    *query.Engine
 	Printer   *Printer
+	Stderr    io.Writer // diagnostic/warning output (defaults to os.Stderr)
 	Config    *AppConfig
 }
 
@@ -45,8 +46,8 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 	var gf globalFlags
 
 	fs := flag.NewFlagSet("known", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)      // suppress default error output
-	fs.SetInterspersed(false)     // stop parsing at first non-flag (the subcommand)
+	fs.SetOutput(io.Discard)  // suppress default error output
+	fs.SetInterspersed(false) // stop parsing at first non-flag (the subcommand)
 	fs.StringVar(&gf.dsn, "dsn", "", "database connection string (default: ~/.known/known.db)")
 	fs.BoolVar(&gf.json, "json", false, "output as JSON")
 	fs.BoolVar(&gf.quiet, "quiet", false, "suppress non-essential output")
@@ -86,6 +87,7 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 		Scopes:   db.Scopes(),
 		Sessions: db.Sessions(),
 		Printer:  NewPrinter(os.Stdout, cfg.JSON, cfg.Quiet),
+		Stderr:   os.Stderr,
 		Config:   cfg,
 	}
 

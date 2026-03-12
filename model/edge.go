@@ -10,11 +10,11 @@ type EdgeType string
 
 // Predefined edge types for common relationships.
 const (
-	EdgeDependsOn   EdgeType = "depends-on"   // X requires Y
-	EdgeContradicts EdgeType = "contradicts"  // X conflicts with Y
-	EdgeSupersedes  EdgeType = "supersedes"   // X replaces Y (newer version)
-	EdgeElaborates  EdgeType = "elaborates"   // X provides detail about Y
-	EdgeRelatedTo   EdgeType = "related-to"   // generic association
+	EdgeDependsOn   EdgeType = "depends-on"  // X requires Y
+	EdgeContradicts EdgeType = "contradicts" // X conflicts with Y
+	EdgeSupersedes  EdgeType = "supersedes"  // X replaces Y (newer version)
+	EdgeElaborates  EdgeType = "elaborates"  // X provides detail about Y
+	EdgeRelatedTo   EdgeType = "related-to"  // generic association
 )
 
 // PredefinedEdgeTypes returns all built-in edge types.

@@ -15,7 +15,9 @@ func runConflicts(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
-	*scope = app.Config.QualifyScope(*scope)
+	if *scope != "" {
+		*scope = app.ResolveScope(ctx, *scope)
+	}
 
 	// If a positional argument is given, treat it as an entry ID or query.
 	if fs.NArg() > 0 {

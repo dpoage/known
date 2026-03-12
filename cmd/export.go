@@ -3,8 +3,8 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	flag "github.com/spf13/pflag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
@@ -25,7 +25,9 @@ func runExport(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
-	*scope = app.Config.QualifyScope(*scope)
+	if *scope != "" {
+		*scope = app.ResolveScope(ctx, *scope)
+	}
 
 	if *format != "json" && *format != "jsonl" {
 		return fmt.Errorf("invalid format %q: must be json or jsonl", *format)

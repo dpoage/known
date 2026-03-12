@@ -14,14 +14,14 @@ const projectConfigFile = ".known.yaml"
 
 // projectConfig holds configuration parsed from a project-local .known.yaml file.
 type projectConfig struct {
-	DSN              string            `yaml:"dsn"`
-	ScopePrefix      string            `yaml:"scope_prefix,omitempty"`
-	MaxContentLength *int              `yaml:"max_content_length,omitempty"`
-	SearchThreshold  *float64          `yaml:"search_threshold,omitempty"`
-	RecallLimit      *int              `yaml:"recall_limit,omitempty"`
-	RecallExpandDepth *int             `yaml:"recall_expand_depth,omitempty"`
-	RecallRecency    *float64          `yaml:"recall_recency,omitempty"`
-	DefaultTTL       map[string]string `yaml:"default_ttl,omitempty"`
+	DSN               string            `yaml:"dsn"`
+	ScopePrefix       string            `yaml:"scope_prefix,omitempty"`
+	MaxContentLength  *int              `yaml:"max_content_length,omitempty"`
+	SearchThreshold   *float64          `yaml:"search_threshold,omitempty"`
+	RecallLimit       *int              `yaml:"recall_limit,omitempty"`
+	RecallExpandDepth *int              `yaml:"recall_expand_depth,omitempty"`
+	RecallRecency     *float64          `yaml:"recall_recency,omitempty"`
+	DefaultTTL        map[string]string `yaml:"default_ttl,omitempty"`
 }
 
 // findProjectConfig walks up from startDir looking for a .known.yaml file.

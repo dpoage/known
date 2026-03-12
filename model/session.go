@@ -6,13 +6,13 @@ import "time"
 type EventType string
 
 const (
-	EventRecall  EventType = "recall"
-	EventSearch  EventType = "search"
-	EventShow    EventType = "show"
-	EventAdd     EventType = "add"
-	EventUpdate  EventType = "update"
-	EventLink    EventType = "link"
-	EventDelete  EventType = "delete"
+	EventRecall EventType = "recall"
+	EventSearch EventType = "search"
+	EventShow   EventType = "show"
+	EventAdd    EventType = "add"
+	EventUpdate EventType = "update"
+	EventLink   EventType = "link"
+	EventDelete EventType = "delete"
 )
 
 // Session represents an agent interaction session.

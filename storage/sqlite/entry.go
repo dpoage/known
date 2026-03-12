@@ -599,6 +599,8 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		limit = 10
 	}
 
+	query = sanitizeFTS5Query(query)
+
 	now := formatTime(time.Now())
 	conn := s.conn(ctx)
 
@@ -720,25 +722,25 @@ func (s *EntryStore) DeleteExpired(ctx context.Context) (int64, error) {
 // scanEntry scans a single entry from a *sql.Row.
 func scanEntry(row *sql.Row) (*model.Entry, error) {
 	var (
-		entry          model.Entry
-		idStr          string
-		contentHash    string
-		embBlob        []byte
-		embDim         *int
-		embMod         *string
-		srcType        string
-		srcRef         string
-		srcMeta        []byte
-		conf           string
-		ttlSecs        *int64
-		expiresStr     *string
-		metaJ          []byte
-		version        int
-		createdStr     string
-		updatedStr     string
-		observedAtStr  *string
-		observedBy     *string
-		sourceHash     *string
+		entry         model.Entry
+		idStr         string
+		contentHash   string
+		embBlob       []byte
+		embDim        *int
+		embMod        *string
+		srcType       string
+		srcRef        string
+		srcMeta       []byte
+		conf          string
+		ttlSecs       *int64
+		expiresStr    *string
+		metaJ         []byte
+		version       int
+		createdStr    string
+		updatedStr    string
+		observedAtStr *string
+		observedBy    *string
+		sourceHash    *string
 	)
 
 	if err := row.Scan(
@@ -760,25 +762,25 @@ func scanEntry(row *sql.Row) (*model.Entry, error) {
 // scanEntryFromRows scans a single entry from *sql.Rows.
 func scanEntryFromRows(rows *sql.Rows) (*model.Entry, error) {
 	var (
-		entry          model.Entry
-		idStr          string
-		contentHash    string
-		embBlob        []byte
-		embDim         *int
-		embMod         *string
-		srcType        string
-		srcRef         string
-		srcMeta        []byte
-		conf           string
-		ttlSecs        *int64
-		expiresStr     *string
-		metaJ          []byte
-		version        int
-		createdStr     string
-		updatedStr     string
-		observedAtStr  *string
-		observedBy     *string
-		sourceHash     *string
+		entry         model.Entry
+		idStr         string
+		contentHash   string
+		embBlob       []byte
+		embDim        *int
+		embMod        *string
+		srcType       string
+		srcRef        string
+		srcMeta       []byte
+		conf          string
+		ttlSecs       *int64
+		expiresStr    *string
+		metaJ         []byte
+		version       int
+		createdStr    string
+		updatedStr    string
+		observedAtStr *string
+		observedBy    *string
+		sourceHash    *string
 	)
 
 	if err := rows.Scan(
@@ -959,4 +961,51 @@ func loadLabelsForEntries(ctx context.Context, conn DBTX, entries []model.Entry)
 		}
 	}
 	return rows.Err()
+}
+
+// sanitizeFTS5Query quotes tokens that contain FTS5 special characters
+// (hyphens, colons, etc.) to prevent them from being parsed as operators.
+// For example, "oauth2-proxy" becomes `"oauth2-proxy"`.
+func sanitizeFTS5Query(q string) string {
+	tokens := strings.Fields(q)
+	if len(tokens) == 0 {
+		return q
+	}
+
+	changed := false
+	for i, tok := range tokens {
+		// Preserve trailing * (FTS5 prefix search operator).
+		star := ""
+		if strings.HasSuffix(tok, "*") {
+			star = "*"
+			tok = tok[:len(tok)-1]
+		}
+		if needsFTS5Quoting(tok) {
+			// Escape embedded double quotes by doubling them.
+			tokens[i] = `"` + strings.ReplaceAll(tok, `"`, `""`) + `"` + star
+			changed = true
+		} else if star != "" {
+			tokens[i] = tok + star // restore unchanged token with its *
+		}
+	}
+	if !changed {
+		return q
+	}
+	return strings.Join(tokens, " ")
+}
+
+// needsFTS5Quoting reports whether a token contains characters that FTS5
+// would interpret as operators.
+func needsFTS5Quoting(tok string) bool {
+	// Already quoted.
+	if len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' {
+		return false
+	}
+	for _, r := range tok {
+		switch r {
+		case '-', ':', '+', '^', '(', ')', '{', '}', '[', ']', '~':
+			return true
+		}
+	}
+	return false
 }

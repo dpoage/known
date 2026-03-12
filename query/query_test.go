@@ -360,7 +360,7 @@ func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 	return results, nil
 }
 
-func (m *mockEmbedder) Dimensions() int  { return m.dims }
+func (m *mockEmbedder) Dimensions() int   { return m.dims }
 func (m *mockEmbedder) ModelName() string { return m.modelName }
 
 // =============================================================================
@@ -1512,9 +1512,9 @@ func TestDistanceToScore_L2(t *testing.T) {
 		wantMin  float64
 		wantMax  float64
 	}{
-		{0.0, 1.0, 1.0},       // exact match
-		{1.0, 0.49, 0.51},     // unit distance
-		{9.0, 0.09, 0.11},     // far away
+		{0.0, 1.0, 1.0},   // exact match
+		{1.0, 0.49, 0.51}, // unit distance
+		{9.0, 0.09, 0.11}, // far away
 	}
 
 	for _, tt := range tests {

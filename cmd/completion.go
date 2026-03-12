@@ -17,8 +17,8 @@ type flagDef struct {
 
 // cmdDef describes a subcommand for completion generation.
 type cmdDef struct {
-	name  string   // subcommand name
-	desc  string   // short description
+	name  string // subcommand name
+	desc  string // short description
 	flags []flagDef
 	subs  []string // sub-subcommands (only scope has these)
 }

@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	flag "github.com/spf13/pflag"
 	"fmt"
+	flag "github.com/spf13/pflag"
 
 	"github.com/dpoage/known/storage"
 )
@@ -24,7 +24,9 @@ func runStats(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
-	*scope = app.Config.QualifyScope(*scope)
+	if *scope != "" {
+		*scope = app.ResolveScope(ctx, *scope)
+	}
 
 	var filter storage.EntryFilter
 	if *scope != "" {

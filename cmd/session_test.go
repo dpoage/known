@@ -14,8 +14,8 @@ import (
 
 // stubSessionRepo is a minimal in-memory SessionRepo for testing.
 type stubSessionRepo struct {
-	sessions map[string]*model.Session
-	events   []model.SessionEvent
+	sessions  map[string]*model.Session
+	events    []model.SessionEvent
 	processed map[string]bool
 }
 
