@@ -25,7 +25,9 @@ func runExport(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
-	*scope = app.Config.QualifyScope(*scope)
+	if *scope != "" {
+		*scope = app.ResolveScope(ctx, *scope)
+	}
 
 	if *format != "json" && *format != "jsonl" {
 		return fmt.Errorf("invalid format %q: must be json or jsonl", *format)

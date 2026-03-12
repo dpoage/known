@@ -27,6 +27,7 @@ type App struct {
 	Embedder  embed.Embedder
 	Engine    *query.Engine
 	Printer   *Printer
+	Stderr    io.Writer // diagnostic/warning output (defaults to os.Stderr)
 	Config    *AppConfig
 }
 
@@ -86,6 +87,7 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 		Scopes:   db.Scopes(),
 		Sessions: db.Sessions(),
 		Printer:  NewPrinter(os.Stdout, cfg.JSON, cfg.Quiet),
+		Stderr:   os.Stderr,
 		Config:   cfg,
 	}
 

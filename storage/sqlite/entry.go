@@ -599,6 +599,8 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		limit = 10
 	}
 
+	query = sanitizeFTS5Query(query)
+
 	now := formatTime(time.Now())
 	conn := s.conn(ctx)
 
@@ -959,4 +961,51 @@ func loadLabelsForEntries(ctx context.Context, conn DBTX, entries []model.Entry)
 		}
 	}
 	return rows.Err()
+}
+
+// sanitizeFTS5Query quotes tokens that contain FTS5 special characters
+// (hyphens, colons, etc.) to prevent them from being parsed as operators.
+// For example, "oauth2-proxy" becomes `"oauth2-proxy"`.
+func sanitizeFTS5Query(q string) string {
+	tokens := strings.Fields(q)
+	if len(tokens) == 0 {
+		return q
+	}
+
+	changed := false
+	for i, tok := range tokens {
+		// Preserve trailing * (FTS5 prefix search operator).
+		star := ""
+		if strings.HasSuffix(tok, "*") {
+			star = "*"
+			tok = tok[:len(tok)-1]
+		}
+		if needsFTS5Quoting(tok) {
+			// Escape embedded double quotes by doubling them.
+			tokens[i] = `"` + strings.ReplaceAll(tok, `"`, `""`) + `"` + star
+			changed = true
+		} else if star != "" {
+			tokens[i] = tok + star // restore unchanged token with its *
+		}
+	}
+	if !changed {
+		return q
+	}
+	return strings.Join(tokens, " ")
+}
+
+// needsFTS5Quoting reports whether a token contains characters that FTS5
+// would interpret as operators.
+func needsFTS5Quoting(tok string) bool {
+	// Already quoted.
+	if len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' {
+		return false
+	}
+	for _, r := range tok {
+		switch r {
+		case '-', ':', '+', '^', '(', ')', '{', '}', '[', ']', '~':
+			return true
+		}
+	}
+	return false
 }

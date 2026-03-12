@@ -31,7 +31,9 @@ func runList(ctx context.Context, app *App, args []string) error {
 		return err
 	}
 
-	*scope = app.Config.QualifyScope(*scope)
+	if *scope != "" {
+		*scope = app.ResolveScope(ctx, *scope)
+	}
 
 	filter := storage.EntryFilter{
 		ScopePrefix:     *scope,
