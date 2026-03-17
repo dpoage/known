@@ -1,7 +1,7 @@
 # /known-search — Search entries with full control
 
-Search the knowledge graph with structured output, similarity scores, and
-optional JSON. Use this when you need entry IDs or machine-readable results.
+Search the knowledge graph with structured output and similarity scores.
+Use this when you need entry IDs, JSON output, or score-based evaluation.
 
 ## Usage
 
@@ -9,15 +9,15 @@ optional JSON. Use this when you need entry IDs or machine-readable results.
 /known-search <query> [flags]
 ```
 
-For general knowledge retrieval, use `/recall` instead — it returns
-plain text optimized for LLM context.
+For general retrieval, use `/recall` instead — it uses hybrid search
+by default and returns plain text optimized for LLM context.
 
-## When to Use Search
+## When to Use
 
 - **Need entry IDs** to update, delete, link, or inspect entries
 - **Need JSON output** for programmatic processing (`known --json search`)
 - **Need similarity scores** to evaluate result quality
-- **Investigating graph structure** with `--hybrid` expansion
+- **Pure vector search** without the hybrid text+graph expansion that recall adds
 
 ## Instructions
 
@@ -38,12 +38,14 @@ known search '<query>' [flags]
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--scope` | auto | Scope to search within |
-| `--limit` | 10 | Maximum results |
-| `--threshold` | 0.3 | Raise to get fewer, more relevant results |
-| `--recency` | 0 | Raise to prefer recently observed knowledge |
-| `--hybrid` | false | Follow graph edges to find related entries |
-| `--expand-depth` | 1 | Graph expansion hops (with `--hybrid`) |
+| `--scope` | auto (from cwd) | Scope to search within |
+| `--limit` | 5 | Maximum results |
+| `--threshold` | 0.4 | Minimum similarity (raise for precision) |
+| `--recency` | 0 | Recency weight (0=pure similarity, 1=pure recency) |
+| `--text` | false | Use FTS5 full-text search instead of vector search |
+| `--hybrid` | false | Enable vector + graph expansion (recall does this by default) |
+| `--expand-depth` | 1 | Graph expansion hops (only with `--hybrid`) |
+| `--label` | all | Filter by label (repeatable) |
 
 Global flags go **before** the subcommand:
 
@@ -59,4 +61,5 @@ known search 'deployment process' --limit 5
 known search 'API rate limits' --hybrid --expand-depth 2
 known --json search 'database schema' --scope backend
 known search 'auth' --threshold 0.5 --recency 0.3
+known search --text 'rate-limit'
 ```

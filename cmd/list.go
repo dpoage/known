@@ -26,6 +26,7 @@ func runList(ctx context.Context, app *App, args []string) error {
 	fs.Var(&labelFlags, "label", "filter by label (repeatable, AND semantics)")
 	limit := fs.Int("limit", 20, "maximum number of results")
 	jsonOut := fs.Bool("json", false, "output as JSON array")
+	includeEmbeddings := fs.Bool("include-embeddings", false, "include embedding vectors in JSON output")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -57,7 +58,11 @@ func runList(ctx context.Context, app *App, args []string) error {
 	}
 
 	if *jsonOut || app.Printer.json {
-		app.Printer.printJSON(entries)
+		if *includeEmbeddings {
+			app.Printer.printJSON(entries)
+		} else {
+			app.Printer.printJSON(stripEmbeddings(entries))
+		}
 		return nil
 	}
 
@@ -93,6 +98,18 @@ func runList(ctx context.Context, app *App, args []string) error {
 	}
 
 	return nil
+}
+
+// stripEmbeddings returns copies of entries with embedding fields zeroed out.
+func stripEmbeddings(entries []model.Entry) []model.Entry {
+	out := make([]model.Entry, len(entries))
+	for i, e := range entries {
+		e.Embedding = nil
+		e.EmbeddingDim = 0
+		e.EmbeddingModel = ""
+		out[i] = e
+	}
+	return out
 }
 
 // parseDayDuration parses a duration string that may use "d" for days (e.g., "7d", "30d").

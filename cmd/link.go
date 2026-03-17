@@ -21,7 +21,18 @@ func runLink(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() < 2 {
-		return fmt.Errorf("usage: known link <from> <to> [flags]\n\nCreate an edge between two entries. Arguments can be IDs or content queries.")
+		types := make([]string, len(model.PredefinedEdgeTypes()))
+		for i, t := range model.PredefinedEdgeTypes() {
+			types[i] = string(t)
+		}
+		return fmt.Errorf("usage: known link <from-id> <to-id> --type <edge-type>\n\n" +
+			"Create a directed edge: from → to.\n" +
+			"Arguments can be entry IDs (ULIDs) or content queries.\n\n" +
+			"Edge types: %s\n\n" +
+			"Examples:\n" +
+			"  known link 01ABC 01DEF --type elaborates\n" +
+			"  known link 01ABC 01DEF                    # defaults to related-to",
+			strings.Join(types, ", "))
 	}
 
 	fromID, err := resolveEntry(ctx, app, fs.Arg(0))
@@ -45,7 +56,11 @@ func runLink(ctx context.Context, app *App, args []string) error {
 	// Validate edge type.
 	et := model.EdgeType(*edgeType)
 	if err := et.Validate(); err != nil {
-		return fmt.Errorf("edge type: %w", err)
+		types := make([]string, len(model.PredefinedEdgeTypes()))
+		for i, t := range model.PredefinedEdgeTypes() {
+			types[i] = string(t)
+		}
+		return fmt.Errorf("edge type: %w (valid types: %s)", err, strings.Join(types, ", "))
 	}
 
 	edge := model.NewEdge(fromID, toID, et)

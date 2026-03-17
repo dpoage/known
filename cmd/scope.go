@@ -286,7 +286,7 @@ func printTree(p *Printer, scopes []model.Scope, currentScope string) {
 		return scopes[i].Path < scopes[j].Path
 	})
 
-	fmt.Fprintln(p.w, "Knowledge available — use /recall before exploring:")
+	fmt.Fprintln(p.w, "Scopes defined — use /recall '<topic>' to check for stored knowledge:")
 
 	roots := buildScopeTree(scopes)
 	for i, root := range roots {
@@ -294,7 +294,7 @@ func printTree(p *Printer, scopes []model.Scope, currentScope string) {
 		printNode(p, root, "", isLast, true, currentScope)
 	}
 
-	fmt.Fprintf(p.w, "Example: known recall '<topic>' --scope <scope>\n")
+	fmt.Fprintf(p.w, "Example: /recall '<topic>' --scope <scope>\n")
 }
 
 // printNode recursively prints a scope node with box-drawing characters.

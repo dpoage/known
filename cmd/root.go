@@ -135,6 +135,7 @@ Global Flags:
 Commands:
   init       Initialize a scope root (.known.yaml) in the current directory
   add        Add a new knowledge entry (use --batch for bulk JSONL from stdin)
+  remember   Alias for add
   update     Update an existing entry
   delete     Delete an entry
   show       Show entry details with relationships
@@ -192,7 +193,7 @@ func Run(ctx context.Context, args []string) int {
 	subArgs := remaining[1:]
 
 	// Commands that generate embeddings need the embedder initialized.
-	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update" || subcmd == "recall"
+	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "remember" || subcmd == "update" || subcmd == "recall"
 
 	// import --re-embed also needs the embedder.
 	if subcmd == "import" {
@@ -250,7 +251,7 @@ func Run(ctx context.Context, args []string) int {
 	defer app.Close()
 
 	switch subcmd {
-	case "add":
+	case "add", "remember":
 		err = runAdd(ctx, app, subArgs)
 	case "update":
 		err = runUpdate(ctx, app, subArgs)

@@ -3,7 +3,7 @@ description: Find and delete a knowledge entry
 argument-hint: <query describing what to forget>
 ---
 
-Find and delete a knowledge entry. This is a two-step process: search first, then delete after confirmation.
+Find and delete a knowledge entry. Search first, confirm with the user, then delete.
 
 ## Instructions
 
@@ -29,7 +29,7 @@ known delete <id> --force
 - Use `--force` on the delete command to skip the interactive prompt (since we already confirmed with the user).
 - If multiple entries match, let the user choose which to delete — don't delete all matches.
 
-## Examples
+## Example
 
 User says: "/known:forget the staging API endpoint"
 

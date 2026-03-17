@@ -19,7 +19,7 @@ func TestPrintTree(t *testing.T) {
 			scopes: []model.Scope{
 				{Path: "myproject"},
 			},
-			want: "Knowledge available — use /recall before exploring:\nmyproject\nExample: known recall '<topic>' --scope <scope>\n",
+			want: "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nmyproject\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "root with children",
@@ -29,7 +29,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "myproject.model"},
 				{Path: "myproject.storage"},
 			},
-			want: "Knowledge available — use /recall before exploring:\nmyproject\n├── cmd\n├── model\n└── storage\nExample: known recall '<topic>' --scope <scope>\n",
+			want: "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nmyproject\n├── cmd\n├── model\n└── storage\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "nested children",
@@ -39,7 +39,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "myproject.storage"},
 				{Path: "myproject.storage.sqlite"},
 			},
-			want: "Knowledge available — use /recall before exploring:\nmyproject\n├── cmd\n└── storage\n    └── sqlite\nExample: known recall '<topic>' --scope <scope>\n",
+			want: "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nmyproject\n├── cmd\n└── storage\n    └── sqlite\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "current scope annotated",
@@ -50,7 +50,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "myproject.storage.sqlite"},
 			},
 			currentScope: "myproject.cmd",
-			want:         "Knowledge available — use /recall before exploring:\nmyproject\n├── cmd  <-- you are here\n└── storage\n    └── sqlite\nExample: known recall '<topic>' --scope <scope>\n",
+			want:         "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nmyproject\n├── cmd  <-- you are here\n└── storage\n    └── sqlite\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "root scope not annotated",
@@ -59,7 +59,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "myproject.cmd"},
 			},
 			currentScope: model.RootScope,
-			want:         "Knowledge available — use /recall before exploring:\nmyproject\n└── cmd\nExample: known recall '<topic>' --scope <scope>\n",
+			want:         "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nmyproject\n└── cmd\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "multiple roots",
@@ -69,7 +69,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "projectb"},
 				{Path: "projectb.web"},
 			},
-			want: "Knowledge available — use /recall before exploring:\nprojecta\n└── api\nprojectb\n└── web\nExample: known recall '<topic>' --scope <scope>\n",
+			want: "Scopes defined — use /recall '<topic>' to check for stored knowledge:\nprojecta\n└── api\nprojectb\n└── web\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 		{
 			name: "deep nesting with siblings",
@@ -81,7 +81,7 @@ func TestPrintTree(t *testing.T) {
 				{Path: "app.frontend"},
 			},
 			currentScope: "app.backend.api",
-			want:         "Knowledge available — use /recall before exploring:\napp\n├── backend\n│   ├── api  <-- you are here\n│   └── db\n└── frontend\nExample: known recall '<topic>' --scope <scope>\n",
+			want:         "Scopes defined — use /recall '<topic>' to check for stored knowledge:\napp\n├── backend\n│   ├── api  <-- you are here\n│   └── db\n└── frontend\nExample: /recall '<topic>' --scope <scope>\n",
 		},
 	}
 
