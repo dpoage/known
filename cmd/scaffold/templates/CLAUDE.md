@@ -100,6 +100,8 @@ These are available directly (not as plugin commands):
 | `known related <id>` | Find connected entries via graph edges |
 | `known link <from> <to> --type <type>` | Create a relationship (standalone) |
 | `known add '...' --link type:id` | Create entry + edge atomically |
+| `known add --batch` | Bulk add entries from JSONL on stdin |
+| `known import <file> --re-embed` | Import entries and recompute embeddings |
 | `known conflicts` | Detect contradictory entries |
 | `known stats` | Knowledge graph statistics |
 
