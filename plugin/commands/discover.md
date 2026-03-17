@@ -21,11 +21,7 @@ focus on facts that save future sessions from re-exploration.
 
 ### Phase 1: Orientation
 
-1. Read the project root to understand what exists:
-   - `ls` the root directory
-   - Read `README.md`, `CLAUDE.md`, or equivalent docs
-   - Read build config (`package.json`, `go.mod`, `Cargo.toml`, `CMakeLists.txt`, `pyproject.toml`, etc.)
-   - Read `.known.yaml` if it exists to get the scope prefix
+1. Read project root docs (README, CLAUDE.md, build config, `.known.yaml`).
 
 2. Determine the scope prefix:
    - If `.known.yaml` has `scope_prefix`, use that
@@ -37,7 +33,11 @@ focus on facts that save future sessions from re-exploration.
    known scope tree
    known recall --scope <prefix>
    ```
-   Skip directories that already have good coverage. Focus on gaps.
+   - **First discovery**: focus on gaps — skip scopes that already have entries.
+   - **Re-discovery** (entries already exist across most scopes): verify existing
+     entries against current code. Update stale entries with `known update <id>`,
+     supersede replaced ones with `--link supersedes:<old-id>`, and delete entries
+     for code that no longer exists with `known delete <id> --force`.
 
 ### Phase 2: Scope Creation
 
@@ -45,7 +45,7 @@ Create scopes that mirror the project's logical structure. Not every directory
 needs a scope — only those with distinct architectural purpose.
 
 ```bash
-known scope create <prefix>.<module> "<description>"
+known scope create <prefix>.<module>
 ```
 
 **Good scope granularity:**
@@ -65,9 +65,9 @@ For each significant directory, follow this process:
    - Entry point / main file (index.ts, main.go, __init__.py, mod.rs, etc.)
    - Type definitions / models / interfaces
    - Configuration files
-   - Only read 2-5 files per directory — enough to understand purpose, not everything
+   - Read enough files to understand purpose — usually 2-5 per directory
 
-2. **Extract one atomic fact** that captures:
+2. **Extract atomic facts** that capture:
    - What this module/directory does (purpose)
    - Key types, interfaces, or patterns it exposes
    - Important architectural decisions visible in the code
@@ -84,8 +84,7 @@ For each significant directory, follow this process:
      --provenance inferred
    ```
 
-   For many entries at once, use `known add --batch` to embed and write them
-   in a single pass (much faster than sequential adds):
+   For many entries at once, use `known add --batch` (much faster):
    ```bash
    cat <<'JSONL' | known add --batch
    {"content": "fact one", "title": "Label", "scope": "prefix.mod", "source_type": "file", "source_ref": "main.go"}
@@ -93,16 +92,29 @@ For each significant directory, follow this process:
    JSONL
    ```
 
-4. **Skip these directories entirely:**
-   - `vendor/`, `node_modules/`, `.vendor/`, `third_party/`
-   - `dist/`, `build/`, `target/`, `__pycache__/`
-   - `.git/`, `.cache/`, `.next/`
-   - Generated code directories (protobuf output, codegen, etc.)
-   - Test fixtures and test data directories
+4. **Skip generated/vendored directories:**
+   `vendor/`, `node_modules/`, `dist/`, `build/`, `target/`, `__pycache__/`,
+   `.git/`, `.cache/`, `.next/`, protobuf output, codegen, test fixtures.
 
-### Phase 4: Cross-Cutting Knowledge
+### Phase 4: Synthesis
 
-After the directory walk, store project-wide facts:
+Before storing cross-cutting knowledge, review everything you've learned and
+reason holistically:
+
+- What is the overall architecture? (e.g., layered monolith, microservices,
+  plugin system, pipeline)
+- What patterns recur across modules? (error handling style, naming conventions,
+  shared abstractions)
+- Where are the key boundaries and interfaces between components?
+- What would surprise a new contributor? What's non-obvious?
+- Do any per-module entries need revision now that you see the full picture?
+
+This step produces better cross-cutting entries because they're informed by the
+complete walk, not incremental impressions.
+
+### Phase 5: Cross-Cutting Knowledge
+
+Store project-wide facts informed by your synthesis:
 
 1. **Architecture overview** — one entry in the root scope summarizing the overall
    system design, key patterns, and technology choices.
@@ -135,7 +147,7 @@ After the directory walk, store project-wide facts:
 - `standard`: 1-2 entries per significant directory, 10-25 entries total
 - `deep`: 2-4 entries per directory, 30-60 entries total
 
-### Phase 5: Summary
+### Phase 6: Summary
 
 After storing knowledge, report:
 - Number of scopes created
@@ -151,7 +163,7 @@ For a typical Go web service:
 ```
 Created 6 scopes, 14 entries, 8 edges.
 
-/myproject
+myproject
   api
     handlers
     middleware
