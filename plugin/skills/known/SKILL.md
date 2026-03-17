@@ -4,7 +4,7 @@ description: >
   Persistent memory graph for LLMs. Store facts during one session, recall them
   in the next. Semantic search, graph relationships, and hierarchical scopes.
 allowed-tools: "Read,Bash(known:*)"
-version: "0.1.0"
+version: "0.2.0"
 author: "Dustin Poage <https://github.com/dpoage>"
 license: "MIT"
 ---

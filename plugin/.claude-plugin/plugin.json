@@ -1,7 +1,7 @@
 {
   "name": "known",
   "description": "Persistent memory graph for LLMs. Store facts in one session, recall them in the next. Semantic search, graph relationships, and hierarchical scopes.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Dustin Poage",
     "url": "https://github.com/dpoage"
