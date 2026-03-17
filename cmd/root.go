@@ -134,7 +134,7 @@ Global Flags:
 
 Commands:
   init       Initialize a scope root (.known.yaml) in the current directory
-  add        Add a new knowledge entry
+  add        Add a new knowledge entry (use --batch for bulk JSONL from stdin)
   update     Update an existing entry
   delete     Delete an entry
   show       Show entry details with relationships
@@ -152,7 +152,7 @@ Commands:
   session    Manage agent sessions (start, end)
   stats      Show knowledge graph statistics
   export     Export entries as JSON or JSONL
-  import     Import entries from JSON or JSONL
+  import     Import entries from JSON or JSONL (use --re-embed to recompute)
   completion Generate shell completions (bash, fish, zsh)
   version    Print version information
 
@@ -193,6 +193,19 @@ func Run(ctx context.Context, args []string) int {
 
 	// Commands that generate embeddings need the embedder initialized.
 	needsEmbedder := subcmd == "search" || subcmd == "add" || subcmd == "update" || subcmd == "recall"
+
+	// import --re-embed also needs the embedder.
+	if subcmd == "import" {
+		for _, a := range subArgs {
+			if a == "--re-embed" {
+				needsEmbedder = true
+				break
+			}
+			if a == "--" {
+				break
+			}
+		}
+	}
 
 	// Commands that don't need app init (no DB, no session).
 	if subcmd == "help" || subcmd == "--help" || subcmd == "-h" {

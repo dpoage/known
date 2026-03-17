@@ -22,6 +22,22 @@ import (
 //	--meta           Metadata key=value pairs (repeatable)
 //	--link           Create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)
 func runAdd(ctx context.Context, app *App, args []string) error {
+	// Check for --batch before full flag parsing so we can delegate early.
+	for _, a := range args {
+		if a == "--batch" {
+			var filtered []string
+			for _, arg := range args {
+				if arg != "--batch" {
+					filtered = append(filtered, arg)
+				}
+			}
+			return runAddBatch(ctx, app, filtered)
+		}
+		if a == "--" {
+			break
+		}
+	}
+
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	title := fs.String("title", "", "short label for the entry (2-5 words)")
 	scope := fs.String("scope", "", "scope path (default: auto from cwd)")

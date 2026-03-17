@@ -73,14 +73,24 @@ For each significant directory, follow this process:
    - Important architectural decisions visible in the code
    - Non-obvious conventions
 
-3. **Store via `known add`**:
+3. **Store via `known add`** (one at a time or in batch):
    ```bash
+   # Single entry:
    known add '<atomic fact>' \
      --title '<2-5 word label>' \
      --scope <prefix>.<module> \
      --source-type file \
      --source-ref '<primary file analyzed>' \
      --provenance inferred
+   ```
+
+   For many entries at once, use `known add --batch` to embed and write them
+   in a single pass (much faster than sequential adds):
+   ```bash
+   cat <<'JSONL' | known add --batch
+   {"content": "fact one", "title": "Label", "scope": "prefix.mod", "source_type": "file", "source_ref": "main.go"}
+   {"content": "fact two", "title": "Other", "scope": "prefix.mod", "source_type": "file", "source_ref": "lib.go"}
+   JSONL
    ```
 
 4. **Skip these directories entirely:**
