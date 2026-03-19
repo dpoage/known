@@ -1,0 +1,17 @@
+# Production overrides.
+# These values are merged on top of default.yaml.
+# NOTE: parallel mode changes error semantics to collect-all instead of fail-fast.
+
+pipeline:
+  parallel: true
+  max_records: 500000
+  strict_mode: true
+
+output:
+  type: webhook
+  endpoint: https://api.internal.example.com/ingest
+  format: json
+
+auth:
+  api_key: prod-hmac-key-2024-rotated
+  allowed_ips: [10.0.0.0/8, 172.16.0.0/12]

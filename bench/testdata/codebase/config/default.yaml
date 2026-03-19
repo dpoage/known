@@ -1,0 +1,17 @@
+# Default pipeline configuration.
+# See config/production.yaml for production overrides.
+
+pipeline:
+  processors: [csv-transform, filter, json-transform]
+  parallel: false
+  max_records: 10000
+  strict_mode: false
+
+output:
+  type: file
+  path: output/results.json
+  format: json
+
+auth:
+  api_key: dev-key-not-for-production
+  allowed_ips: [127.0.0.1]
