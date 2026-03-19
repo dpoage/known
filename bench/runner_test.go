@@ -25,6 +25,7 @@ func resolveAnswerer(t *testing.T) Answerer {
 
 	model := os.Getenv(envBenchModel)
 	baseURL := os.Getenv(envBenchBaseURL)
+	thinking := os.Getenv(envBenchThinking) == "1"
 
 	if apiKey := os.Getenv(envBenchAPIKey); apiKey != "" {
 		if model == "" {
@@ -37,7 +38,7 @@ func resolveAnswerer(t *testing.T) Answerer {
 		if model == "" {
 			model = "claude-haiku-4-5-20251001"
 		}
-		return NewAnthropicAnswerer(apiKey, model, baseURL)
+		return NewAnthropicAnswerer(apiKey, model, baseURL, thinking)
 	}
 
 	t.Skip("No API key set — set " + envBenchAPIKey + " (OpenAI-compat) or " + envAnthropicKey + " to run")

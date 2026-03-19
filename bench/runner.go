@@ -16,10 +16,11 @@ import (
 
 // Environment variable names used for benchmark configuration.
 const (
-	envBenchAPIKey  = "BENCH_API_KEY"
-	envBenchModel   = "BENCH_MODEL"
-	envBenchBaseURL = "BENCH_BASE_URL"
-	envAnthropicKey = "ANTHROPIC_API_KEY"
+	envBenchAPIKey   = "BENCH_API_KEY"
+	envBenchModel    = "BENCH_MODEL"
+	envBenchBaseURL  = "BENCH_BASE_URL"
+	envBenchThinking = "BENCH_THINKING" // set to "1" to enable extended thinking
+	envAnthropicKey  = "ANTHROPIC_API_KEY"
 )
 
 // Answerer takes a prompt and returns a short answer.
@@ -196,20 +197,28 @@ func extractFileListing(dump string) string {
 // AnthropicAnswerer calls the Anthropic Messages API directly.
 // Works with Anthropic and any Anthropic-compatible provider (e.g., MiniMax).
 type AnthropicAnswerer struct {
-	APIKey      string
-	Model       string // e.g., "claude-haiku-4-5-20251001", "MiniMax-M2.7"
-	BaseURL     string // e.g., "https://api.anthropic.com", "https://api.minimax.io/anthropic"
-	MaxTokens   int
-	Temperature float64
-	HTTPClient  *http.Client
+	APIKey       string
+	Model        string // e.g., "claude-haiku-4-5-20251001", "MiniMax-M2.7"
+	BaseURL      string // e.g., "https://api.anthropic.com", "https://api.minimax.io/anthropic"
+	MaxTokens    int
+	BudgetTokens int // thinking budget for extended-thinking models (0 = no thinking)
+	Temperature  float64
+	HTTPClient   *http.Client
+}
+
+// anthropicThinking configures extended thinking.
+type anthropicThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 // anthropicRequest is the API request body.
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	Temperature float64            `json:"temperature"`
-	Messages    []anthropicMessage `json:"messages"`
+	Model       string              `json:"model"`
+	MaxTokens   int                 `json:"max_tokens"`
+	Temperature float64             `json:"temperature"`
+	Thinking    *anthropicThinking  `json:"thinking,omitempty"`
+	Messages    []anthropicMessage  `json:"messages"`
 }
 
 type anthropicMessage struct {
@@ -232,22 +241,30 @@ type anthropicResponse struct {
 // NewAnthropicAnswerer creates an answerer for the Anthropic Messages API.
 // Also works with Anthropic-compatible providers like MiniMax.
 //
-// The apiKey and model parameters are used directly — environment variable
-// resolution is the caller's responsibility (see resolveAnswerer in runner_test.go).
-func NewAnthropicAnswerer(apiKey, model, baseURL string) *AnthropicAnswerer {
+// When thinking is true, enables extended thinking with a 4096-token budget
+// and 8192 max tokens (budget must be < max). This is required for thinking
+// models like MiniMax M2.7 which return only thinking blocks without it.
+func NewAnthropicAnswerer(apiKey, model, baseURL string, thinking bool) *AnthropicAnswerer {
 	if model == "" {
 		model = "claude-haiku-4-5-20251001"
 	}
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
+	maxTokens := 4096
+	budgetTokens := 0
+	if thinking {
+		budgetTokens = 4096
+		maxTokens = 8192 // must be > budget_tokens
+	}
 	return &AnthropicAnswerer{
-		APIKey:      apiKey,
-		Model:       model,
-		BaseURL:     strings.TrimRight(baseURL, "/"),
-		MaxTokens:   4096,
-		Temperature: 0,
-		HTTPClient:  &http.Client{Timeout: 5 * time.Minute},
+		APIKey:       apiKey,
+		Model:        model,
+		BaseURL:      strings.TrimRight(baseURL, "/"),
+		MaxTokens:    maxTokens,
+		BudgetTokens: budgetTokens,
+		Temperature:  0,
+		HTTPClient:   &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -270,6 +287,13 @@ func (a *AnthropicAnswerer) Answer(ctx context.Context, prompt string) (string, 
 		Messages: []anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
+	}
+	if a.BudgetTokens > 0 {
+		reqBody.Thinking = &anthropicThinking{
+			Type:         "enabled",
+			BudgetTokens: a.BudgetTokens,
+		}
+		reqBody.Temperature = 1 // thinking models require temperature=1
 	}
 
 	body, err := json.Marshal(reqBody)
