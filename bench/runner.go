@@ -9,10 +9,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
+)
+
+// Environment variable names used for benchmark configuration.
+const (
+	envBenchAPIKey  = "BENCH_API_KEY"
+	envBenchModel   = "BENCH_MODEL"
+	envBenchBaseURL = "BENCH_BASE_URL"
+	envAnthropicKey = "ANTHROPIC_API_KEY"
 )
 
 // Answerer takes a prompt and returns a short answer.
@@ -118,11 +125,11 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 }
 
 func buildPrompt(q EffectivenessQuestion, cond Condition, codebaseDump, fileListing, recallCmd string) (string, error) {
-	var context string
+	var promptContext string
 
 	switch cond {
 	case ConditionNoMemory:
-		context = fmt.Sprintf("You have access to a project with these files:\n%s\n\nYou have no other context about this project.", fileListing)
+		promptContext = fmt.Sprintf("You have access to a project with these files:\n%s\n\nYou have no other context about this project.", fileListing)
 
 	case ConditionWithMemory:
 		if recallCmd == "" {
@@ -133,10 +140,10 @@ func buildPrompt(q EffectivenessQuestion, cond Condition, codebaseDump, fileList
 			// If recall fails, provide empty context rather than erroring.
 			recallOutput = "(no recall results)"
 		}
-		context = fmt.Sprintf("You have a knowledge memory tool. Here is what it returned for your query:\n\n%s", recallOutput)
+		promptContext = fmt.Sprintf("You have a knowledge memory tool. Here is what it returned for your query:\n\n%s", recallOutput)
 
 	case ConditionFullDump:
-		context = fmt.Sprintf("Here is the complete source code of the project:\n\n%s", codebaseDump)
+		promptContext = fmt.Sprintf("Here is the complete source code of the project:\n\n%s", codebaseDump)
 	}
 
 	return fmt.Sprintf(`You are answering questions about a Go codebase called "pipeliner".
@@ -146,16 +153,18 @@ No explanation, no surrounding text, no quotes. Just the answer.
 %s
 
 Question: %s
-Answer:`, context, q.Question), nil
+Answer:`, promptContext, q.Question), nil
 }
 
 func runRecall(cmdTemplate, query string) (string, error) {
+	// Use shell execution to handle quoting properly. The {query} placeholder
+	// is replaced and the whole command is passed to sh -c, so single quotes
+	// in the template protect multi-word queries.
 	cmd := strings.Replace(cmdTemplate, "{query}", query, 1)
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	if cmd == "" {
 		return "", fmt.Errorf("empty recall command")
 	}
-	out, err := exec.Command(parts[0], parts[1:]...).CombinedOutput()
+	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("recall command failed: %w", err)
 	}
@@ -177,9 +186,11 @@ func extractFileListing(dump string) string {
 // --- Answerer implementations ---
 
 // AnthropicAnswerer calls the Anthropic Messages API directly.
+// Works with Anthropic and any Anthropic-compatible provider (e.g., MiniMax).
 type AnthropicAnswerer struct {
 	APIKey      string
-	Model       string // e.g., "claude-haiku-4-5-20251001"
+	Model       string // e.g., "claude-haiku-4-5-20251001", "MiniMax-M2.7"
+	BaseURL     string // e.g., "https://api.anthropic.com", "https://api.minimax.io/anthropic"
 	MaxTokens   int
 	Temperature float64
 	HTTPClient  *http.Client
@@ -210,27 +221,38 @@ type anthropicResponse struct {
 	} `json:"error"`
 }
 
-func NewAnthropicAnswerer(model string) *AnthropicAnswerer {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+// NewAnthropicAnswerer creates an answerer for the Anthropic Messages API.
+// Also works with Anthropic-compatible providers like MiniMax.
+//
+// The apiKey and model parameters are used directly — environment variable
+// resolution is the caller's responsibility (see resolveAnswerer in runner_test.go).
+func NewAnthropicAnswerer(apiKey, model, baseURL string) *AnthropicAnswerer {
 	if model == "" {
 		model = "claude-haiku-4-5-20251001"
+	}
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
 	}
 	return &AnthropicAnswerer{
 		APIKey:      apiKey,
 		Model:       model,
-		MaxTokens:   64,
+		BaseURL:     strings.TrimRight(baseURL, "/"),
+		MaxTokens:   4096,
 		Temperature: 0,
-		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
+		HTTPClient:  &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
 func (a *AnthropicAnswerer) Name() string {
-	return fmt.Sprintf("anthropic/%s", a.Model)
+	if strings.Contains(a.BaseURL, "anthropic.com") {
+		return fmt.Sprintf("anthropic/%s", a.Model)
+	}
+	return fmt.Sprintf("anthropic-compat/%s", a.Model)
 }
 
 func (a *AnthropicAnswerer) Answer(ctx context.Context, prompt string) (string, error) {
 	if a.APIKey == "" {
-		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
+		return "", fmt.Errorf("%s not set", envAnthropicKey)
 	}
 
 	reqBody := anthropicRequest{
@@ -247,7 +269,8 @@ func (a *AnthropicAnswerer) Answer(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+	url := a.BaseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -261,14 +284,18 @@ func (a *AnthropicAnswerer) Answer(ctx context.Context, prompt string) (string, 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB cap
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
 	var apiResp anthropicResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal response (body=%s): %w", truncBody(respBody, 500), err)
 	}
 
 	if apiResp.Error != nil {
@@ -276,10 +303,139 @@ func (a *AnthropicAnswerer) Answer(ctx context.Context, prompt string) (string, 
 	}
 
 	if len(apiResp.Content) == 0 {
-		return "", fmt.Errorf("empty response content")
+		return "", fmt.Errorf("empty response content (body=%s)", truncBody(respBody, 500))
 	}
 
-	return strings.TrimSpace(apiResp.Content[0].Text), nil
+	// Find the first text block — some providers include thinking blocks
+	// before the actual text response.
+	for _, block := range apiResp.Content {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			return strings.TrimSpace(block.Text), nil
+		}
+	}
+
+	return "", fmt.Errorf("no text content in response (body=%s)", truncBody(respBody, 500))
+}
+
+func truncBody(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "..."
+}
+
+// OpenAIAnswerer calls any OpenAI-compatible chat completions API.
+// Works with OpenAI, Minimax, Together, Groq, local vLLM, etc.
+type OpenAIAnswerer struct {
+	APIKey      string
+	Model       string  // e.g., "MiniMax-M1-80k"
+	BaseURL     string  // e.g., "https://api.minimaxi.chat/v1"
+	MaxTokens   int
+	Temperature float64
+	HTTPClient  *http.Client
+}
+
+type openaiRequest struct {
+	Model       string            `json:"model"`
+	MaxTokens   int               `json:"max_tokens"`
+	Temperature float64           `json:"temperature"`
+	Messages    []openaiMessage   `json:"messages"`
+}
+
+type openaiMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type openaiResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	} `json:"error"`
+}
+
+// NewOpenAIAnswerer creates an answerer for any OpenAI-compatible API.
+// The apiKey, model, and baseURL parameters are used directly — environment
+// variable resolution is the caller's responsibility.
+func NewOpenAIAnswerer(apiKey, model, baseURL string) *OpenAIAnswerer {
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	return &OpenAIAnswerer{
+		APIKey:      apiKey,
+		Model:       model,
+		BaseURL:     strings.TrimRight(baseURL, "/"),
+		MaxTokens:   4096,
+		Temperature: 0,
+		HTTPClient:  &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+func (o *OpenAIAnswerer) Name() string {
+	return fmt.Sprintf("openai-compat/%s", o.Model)
+}
+
+func (o *OpenAIAnswerer) Answer(ctx context.Context, prompt string) (string, error) {
+	if o.APIKey == "" {
+		return "", fmt.Errorf("%s not set", envBenchAPIKey)
+	}
+
+	reqBody := openaiRequest{
+		Model:       o.Model,
+		MaxTokens:   o.MaxTokens,
+		Temperature: o.Temperature,
+		Messages: []openaiMessage{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := o.BaseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+o.APIKey)
+
+	resp, err := o.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB cap
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var apiResp openaiResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return "", fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	if apiResp.Error != nil {
+		return "", fmt.Errorf("API error: %s", apiResp.Error.Message)
+	}
+
+	if len(apiResp.Choices) == 0 {
+		return "", fmt.Errorf("empty response choices")
+	}
+
+	return strings.TrimSpace(apiResp.Choices[0].Message.Content), nil
 }
 
 // CommandAnswerer shells out to an arbitrary command.

@@ -19,17 +19,16 @@ import (
 	"github.com/dpoage/known/storage/sqlite"
 )
 
-// seedDBPath returns the absolute path to the seed database.
-func seedDBPath() string {
+// benchDir returns the absolute path to the bench/ directory.
+func benchDir() string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "testdata", "seed.db")
+	return filepath.Dir(thisFile)
 }
 
 // generateSeedDB runs the seedgen program to create the seed database.
 func generateSeedDB(t *testing.T) error {
 	t.Helper()
-	_, thisFile, _, _ := runtime.Caller(0)
-	seedgenPath := filepath.Join(filepath.Dir(thisFile), "cmd", "seedgen", "main.go")
+	seedgenPath := filepath.Join(benchDir(), "cmd", "seedgen", "main.go")
 	cmd := exec.Command("go", "run", seedgenPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -136,13 +135,6 @@ func applyAblation(sq ScenarioQuery, cfg *AblationConfig) ScenarioQuery {
 	}
 	if cfg.DisableFreshness {
 		sq.Recency = 0
-	}
-	if cfg.DisableScoping {
-		// Note: the query engine requires a non-empty scope and the seed
-		// data has no universal root scope, so scope filtering ablation
-		// is handled by Scenario C (Scope Isolation) instead.
-		// This branch is kept for future use if a root scope is added.
-		sq.Scope = "project"
 	}
 	return sq
 }
@@ -282,7 +274,7 @@ func TestBench(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Generate seed database if it does not already exist.
-	dbPath := seedDBPath()
+	dbPath := filepath.Join(benchDir(), "testdata", "seed.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Logf("Seed database not found at %s — generating...", dbPath)
 		if err := generateSeedDB(t); err != nil {

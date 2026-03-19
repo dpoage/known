@@ -36,7 +36,6 @@ type AblationConfig struct {
 	DisableGraphExpansion bool // force ExpandDepth=0
 	DisableTextSearch     bool // skip text search in hybrid
 	DisableFreshness      bool // force RecencyWeight=0
-	DisableScoping        bool // force Scope=""
 }
 
 // DefaultAblations returns the standard ablation configs.

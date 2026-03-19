@@ -7,38 +7,59 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
 func testdataPath(rel string) string {
-	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "testdata", rel)
+	return filepath.Join(benchDir(), "testdata", rel)
 }
 
-// TestEffectivenessRun runs the full effectiveness evaluation using the
-// Anthropic API. Requires ANTHROPIC_API_KEY to be set.
+// resolveAnswerer picks the right answerer based on environment variables.
 //
-// Usage:
+// Priority:
+//  1. BENCH_API_KEY + BENCH_BASE_URL → OpenAI-compatible (Minimax, Together, etc.)
+//  2. ANTHROPIC_API_KEY → Anthropic Messages API
+//  3. Neither → skip
+func resolveAnswerer(t *testing.T) Answerer {
+	t.Helper()
+
+	model := os.Getenv(envBenchModel)
+	baseURL := os.Getenv(envBenchBaseURL)
+
+	if apiKey := os.Getenv(envBenchAPIKey); apiKey != "" {
+		if model == "" {
+			t.Fatal(envBenchAPIKey + " set but " + envBenchModel + " is required")
+		}
+		return NewOpenAIAnswerer(apiKey, model, baseURL)
+	}
+
+	if apiKey := os.Getenv(envAnthropicKey); apiKey != "" {
+		if model == "" {
+			model = "claude-haiku-4-5-20251001"
+		}
+		return NewAnthropicAnswerer(apiKey, model, baseURL)
+	}
+
+	t.Skip("No API key set — set " + envBenchAPIKey + " (OpenAI-compat) or " + envAnthropicKey + " to run")
+	return nil
+}
+
+// TestEffectivenessRun runs the full effectiveness evaluation.
 //
-//	ANTHROPIC_API_KEY=sk-... go test -tags bench ./bench/ -run TestEffectivenessRun -v
+// OpenAI-compatible provider (Minimax, Together, Groq, etc.):
 //
-// Override the model with BENCH_MODEL:
+//	BENCH_API_KEY=... BENCH_MODEL=MiniMax-M2.7 BENCH_BASE_URL=https://api.minimaxi.chat/v1 \
+//	  go test -tags bench ./bench/ -run TestEffectivenessRun -v -timeout 10m
 //
-//	BENCH_MODEL=claude-sonnet-4-5-20241022 go test -tags bench ./bench/ -run TestEffectivenessRun -v
+// Anthropic (or Anthropic-compatible like MiniMax):
+//
+//	ANTHROPIC_API_KEY=... BENCH_MODEL=MiniMax-M2.7 BENCH_BASE_URL=https://api.minimax.io/anthropic \
+//	  go test -tags bench ./bench/ -run TestEffectivenessRun -v -timeout 10m
 func TestEffectivenessRun(t *testing.T) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY not set — skipping effectiveness run")
-	}
-
-	model := os.Getenv("BENCH_MODEL")
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
 	ctx := context.Background()
-	answerer := NewAnthropicAnswerer(model)
+	answerer := resolveAnswerer(t)
+
+	t.Logf("Using answerer: %s", answerer.Name())
 
 	var logBuf bytes.Buffer
 	cfg := RunnerConfig{
@@ -46,8 +67,7 @@ func TestEffectivenessRun(t *testing.T) {
 		QuestionsPath: testdataPath("questions.yaml"),
 		CodebasePath:  testdataPath("codebase"),
 		// RecallCommand would be: "known recall '{query}' --scope pipeliner"
-		// but the seed memory DB doesn't exist for this codebase yet,
-		// so we skip the with_memory condition for now.
+		// Skip with_memory for now — pipeliner knowledge not seeded yet.
 		Conditions: []Condition{ConditionNoMemory, ConditionFullDump},
 		Log:        &logBuf,
 	}
@@ -70,4 +90,5 @@ func TestEffectivenessRun(t *testing.T) {
 	if err := SaveBaseline(baselinePath, baseline); err != nil {
 		t.Errorf("save baseline: %v", err)
 	}
+	t.Logf("Baseline saved to %s", baselinePath)
 }
