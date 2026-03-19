@@ -39,13 +39,15 @@ type AblationConfig struct {
 	DisableScoping        bool // force Scope=""
 }
 
-// DefaultAblations returns the 4 standard ablation configs.
+// DefaultAblations returns the standard ablation configs.
+// Scope filtering is not included because the query engine requires a scope
+// and the seed data has no universal root scope. Scenario C (Scope Isolation)
+// tests scoping effectiveness directly.
 func DefaultAblations() []AblationConfig {
 	return []AblationConfig{
 		{Name: "Graph Expansion", DisableGraphExpansion: true},
 		{Name: "FTS5 Fusion", DisableTextSearch: true},
 		{Name: "Freshness Weighting", DisableFreshness: true},
-		{Name: "Scope Filtering", DisableScoping: true},
 	}
 }
 
@@ -126,6 +128,7 @@ func scenarioB() Scenario {
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
+				Recency:   0.5, // high recency to prefer newer entry
 				MustIncludeContent: []string{
 					"fixed-window algorithm with 60-second windows",
 					"changed from fixed-window to token-bucket in v2.1",
@@ -144,6 +147,7 @@ func scenarioB() Scenario {
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
+				Recency:   0.5,
 				MustIncludeContent: []string{
 					"opaque session IDs stored in Redis",
 					"migrated from opaque session tokens to stateless JWTs",
@@ -162,6 +166,7 @@ func scenarioB() Scenario {
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
+				Recency:   0.5,
 				MustIncludeContent: []string{
 					"PostgreSQL with pgvector for similarity search",
 					"migrated from PostgreSQL to SQLite",

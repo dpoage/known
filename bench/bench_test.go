@@ -138,7 +138,11 @@ func applyAblation(sq ScenarioQuery, cfg *AblationConfig) ScenarioQuery {
 		sq.Recency = 0
 	}
 	if cfg.DisableScoping {
-		sq.Scope = ""
+		// Note: the query engine requires a non-empty scope and the seed
+		// data has no universal root scope, so scope filtering ablation
+		// is handled by Scenario C (Scope Isolation) instead.
+		// This branch is kept for future use if a root scope is added.
+		sq.Scope = "project"
 	}
 	return sq
 }
