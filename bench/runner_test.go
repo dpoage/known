@@ -69,7 +69,16 @@ func TestEffectivenessRun(t *testing.T) {
 	if s := os.Getenv(envBenchLimit); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			maxQuestions = n
-			t.Logf("Limiting to %d questions per condition (BENCH_LIMIT=%s)", n, s)
+			t.Logf("Limiting to %d questions per condition (%s=%s)", n, envBenchLimit, s)
+		}
+	}
+
+	// Parse concurrency (default 1 = sequential).
+	concurrency := 1
+	if s := os.Getenv(envBenchConcurrency); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			concurrency = n
+			t.Logf("Running %d concurrent API calls (%s=%s)", n, envBenchConcurrency, s)
 		}
 	}
 
@@ -93,6 +102,7 @@ func TestEffectivenessRun(t *testing.T) {
 		RecallCommand: recallCmd,
 		Conditions:    conditions,
 		MaxQuestions:   maxQuestions,
+		Concurrency:   concurrency,
 		Log:         os.Stderr,
 	}
 

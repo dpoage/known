@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,8 +22,9 @@ const (
 	envBenchModel    = "BENCH_MODEL"
 	envBenchBaseURL  = "BENCH_BASE_URL"
 	envBenchThinking = "BENCH_THINKING" // set to "1" to enable extended thinking
-	envBenchLimit    = "BENCH_LIMIT"    // max questions per condition (e.g., "5" for smoke test)
-	envAnthropicKey  = "ANTHROPIC_API_KEY"
+	envBenchLimit       = "BENCH_LIMIT"       // max questions per condition (e.g., "5" for smoke test)
+	envBenchConcurrency = "BENCH_CONCURRENCY" // parallel API calls per condition (default 1)
+	envAnthropicKey     = "ANTHROPIC_API_KEY"
 )
 
 // Answerer takes a prompt and returns a short answer.
@@ -52,6 +55,10 @@ type RunnerConfig struct {
 	// MaxQuestions limits the number of questions per condition (0 = all).
 	// Useful for smoke tests: BENCH_LIMIT=5 runs only 5 questions.
 	MaxQuestions int
+
+	// Concurrency is the number of parallel API calls per condition (default 1).
+	// Set via BENCH_CONCURRENCY. Higher values speed up runs but may hit rate limits.
+	Concurrency int
 
 	// Log is an optional writer for progress output.
 	Log io.Writer
@@ -93,46 +100,80 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 			fmt.Fprintf(cfg.Log, "\n--- Condition: %s (answerer: %s) [%d questions] ---\n", cond, cfg.Answerer.Name(), totalQuestions)
 		}
 
-		answers := make(map[string]string)
-		qNum := 0
+		// Collect questions to run, respecting MaxQuestions.
+		type questionItem struct {
+			q   EffectivenessQuestion
+			num int
+		}
+		var items []questionItem
 		for _, sess := range questions.Sessions {
 			for _, q := range sess.Questions {
-				qNum++
-				if cfg.MaxQuestions > 0 && qNum > cfg.MaxQuestions {
+				items = append(items, questionItem{q: q, num: len(items) + 1})
+				if cfg.MaxQuestions > 0 && len(items) >= cfg.MaxQuestions {
 					break
 				}
-				prompt, err := buildPrompt(q, cond, codebaseDump, fileListing, cfg.RecallCommand)
+			}
+			if cfg.MaxQuestions > 0 && len(items) >= cfg.MaxQuestions {
+				break
+			}
+		}
+
+		// Run questions with concurrency.
+		concurrency := cfg.Concurrency
+		if concurrency <= 0 {
+			concurrency = 1
+		}
+
+		var (
+			mu      sync.Mutex
+			answers = make(map[string]string)
+			done    atomic.Int32
+			sem     = make(chan struct{}, concurrency)
+			wg      sync.WaitGroup
+		)
+
+		for _, item := range items {
+			item := item
+			wg.Add(1)
+			sem <- struct{}{} // acquire slot
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }() // release slot
+
+				prompt, err := buildPrompt(item.q, cond, codebaseDump, fileListing, cfg.RecallCommand)
 				if err != nil {
 					if cfg.Log != nil {
-						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] prompt error: %v\n", qNum, totalQuestions, q.ID, err)
+						n := done.Add(1)
+						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] prompt error: %v\n", n, totalQuestions, item.q.ID, err)
 					}
-					continue
+					return
 				}
 
 				answer, err := cfg.Answerer.Answer(ctx, prompt)
+				n := done.Add(1)
 				if err != nil {
 					if cfg.Log != nil {
-						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] answer error: %v\n", qNum, totalQuestions, q.ID, err)
+						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] answer error: %v\n", n, totalQuestions, item.q.ID, err)
 					}
-					continue
+					return
 				}
 
 				answer = strings.TrimSpace(answer)
-				answers[q.ID] = answer
+				mu.Lock()
+				answers[item.q.ID] = answer
+				mu.Unlock()
 
-				correct := CheckAnswer(q, answer)
+				correct := CheckAnswer(item.q, answer)
 				if cfg.Log != nil {
 					mark := "x"
 					if correct {
 						mark = "✓"
 					}
-					fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", qNum, totalQuestions, q.ID, mark, answer)
+					fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", n, totalQuestions, item.q.ID, mark, answer)
 				}
-			}
-			if cfg.MaxQuestions > 0 && qNum >= cfg.MaxQuestions {
-				break
-			}
+			}()
 		}
+		wg.Wait()
 
 		result := ScoreEffectiveness(questions, answers)
 		result.Condition = cond
