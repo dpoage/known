@@ -5,6 +5,7 @@ package bench
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,15 +73,26 @@ func TestEffectivenessRun(t *testing.T) {
 		}
 	}
 
+	// Check if pipeliner memory DB exists to enable the with_memory condition.
+	memoryDB := testdataPath("pipeliner_memory.db")
+	conditions := []Condition{ConditionNoMemory, ConditionFullDump}
+	recallCmd := ""
+	if _, err := os.Stat(memoryDB); err == nil {
+		conditions = []Condition{ConditionNoMemory, ConditionWithMemory, ConditionFullDump}
+		recallCmd = fmt.Sprintf("KNOWN_DSN=%s known recall '{query}' --scope pipeliner --limit 10 --threshold 0.3", memoryDB)
+		t.Logf("Memory DB found at %s — enabling with_memory condition", memoryDB)
+	} else {
+		t.Logf("No memory DB at %s — skipping with_memory condition", memoryDB)
+	}
+
 	// Write progress to stderr so it streams live (t.Log buffers until test ends).
 	cfg := RunnerConfig{
 		Answerer:      answerer,
 		QuestionsPath: testdataPath("questions.yaml"),
 		CodebasePath:  testdataPath("codebase"),
-		// RecallCommand would be: "known recall '{query}' --scope pipeliner"
-		// Skip with_memory for now — pipeliner knowledge not seeded yet.
-		Conditions:  []Condition{ConditionNoMemory, ConditionFullDump},
-		MaxQuestions: maxQuestions,
+		RecallCommand: recallCmd,
+		Conditions:    conditions,
+		MaxQuestions:   maxQuestions,
 		Log:         os.Stderr,
 	}
 
