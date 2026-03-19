@@ -117,8 +117,10 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 		return false
 
 	case "exact_set":
-		// Split given answer on commas, trim and lowercase each element.
-		givenParts := strings.Split(given, ",")
+		// Split given answer on commas or newlines, trim and lowercase each element.
+		givenParts := strings.FieldsFunc(given, func(r rune) bool {
+			return r == ',' || r == '\n'
+		})
 		givenSet := make([]string, 0, len(givenParts))
 		for _, p := range givenParts {
 			trimmed := strings.TrimSpace(p)

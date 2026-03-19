@@ -115,8 +115,10 @@ func TestCheckAnswer_ExactSet(t *testing.T) {
 		{"Name, Process, Validate", true},
 		{"Validate, Name, Process", true},     // order independent
 		{"name, process, validate", true},     // case insensitive
-		{" Name , Process , Validate ", true}, // whitespace
-		{"Name, Process", false},              // missing element
+		{" Name , Process , Validate ", true},          // whitespace
+		{"Name\nProcess\nValidate", true},              // newline separated
+		{"Name\n Process \n Validate ", true},           // newline + whitespace
+		{"Name, Process", false},                       // missing element
 		{"Name, Process, Validate, Extra", false},
 	}
 	for _, tt := range tests {
