@@ -247,7 +247,7 @@ func NewAnthropicAnswerer(apiKey, model, baseURL string) *AnthropicAnswerer {
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		MaxTokens:   4096,
 		Temperature: 0,
-		HTTPClient:  &http.Client{Timeout: 60 * time.Second},
+		HTTPClient:  &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -380,7 +380,7 @@ func NewOpenAIAnswerer(apiKey, model, baseURL string) *OpenAIAnswerer {
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		MaxTokens:   4096,
 		Temperature: 0,
-		HTTPClient:  &http.Client{Timeout: 60 * time.Second},
+		HTTPClient:  &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
