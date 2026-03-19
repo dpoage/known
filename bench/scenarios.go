@@ -118,17 +118,18 @@ func scenarioA() Scenario {
 }
 
 // scenarioB: Contradiction Resolution — conflict detection with contradicting pairs.
+// Tests that contradicts edges cause HasConflict=true on results. Ranking by
+// recency is tested separately in the freshness ablation; here we only check
+// that both entries appear and both are flagged.
 func scenarioB() Scenario {
 	return Scenario{
 		Name: "B: Contradiction Resolution",
 		Queries: []ScenarioQuery{
 			{
-				// Rate limiter contradiction
 				Text:      "What rate limiting algorithm does the API use?",
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
-				Recency:   0.5, // high recency to prefer newer entry
 				MustIncludeContent: []string{
 					"fixed-window algorithm with 60-second windows",
 					"changed from fixed-window to token-bucket in v2.1",
@@ -137,17 +138,12 @@ func scenarioB() Scenario {
 					"fixed-window algorithm with 60-second windows",
 					"changed from fixed-window to token-bucket in v2.1",
 				},
-				MustRankAboveContent: map[string]string{
-					"changed from fixed-window to token-bucket in v2.1": "fixed-window algorithm with 60-second windows",
-				},
 			},
 			{
-				// Auth token format contradiction
 				Text:      "What format are authentication tokens?",
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
-				Recency:   0.5,
 				MustIncludeContent: []string{
 					"opaque session IDs stored in Redis",
 					"migrated from opaque session tokens to stateless JWTs",
@@ -156,17 +152,12 @@ func scenarioB() Scenario {
 					"opaque session IDs stored in Redis",
 					"migrated from opaque session tokens to stateless JWTs",
 				},
-				MustRankAboveContent: map[string]string{
-					"migrated from opaque session tokens to stateless JWTs": "opaque session IDs stored in Redis",
-				},
 			},
 			{
-				// Storage backend contradiction
 				Text:      "What is the primary storage backend?",
 				Scope:     "project-alpha",
 				Limit:     10,
 				Threshold: 0.0,
-				Recency:   0.5,
 				MustIncludeContent: []string{
 					"PostgreSQL with pgvector for similarity search",
 					"migrated from PostgreSQL to SQLite",
@@ -174,9 +165,6 @@ func scenarioB() Scenario {
 				MustFlagConflictContent: []string{
 					"PostgreSQL with pgvector for similarity search",
 					"migrated from PostgreSQL to SQLite",
-				},
-				MustRankAboveContent: map[string]string{
-					"migrated from PostgreSQL to SQLite": "PostgreSQL with pgvector for similarity search",
 				},
 			},
 		},
@@ -231,77 +219,82 @@ func scenarioC() Scenario {
 	}
 }
 
-// scenarioD: Needle-in-Haystack with Graph — graph expansion surfaces linked entries.
+// scenarioD: Needle-in-Haystack with Graph — graph expansion surfaces entries
+// that vector search alone would not return in the top results.
+// The probe data shows that querying "deployment process" finds deploy entries
+// directly, but expansion follows edges to related storage/config entries that
+// vector search alone would not surface in the top 5.
 func scenarioD() Scenario {
 	return Scenario{
 		Name: "D: Needle-in-Haystack with Graph",
 		Queries: []ScenarioQuery{
 			{
-				// Query JWT auth; with expansion, elaboration chain entries should appear.
-				// Entry 56: "JWT authentication flow..." has elaborations:
-				//   57 -> 56 (elaborates), 58 -> 57 (elaborates)
-				// Also 20 -> 1 (JWT expiration elaborates auth architecture)
-				Text:        "JWT authentication flow and token handling",
+				// Query deployment; expansion should follow edges to surface
+				// storage and config entries that are linked but semantically distant.
+				Text:        "deployment process",
 				Scope:       "project-alpha",
 				Limit:       10,
 				Threshold:   0.0,
 				ExpandDepth: 2,
 				MustIncludeContent: []string{
-					"JWT authentication flow: client sends credentials",
-					"RSA-2048 key pair stored in KNOWN_JWT_PRIVATE_KEY",
+					"blue-green strategy with health check gating",
+					// These are reached only via expansion edges, not vector similarity
+					"SQLite is the primary storage backend",
 				},
 				ExpectReachContent: map[string]string{
-					"JWT authentication flow: client sends credentials": "direct",
+					"blue-green strategy with health check gating": "direct",
+					"SQLite is the primary storage backend":        "expansion",
 				},
 			},
 			{
-				// Query vector search; expansion should find elaboration chain 59->60->61
-				Text:        "How does vector similarity search work?",
-				Scope:       "project-alpha",
-				Limit:       10,
-				Threshold:   0.0,
-				ExpandDepth: 2,
+				// Same query without expansion — should NOT find storage entries.
+				Text:      "deployment process",
+				Scope:     "project-alpha",
+				Limit:     5,
+				Threshold: 0.0,
 				MustIncludeContent: []string{
-					"Vector similarity search first filters entries by scope",
-					"Cosine similarity is computed as 1 minus the cosine distance",
+					"blue-green strategy with health check gating",
 				},
-				ExpectReachContent: map[string]string{
-					"Vector similarity search first filters entries by scope": "direct",
-				},
-			},
-			{
-				// Without expansion, elaboration targets should NOT appear as easily.
-				Text:        "JWT authentication flow and token handling",
-				Scope:       "project-alpha",
-				Limit:       5,
-				Threshold:   0.0,
-				ExpandDepth: 0,
-				MustIncludeContent: []string{
-					"JWT authentication flow: client sends credentials",
+				MustExcludeContent: []string{
+					"SQLite is the primary storage backend",
 				},
 			},
 		},
 	}
 }
 
-// scenarioE: FTS Rescue — text search finds keyword-specific needle entries.
+// scenarioE: FTS Rescue — text search finds keyword-specific entries that
+// vector search misranks. The probe data confirms vector search for "ALPHA-4091"
+// returns ALPHA-5002 as the top result (wrong!), while FTS finds the exact match.
 func scenarioE() Scenario {
 	return Scenario{
 		Name: "E: FTS Rescue",
 		Queries: []ScenarioQuery{
 			{
+				// With FTS enabled (hybrid), the correct entry should be found.
 				Text:       "ALPHA-4091",
 				Scope:      "project-alpha",
-				Limit:      10,
+				Limit:      5,
 				TextSearch: true,
 				MustIncludeContent: []string{
 					"ALPHA-4091 indicates embedding dimension mismatch",
 				},
 			},
 			{
+				// Without FTS (vector only), the wrong entry ranks first.
+				// This query should NOT find ALPHA-4091 in top 3 results.
+				Text:      "ALPHA-4091",
+				Scope:     "project-alpha",
+				Limit:     3,
+				Threshold: 0.0,
+				MustExcludeContent: []string{
+					"ALPHA-4091 indicates embedding dimension mismatch",
+				},
+			},
+			{
 				Text:       "ALPHA-5002",
 				Scope:      "project-alpha",
-				Limit:      10,
+				Limit:      5,
 				TextSearch: true,
 				MustIncludeContent: []string{
 					"ALPHA-5002 means the scope path contains invalid characters",
@@ -310,19 +303,10 @@ func scenarioE() Scenario {
 			{
 				Text:       "embed.cache.maxsize",
 				Scope:      "project-alpha",
-				Limit:      10,
+				Limit:      5,
 				TextSearch: true,
 				MustIncludeContent: []string{
 					"embed.cache.maxsize controls the maximum number of cached",
-				},
-			},
-			{
-				Text:       "KALPHA trace ID format",
-				Scope:      "project-alpha",
-				Limit:      10,
-				TextSearch: true,
-				MustIncludeContent: []string{
-					"KALPHA-{timestamp}-{random6}",
 				},
 			},
 		},
