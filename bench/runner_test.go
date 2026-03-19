@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -62,6 +63,15 @@ func TestEffectivenessRun(t *testing.T) {
 
 	t.Logf("Using answerer: %s", answerer.Name())
 
+	// Parse optional question limit for smoke tests.
+	maxQuestions := 0
+	if s := os.Getenv(envBenchLimit); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			maxQuestions = n
+			t.Logf("Limiting to %d questions per condition (BENCH_LIMIT=%s)", n, s)
+		}
+	}
+
 	// Write progress to stderr so it streams live (t.Log buffers until test ends).
 	cfg := RunnerConfig{
 		Answerer:      answerer,
@@ -69,8 +79,9 @@ func TestEffectivenessRun(t *testing.T) {
 		CodebasePath:  testdataPath("codebase"),
 		// RecallCommand would be: "known recall '{query}' --scope pipeliner"
 		// Skip with_memory for now — pipeliner knowledge not seeded yet.
-		Conditions: []Condition{ConditionNoMemory, ConditionFullDump},
-		Log:        os.Stderr,
+		Conditions:  []Condition{ConditionNoMemory, ConditionFullDump},
+		MaxQuestions: maxQuestions,
+		Log:         os.Stderr,
 	}
 
 	report, err := RunEffectiveness(ctx, cfg)

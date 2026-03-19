@@ -20,6 +20,7 @@ const (
 	envBenchModel    = "BENCH_MODEL"
 	envBenchBaseURL  = "BENCH_BASE_URL"
 	envBenchThinking = "BENCH_THINKING" // set to "1" to enable extended thinking
+	envBenchLimit    = "BENCH_LIMIT"    // max questions per condition (e.g., "5" for smoke test)
 	envAnthropicKey  = "ANTHROPIC_API_KEY"
 )
 
@@ -48,6 +49,10 @@ type RunnerConfig struct {
 	// Conditions to evaluate. If nil, all three are run.
 	Conditions []Condition
 
+	// MaxQuestions limits the number of questions per condition (0 = all).
+	// Useful for smoke tests: BENCH_LIMIT=5 runs only 5 questions.
+	MaxQuestions int
+
 	// Log is an optional writer for progress output.
 	Log io.Writer
 }
@@ -72,10 +77,13 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 		conditions = []Condition{ConditionNoMemory, ConditionWithMemory, ConditionFullDump}
 	}
 
-	// Count total questions for progress display.
+	// Count total questions for progress display, applying limit.
 	totalQuestions := 0
 	for _, sess := range questions.Sessions {
 		totalQuestions += len(sess.Questions)
+	}
+	if cfg.MaxQuestions > 0 && cfg.MaxQuestions < totalQuestions {
+		totalQuestions = cfg.MaxQuestions
 	}
 
 	results := make(map[Condition]*EffectivenessResult)
@@ -90,6 +98,9 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 		for _, sess := range questions.Sessions {
 			for _, q := range sess.Questions {
 				qNum++
+				if cfg.MaxQuestions > 0 && qNum > cfg.MaxQuestions {
+					break
+				}
 				prompt, err := buildPrompt(q, cond, codebaseDump, fileListing, cfg.RecallCommand)
 				if err != nil {
 					if cfg.Log != nil {
@@ -117,6 +128,9 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 					}
 					fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", qNum, totalQuestions, q.ID, mark, answer)
 				}
+			}
+			if cfg.MaxQuestions > 0 && qNum >= cfg.MaxQuestions {
+				break
 			}
 		}
 
