@@ -110,6 +110,27 @@ func resolveExpectation(sq ScenarioQuery, ci *contentIndex, t *testing.T) QueryE
 	return qe
 }
 
+// applyAblation returns a copy of the ScenarioQuery with the ablation
+// config's overrides applied. The original is never mutated.
+func applyAblation(sq ScenarioQuery, cfg *AblationConfig) ScenarioQuery {
+	if cfg == nil {
+		return sq
+	}
+	if cfg.DisableGraphExpansion {
+		sq.ExpandDepth = 0
+	}
+	if cfg.DisableTextSearch {
+		sq.TextSearch = false
+	}
+	if cfg.DisableFreshness {
+		sq.Recency = 0
+	}
+	if cfg.DisableScoping {
+		sq.Scope = ""
+	}
+	return sq
+}
+
 // executeQuery runs a single scenario query against the engine and returns
 // a QueryResult with IDs, conflict flags, and reach methods.
 func executeQuery(ctx context.Context, eng *query.Engine, sq ScenarioQuery, ci *contentIndex) (QueryResult, error) {
@@ -167,6 +188,62 @@ func executeQuery(ctx context.Context, eng *query.Engine, sq ScenarioQuery, ci *
 	}
 
 	return toQueryResult(results), nil
+}
+
+// runScenarios executes all scenarios and returns per-scenario scores. When
+// ablation is non-nil, each query is copied and the ablation overrides are
+// applied before execution.
+func runScenarios(
+	ctx context.Context,
+	t *testing.T,
+	eng *query.Engine,
+	ci *contentIndex,
+	scenarios []Scenario,
+	ablation *AblationConfig,
+) []ScenarioScore {
+	var scores []ScenarioScore
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.Name, func(t *testing.T) {
+			var queryScores []QueryScore
+
+			for i, sq := range scenario.Queries {
+				// Apply ablation overrides to a copy.
+				sq = applyAblation(sq, ablation)
+
+				// Resolve content-based expectations to ID-based.
+				expect := resolveExpectation(sq, ci, t)
+
+				// Execute the query.
+				actual, err := executeQuery(ctx, eng, sq, ci)
+				if err != nil {
+					t.Errorf("Query %d (%q): %v", i+1, sq.Text, err)
+					queryScores = append(queryScores, QueryScore{
+						QueryText: sq.Text,
+						Failures:  []string{"query error: " + err.Error()},
+					})
+					continue
+				}
+
+				// Score.
+				qs := ScoreQuery(expect, actual)
+				queryScores = append(queryScores, qs)
+
+				if len(qs.Failures) > 0 {
+					t.Logf("  Query %d (%q) score=%.3f failures: %s",
+						i+1, sq.Text, qs.Total, strings.Join(qs.Failures, "; "))
+				} else {
+					t.Logf("  Query %d (%q) score=%.3f", i+1, sq.Text, qs.Total)
+				}
+			}
+
+			ss := ScoreScenario(scenario.Name, queryScores)
+			scores = append(scores, ss)
+			t.Logf("Scenario score: %.3f (%d/%d perfect)", ss.Average, ss.PassCount, ss.TotalCount)
+		})
+	}
+
+	return scores
 }
 
 // toQueryResult converts engine results into the scoring QueryResult type.
@@ -237,64 +314,47 @@ func TestBench(t *testing.T) {
 
 	ci := &contentIndex{entries: allEntries}
 
-	// 6. Run all scenarios.
+	// 6. Run all scenarios (full run).
 	scenarios := AllScenarios()
 	var scenarioScores []ScenarioScore
 
-	for _, scenario := range scenarios {
-		t.Run(scenario.Name, func(t *testing.T) {
-			var queryScores []QueryScore
+	t.Run("Full", func(t *testing.T) {
+		scenarioScores = runScenarios(ctx, t, eng, ci, scenarios, nil)
+	})
 
-			for i, sq := range scenario.Queries {
-				// Resolve content-based expectations to ID-based.
-				expect := resolveExpectation(sq, ci, t)
+	// 7. Run ablation tests — rerun each scenario with one feature disabled.
+	fullOverall := ComputeOverall(scenarioScores)
+	ablationResults := make(map[string]AblationResult, len(DefaultAblations()))
 
-				// Execute the query.
-				actual, err := executeQuery(ctx, eng, sq, ci)
-				if err != nil {
-					t.Errorf("Query %d (%q): %v", i+1, sq.Text, err)
-					// Score as zero on error.
-					queryScores = append(queryScores, QueryScore{
-						QueryText: sq.Text,
-						Failures:  []string{"query error: " + err.Error()},
-					})
-					continue
-				}
-
-				// Score.
-				qs := ScoreQuery(expect, actual)
-				queryScores = append(queryScores, qs)
-
-				// Log failures for this query.
-				if len(qs.Failures) > 0 {
-					t.Logf("  Query %d (%q) score=%.3f failures: %s",
-						i+1, sq.Text, qs.Total, strings.Join(qs.Failures, "; "))
-				} else {
-					t.Logf("  Query %d (%q) score=%.3f", i+1, sq.Text, qs.Total)
-				}
+	for _, cfg := range DefaultAblations() {
+		cfg := cfg // capture range variable
+		t.Run("Ablation/"+cfg.Name, func(t *testing.T) {
+			ablatedScores := runScenarios(ctx, t, eng, ci, scenarios, &cfg)
+			withoutOverall := ComputeOverall(ablatedScores)
+			ablationResults[cfg.Name] = AblationResult{
+				FullScore:    fullOverall,
+				WithoutScore: withoutOverall,
+				Lift:         fullOverall - withoutOverall,
 			}
-
-			ss := ScoreScenario(scenario.Name, queryScores)
-			scenarioScores = append(scenarioScores, ss)
-			t.Logf("Scenario score: %.3f (%d/%d perfect)", ss.Average, ss.PassCount, ss.TotalCount)
+			t.Logf("Ablation %q: full=%.3f without=%.3f lift=%+.3f",
+				cfg.Name, fullOverall, withoutOverall, fullOverall-withoutOverall)
 		})
 	}
 
-	// 7. Compute overall score and format report.
-	overall := ComputeOverall(scenarioScores)
-
+	// 8. Compute overall score and format report.
 	report := BenchmarkReport{
 		Scenarios: scenarioScores,
-		Overall:   overall,
+		Overall:   fullOverall,
+		Ablation:  ablationResults,
 	}
 
 	var buf bytes.Buffer
 	FormatReport(report, &buf)
 	t.Logf("\n%s", buf.String())
 
-	// 8. Fail if overall is below minimum threshold.
+	// 9. Fail if overall is below minimum threshold.
 	const minThreshold = 0.5
-	if overall < minThreshold {
-		t.Errorf("Overall score %.3f is below minimum threshold %.3f", overall, minThreshold)
+	if fullOverall < minThreshold {
+		t.Errorf("Overall score %.3f is below minimum threshold %.3f", fullOverall, minThreshold)
 	}
 }

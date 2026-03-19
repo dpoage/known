@@ -30,6 +30,25 @@ type ScenarioQuery struct {
 	ExpectReachContent      map[string]string  // Content substring -> expected ReachMethod
 }
 
+// AblationConfig controls which features are disabled for an ablation run.
+type AblationConfig struct {
+	Name                  string
+	DisableGraphExpansion bool // force ExpandDepth=0
+	DisableTextSearch     bool // skip text search in hybrid
+	DisableFreshness      bool // force RecencyWeight=0
+	DisableScoping        bool // force Scope=""
+}
+
+// DefaultAblations returns the 4 standard ablation configs.
+func DefaultAblations() []AblationConfig {
+	return []AblationConfig{
+		{Name: "Graph Expansion", DisableGraphExpansion: true},
+		{Name: "FTS5 Fusion", DisableTextSearch: true},
+		{Name: "Freshness Weighting", DisableFreshness: true},
+		{Name: "Scope Filtering", DisableScoping: true},
+	}
+}
+
 // AllScenarios returns the complete set of benchmark scenarios.
 func AllScenarios() []Scenario {
 	return []Scenario{
