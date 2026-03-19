@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,6 +23,17 @@ import (
 func seedDBPath() string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(thisFile), "testdata", "seed.db")
+}
+
+// generateSeedDB runs the seedgen program to create the seed database.
+func generateSeedDB(t *testing.T) error {
+	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	seedgenPath := filepath.Join(filepath.Dir(thisFile), "cmd", "seedgen", "main.go")
+	cmd := exec.Command("go", "run", seedgenPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // contentIndex maps content substrings to entry IDs for resolving
@@ -265,11 +277,13 @@ func toQueryResult(results []query.Result) QueryResult {
 func TestBench(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. Verify seed database exists.
+	// 1. Generate seed database if it does not already exist.
 	dbPath := seedDBPath()
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatalf("Seed database not found at %s. Run seedgen first:\n"+
-			"  go run bench/cmd/seedgen/main.go", dbPath)
+		t.Logf("Seed database not found at %s — generating...", dbPath)
+		if err := generateSeedDB(t); err != nil {
+			t.Fatalf("Failed to generate seed database: %v", err)
+		}
 	}
 
 	// 2. Open a read-only copy to avoid mutating the seed.
