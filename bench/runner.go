@@ -100,80 +100,85 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 			fmt.Fprintf(cfg.Log, "\n--- Condition: %s (answerer: %s) [%d questions] ---\n", cond, cfg.Answerer.Name(), totalQuestions)
 		}
 
-		// Collect questions to run, respecting MaxQuestions.
-		type questionItem struct {
-			q   EffectivenessQuestion
-			num int
-		}
-		var items []questionItem
-		for _, sess := range questions.Sessions {
-			for _, q := range sess.Questions {
-				items = append(items, questionItem{q: q, num: len(items) + 1})
-				if cfg.MaxQuestions > 0 && len(items) >= cfg.MaxQuestions {
-					break
-				}
-			}
-			if cfg.MaxQuestions > 0 && len(items) >= cfg.MaxQuestions {
-				break
-			}
-		}
-
-		// Run questions with concurrency.
+		// Run questions session-by-session with a barrier between sessions.
+		// Within each session, questions run concurrently.
 		concurrency := cfg.Concurrency
 		if concurrency <= 0 {
 			concurrency = 1
 		}
 
 		var (
-			mu      sync.Mutex
-			answers = make(map[string]string)
-			done    atomic.Int32
-			sem     = make(chan struct{}, concurrency)
-			wg      sync.WaitGroup
+			mu        sync.Mutex
+			answers   = make(map[string]string)
+			done      atomic.Int32
+			remaining = totalQuestions
 		)
 
-		for _, item := range items {
-			item := item
-			wg.Add(1)
-			sem <- struct{}{} // acquire slot
-			go func() {
-				defer wg.Done()
-				defer func() { <-sem }() // release slot
+		for _, sess := range questions.Sessions {
+			if remaining <= 0 {
+				break
+			}
 
-				prompt, err := buildPrompt(item.q, cond, codebaseDump, fileListing, cfg.RecallCommand)
-				if err != nil {
-					if cfg.Log != nil {
+			sessQuestions := sess.Questions
+			if cfg.MaxQuestions > 0 && int(done.Load())+len(sessQuestions) > cfg.MaxQuestions {
+				sessQuestions = sessQuestions[:cfg.MaxQuestions-int(done.Load())]
+			}
+			if len(sessQuestions) == 0 {
+				break
+			}
+
+			if cfg.Log != nil {
+				fmt.Fprintf(cfg.Log, "  -- session %d: %s (%d questions) --\n", sess.Session, sess.Name, len(sessQuestions))
+			}
+
+			sem := make(chan struct{}, concurrency)
+			var wg sync.WaitGroup
+
+			for _, q := range sessQuestions {
+				q := q
+				wg.Add(1)
+				sem <- struct{}{}
+				go func() {
+					defer wg.Done()
+					defer func() { <-sem }()
+
+					prompt, err := buildPrompt(q, cond, codebaseDump, fileListing, cfg.RecallCommand)
+					if err != nil {
 						n := done.Add(1)
-						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] prompt error: %v\n", n, totalQuestions, item.q.ID, err)
+						if cfg.Log != nil {
+							fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] prompt error: %v\n", n, totalQuestions, q.ID, err)
+						}
+						return
 					}
-					return
-				}
 
-				answer, err := cfg.Answerer.Answer(ctx, prompt)
-				n := done.Add(1)
-				if err != nil {
+					answer, err := cfg.Answerer.Answer(ctx, prompt)
+					n := done.Add(1)
+					if err != nil {
+						if cfg.Log != nil {
+							fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] answer error: %v\n", n, totalQuestions, q.ID, err)
+						}
+						return
+					}
+
+					answer = strings.TrimSpace(answer)
+					mu.Lock()
+					answers[q.ID] = answer
+					mu.Unlock()
+
+					correct := CheckAnswer(q, answer)
 					if cfg.Log != nil {
-						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] answer error: %v\n", n, totalQuestions, item.q.ID, err)
+						mark := "x"
+						if correct {
+							mark = "✓"
+						}
+						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", n, totalQuestions, q.ID, mark, answer)
 					}
-					return
-				}
+				}()
+			}
+			wg.Wait() // barrier: all questions in this session must finish before next session
 
-				answer = strings.TrimSpace(answer)
-				mu.Lock()
-				answers[item.q.ID] = answer
-				mu.Unlock()
-
-				correct := CheckAnswer(item.q, answer)
-				if cfg.Log != nil {
-					mark := "x"
-					if correct {
-						mark = "✓"
-					}
-					fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", n, totalQuestions, item.q.ID, mark, answer)
-				}
-			}()
+			remaining -= len(sessQuestions)
 		}
-		wg.Wait()
 
 		result := ScoreEffectiveness(questions, answers)
 		result.Condition = cond
