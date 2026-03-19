@@ -61,7 +61,7 @@ func TestEffectivenessRun(t *testing.T) {
 
 	t.Logf("Using answerer: %s", answerer.Name())
 
-	var logBuf bytes.Buffer
+	// Write progress to stderr so it streams live (t.Log buffers until test ends).
 	cfg := RunnerConfig{
 		Answerer:      answerer,
 		QuestionsPath: testdataPath("questions.yaml"),
@@ -69,15 +69,13 @@ func TestEffectivenessRun(t *testing.T) {
 		// RecallCommand would be: "known recall '{query}' --scope pipeliner"
 		// Skip with_memory for now — pipeliner knowledge not seeded yet.
 		Conditions: []Condition{ConditionNoMemory, ConditionFullDump},
-		Log:        &logBuf,
+		Log:        os.Stderr,
 	}
 
 	report, err := RunEffectiveness(ctx, cfg)
 	if err != nil {
 		t.Fatalf("RunEffectiveness: %v", err)
 	}
-
-	t.Logf("\n%s", logBuf.String())
 
 	var reportBuf bytes.Buffer
 	FormatEffectivenessReport(report, &reportBuf)

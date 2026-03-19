@@ -71,20 +71,28 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 		conditions = []Condition{ConditionNoMemory, ConditionWithMemory, ConditionFullDump}
 	}
 
+	// Count total questions for progress display.
+	totalQuestions := 0
+	for _, sess := range questions.Sessions {
+		totalQuestions += len(sess.Questions)
+	}
+
 	results := make(map[Condition]*EffectivenessResult)
 
 	for _, cond := range conditions {
 		if cfg.Log != nil {
-			fmt.Fprintf(cfg.Log, "\n--- Condition: %s (answerer: %s) ---\n", cond, cfg.Answerer.Name())
+			fmt.Fprintf(cfg.Log, "\n--- Condition: %s (answerer: %s) [%d questions] ---\n", cond, cfg.Answerer.Name(), totalQuestions)
 		}
 
 		answers := make(map[string]string)
+		qNum := 0
 		for _, sess := range questions.Sessions {
 			for _, q := range sess.Questions {
+				qNum++
 				prompt, err := buildPrompt(q, cond, codebaseDump, fileListing, cfg.RecallCommand)
 				if err != nil {
 					if cfg.Log != nil {
-						fmt.Fprintf(cfg.Log, "  [%s] prompt error: %v\n", q.ID, err)
+						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] prompt error: %v\n", qNum, totalQuestions, q.ID, err)
 					}
 					continue
 				}
@@ -92,7 +100,7 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 				answer, err := cfg.Answerer.Answer(ctx, prompt)
 				if err != nil {
 					if cfg.Log != nil {
-						fmt.Fprintf(cfg.Log, "  [%s] answer error: %v\n", q.ID, err)
+						fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] answer error: %v\n", qNum, totalQuestions, q.ID, err)
 					}
 					continue
 				}
@@ -106,7 +114,7 @@ func RunEffectiveness(ctx context.Context, cfg RunnerConfig) (*EffectivenessRepo
 					if correct {
 						mark = "✓"
 					}
-					fmt.Fprintf(cfg.Log, "  [%s] %s got=%q\n", q.ID, mark, answer)
+					fmt.Fprintf(cfg.Log, "  [%d/%d] [%s] %s got=%q\n", qNum, totalQuestions, q.ID, mark, answer)
 				}
 			}
 		}
