@@ -239,6 +239,7 @@ type addResult struct {
 	Scope       string             `json:"scope"`
 	Content     string             `json:"content"`
 	Deduped     bool               `json:"deduped"`
+	Hints       []string           `json:"hints,omitempty"`
 	Suggestions []suggestionResult `json:"suggestions"`
 }
 
@@ -272,11 +273,20 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 				Score:    s.Score,
 			}
 		}
+		var hints []string
+		if deduped {
+			idStr := e.ID.String()
+			hints = []string{
+				"known update " + idStr + " --content '...'",
+				"known add '<new fact>' --link elaborates:" + idStr,
+			}
+		}
 		p.printJSON(addResult{
 			ID:          e.ID.String(),
 			Scope:       e.Scope,
 			Content:     e.Content,
 			Deduped:     deduped,
+			Hints:       hints,
 			Suggestions: sugg,
 		})
 		return
@@ -289,6 +299,10 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 	fmt.Fprintf(p.w, "%-9s %s\n", label, e.ID)
 	fmt.Fprintf(p.w, "%-9s %s\n", "Scope", e.Scope)
 	fmt.Fprintf(p.w, "          %q\n", truncate(e.Content, 120))
+	if deduped {
+		fmt.Fprintf(p.w, "%-9s known update %s --content '...'\n", "Hint", e.ID)
+		fmt.Fprintf(p.w, "          known add '<new fact>' --link elaborates:%s\n", e.ID)
+	}
 	for _, s := range suggestions {
 		title := s.Entry.Title
 		if title == "" {

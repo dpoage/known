@@ -544,6 +544,13 @@ func TestRunAdd_Dedup_ShowsExistingID(t *testing.T) {
 	if !strings.Contains(got, repo.created.ID.String()) {
 		t.Errorf("output %q should contain existing entry ID", got)
 	}
+	// Design requires next-action hints on dedup so the agent knows what to do.
+	if !strings.Contains(got, "known update") {
+		t.Errorf("output %q should include 'known update' hint", got)
+	}
+	if !strings.Contains(got, "elaborates:") {
+		t.Errorf("output %q should include '--link elaborates:' hint", got)
+	}
 }
 
 func TestLevenshtein(t *testing.T) {
@@ -577,5 +584,38 @@ func TestNearestFlag_Garbage(t *testing.T) {
 	got := nearestFlag("zzzzgarbage", validAddFlags)
 	if got != "" {
 		t.Errorf("expected no suggestion for 'zzzzgarbage', got %q", got)
+	}
+}
+
+func TestNearestFlag_Source(t *testing.T) {
+	// --source is the second audit-identified invented flag.
+	// It ties on distance with "scope" but should resolve to "source-ref"
+	// (or "source-type") via the prefix tie-break, not "scope".
+	got := nearestFlag("source", validAddFlags)
+	if got == "" {
+		t.Fatal("expected a suggestion for 'source'")
+	}
+	if got == "scope" {
+		t.Errorf("nearestFlag(\"source\") = %q; should prefer a source-* flag, not scope", got)
+	}
+	if !strings.HasPrefix(got, "source") {
+		t.Errorf("nearestFlag(\"source\") = %q; want a source-* flag", got)
+	}
+}
+
+// TestRunAdd_SourceFlag_Suggestion verifies the full error path for --source.
+func TestRunAdd_SourceFlag_Suggestion(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"--source", "conversation", "fact"})
+	if err == nil {
+		t.Fatal("expected error for unknown --source flag")
+	}
+	if !strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error %q should suggest a valid flag", err.Error())
+	}
+	if strings.Contains(err.Error(), "--scope") {
+		t.Errorf("error %q should not suggest --scope for --source", err.Error())
 	}
 }

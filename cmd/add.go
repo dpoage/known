@@ -36,6 +36,11 @@ import (
 //	--link           Create edge: type:target-id (repeatable)
 func runAdd(ctx context.Context, app *App, args []string) error {
 	// Check for --batch before full flag parsing so we can delegate early.
+	// Known limitation: unquoted content containing the literal token "--batch"
+	// (e.g. `known add ... --batch ...`) will misroute to batch mode because this
+	// pre-scan runs before pflag sees the args. This is acceptable given the
+	// vanishing frequency of "--batch" appearing verbatim in stored facts; a user
+	// intending to store such content should quote the argument or use stdin.
 	for _, a := range args {
 		if a == "--batch" {
 			var filtered []string
@@ -264,31 +269,49 @@ func formatFlagError(err error, _ *flag.FlagSet) error {
 
 // nearestFlag returns the flag name from candidates with the smallest
 // Levenshtein distance to name, or "" if there is no clear nearest match.
-// The threshold scales with the input length: we suggest when the best
-// distance is less than half of the longer of (name, candidate), so a
-// 10-char input maps to a threshold of 5. This catches known synonyms like
-// --confidence → --provenance without suggesting on random garbage.
+// The threshold scales with the input length (80% of the longer string),
+// catching known synonyms like --confidence → --provenance without
+// suggesting on unrelated garbage.
+//
+// Tie-break: when multiple candidates share the minimum distance, prefer
+// any candidate that name is a prefix of (e.g. "source" → "source-ref"
+// over "scope", both at distance 4). Among prefix matches, take the
+// shortest candidate.
 func nearestFlag(name string, candidates []string) string {
-	best := ""
 	bestDist := len(name) + 1 // worse-than-worst sentinel
+	var tied []string
 	for _, c := range candidates {
 		d := levenshtein(name, c)
 		if d < bestDist {
 			bestDist = d
-			best = c
+			tied = []string{c}
+		} else if d == bestDist {
+			tied = append(tied, c)
 		}
 	}
-	if best == "" {
+	if len(tied) == 0 {
 		return ""
 	}
-	// Accept suggestion only when distance < 80% of max(len(name), len(best)).
-	// This catches known synonyms like --confidence → --provenance (dist=7, 80%
-	// of 10 = 8) without returning garbage suggestions for unrelated inputs.
+
+	// Tie-break: prefer a candidate that name is a strict prefix of.
+	best := tied[0]
+	if len(tied) > 1 {
+		for _, c := range tied {
+			if strings.HasPrefix(c, name) {
+				if !strings.HasPrefix(best, name) || len(c) < len(best) {
+					best = c
+				}
+			}
+		}
+	}
+
+	// Accept only when distance < 80% of max(len(name), len(best)).
+	// This catches audit-identified synonyms without suggesting on garbage.
 	maxLen := len(name)
 	if len(best) > maxLen {
 		maxLen = len(best)
 	}
-	threshold := (maxLen * 8) / 10 // 80% of longer string
+	threshold := (maxLen * 8) / 10
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -297,6 +320,7 @@ func nearestFlag(name string, candidates []string) string {
 	}
 	return best
 }
+
 
 // levenshtein computes the edit distance between two strings.
 func levenshtein(a, b string) int {
