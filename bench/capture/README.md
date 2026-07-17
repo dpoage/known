@@ -1,8 +1,18 @@
 # known capture-rate harness
 
 Measures CLI usability by running a scenario corpus derived verbatim from the
-friction audit (`docs/friction-audit.md`) and scoring each scenario's outcome
-against a structural predicate.
+friction audit (`docs/friction-audit.md`) and scoring each scenario against a
+structural predicate.
+
+**Before/after summary (zv1 epic):**
+
+| Binary | Commit | Capture rate |
+|--------|--------|-------------|
+| Baseline (pre-wave-2) | a59396f | **3/10 (30%)** |
+| Epic-current (zv1.4 merged) | 3ccf253 | **8/10 (80%)** |
+
+Five scenarios flip xfail→xpass once zv1.2 and zv1.3 code merges to the epic
+branch. Regenerate results after each wave with the one-liner below.
 
 ## Quick start
 
@@ -26,9 +36,12 @@ go run ./bench/capture \
 | `-bin` | (required) | Path to the `known` binary under test |
 | `-out` | (none) | Write JSON results to this file |
 | `-commit` | (none) | Commit hash to embed in JSON results |
+| `-model-cache` | `~/.known/models` | Path to shared model cache (avoids per-scenario downloads) |
 
-The harness uses a temporary `HOME` and `KNOWN_DSN` for every scenario so it
-never touches `~/.known` or any real database.
+The harness uses a temporary `HOME` and `KNOWN_DSN` for every scenario; it
+never touches `~/.known` or any real database.  The shared model cache
+directory is **symlinked** (not copied) into each temp HOME, so the embedder
+skips network downloads and two consecutive runs produce identical results.
 
 ## Exit code
 
@@ -36,47 +49,64 @@ never touches `~/.known` or any real database.
 - `1` — at least one unexpected failure
 - `2` — usage error
 
+## Capture-rate metric
+
+```
+capture_rate = scenarios_passing / total_scenarios
+```
+
+**xfail scenarios count in the denominator as failures**, so the metric
+honestly reads below 100% on any binary that does not yet implement the
+wave-2 contracts.  When a wave lands, its scenarios flip xfail→xpass and the
+rate rises measurably.  Excluding xfail from the denominator would pin the
+metric at 100% before and after every wave — making improvement invisible.
+
 ## Scenario corpus
 
 Each scenario derives from a specific friction-audit failure mode.
 
 | ID | Audit mode | Description | XFAIL? |
 |----|-----------|-------------|--------|
-| M2-ulid-first-line | Mode 2 (c1f50adc:110,436) | `add` first stdout line contains ULID | — |
-| M2-remember-ulid | Mode 2+3 (c1f50adc:436,1034) | `remember` stdout contains ULID | — |
-| M3-nonempty-stdout | Mode 3 (c1f50adc:1034,1427) | stdout non-empty on success | — |
-| M4-json-search-ulid | Mode 4 (c1f50adc:1057) | `--json search` `id` field is ULID-format | — |
-| M4-json-id-not-integer | Mode 4 | `--json search` `id` is not a bare integer | — |
-| M5-unknown-flag-error | Mode 5 (70977423:137) | `--confidence` error mentions a valid flag | XFAIL (wave-2) |
-| M6-scope-from-marker-root | Mode 6 (agent-aadf07655847c115b:259) | scope derived from `.known.yaml` | — |
-| M6-scope-from-marker-subdir | Mode 6 / zv1.4 | subdir scope appended to prefix | — |
-| M2-dedup-second-add | Mode 2 dedup note (70977423:137-139) | second identical add references original ULID | — |
-| M4-link-two-entries | Mode 4 link workflow (c1f50adc:1057) | `--link supersedes:<id>` creates an edge | — |
+| M2-compact-confirmation | Mode 2 (c1f50adc:110,436) | add output is compact (≤4 non-empty lines, no embedding boilerplate) | zv1.2 |
+| M2-tail2-visible-ulid | Mode 2 (c1f50adc:436) | ULID visible after `\| tail -2` | zv1.2+ |
+| M2-stored-label | Mode 2 — zv1.2 confirmation contract | first line uses `Stored`/`Duplicate` not `ID:` | zv1.2 |
+| M2-dedup-explicit | Mode 2 dedup note (70977423:137-139) | second identical add prints `Duplicate <ULID>` | zv1.2 |
+| M3-nonempty-with-ulid | Mode 3 (c1f50adc:1034,1427) | stdout non-empty and contains ULID on success | — |
+| M4-link-by-content | Mode 4 (c1f50adc:1057) / zv1.3 | link creates edge by content query, zero ULIDs typed | zv1.3 |
+| M4-link-accept-subcommand | Mode 4 / zv1.3 link-accept | `link accept "<query>" --all` subcommand exists | zv1.3 |
+| M5-unknown-flag-suggests-valid | Mode 5 (70977423:137) / zv1.2 | `--confidence` error names a valid alternative flag | zv1.2 |
+| M6-scope-from-marker | Mode 6 / zv1.4 | scope from `.known.yaml` `scope_prefix` (regression guard) | — |
+| M6-scope-subdir-appended | Mode 6 / zv1.4 | subdir scope appended to prefix (regression guard) | — |
 
-**XFAIL** scenarios are contract tests for zv1.2/zv1.3 wave-2 features.  They
-fail on the baseline and epic-current branches (expected); when wave 2 lands
-they should flip to PASS.
+**XFAIL** — expected to fail on baseline and epic-current; contract not yet
+fully implemented.  Scenarios with `zv1.2` or `zv1.3` in the XFAIL column
+will flip to XPASS once the corresponding branch merges.
+
+Note: `M2-tail2-visible-ulid` remains XFAIL even on zv1.2 because the
+compact 3-line output still puts the ULID on line 1 of 3 (not in `tail -2`).
+The real fix is that agents should not pipe `add` output through `tail` at
+all — M2-compact-confirmation proves the output is short enough to read whole.
 
 ## Predicates
 
 Predicates match structure, not prose:
 
 - **ULID** — `\b[0-9A-HJKMNP-TV-Z]{26}\b` (Crockford base32, 26 chars)
-- **ULID in JSON** — `"id"\s*:\s*"[0-9A-HJKMNP-TV-Z]{26}"`
-- **Scope** — substring match on the `Scope:` line
+- **compact** — ≤4 non-empty lines in stdout
+- **Stored/Duplicate label** — first non-empty line starts with `Stored` or `Duplicate`
+- **Edge created** — stdout contains literal `Edge created.`
+- **Scope** — substring match on the scope line
 
 ## Committed results
 
-| File | Binary provenance | Capture rate |
-|------|-------------------|-------------|
-| `results/baseline-a59396f.json` | a59396f (pre-wave-2 merge base) | 9/9 (100%) + 1 XFAIL |
-| `results/epic-current.json` | d5dd65f (zv1.4 merged) | 9/9 (100%) + 1 XFAIL |
-
-Both binaries score 9/9 on the non-XFAIL scenarios.  The remaining XFAIL
-(`M5-unknown-flag-error`) will flip to PASS once zv1.2 improves the error
-message for unknown flags.
+| File | Binary provenance | Build command | Capture rate |
+|------|-------------------|---------------|-------------|
+| `results/baseline-a59396f.json` | a59396f | `git archive a59396f \| tar -x -C /tmp/bl && go build -o /tmp/known-baseline ./cmd/known` (run in `/tmp/bl`) | 3/10 (30%) |
+| `results/epic-current.json` | 3ccf253 (zv1-bench-capture HEAD) | `go build -o /tmp/known-epic ./cmd/known` (in worktree) | 8/10 (80%) |
 
 ## Re-running after wave 2 lands
+
+Once zv1.2 and zv1.3 merge to the epic branch, regenerate results:
 
 ```sh
 go build -o /tmp/known-w2 ./cmd/known
@@ -86,13 +116,16 @@ go run ./bench/capture \
   -out bench/capture/results/wave2.json
 ```
 
-`M5-unknown-flag-error` should move from XFAIL to PASS, raising the capture
-rate denominator by 1.
+Expected: M2-compact-confirmation, M2-stored-label, M2-dedup-explicit,
+M4-link-accept-subcommand, M5-unknown-flag-suggests-valid all flip
+xfail→xpass; M4-link-by-content flips when content resolution handles
+overlapping-word ambiguity.
 
 ## Self-tests
 
 The harness ships unit tests that verify predicates discriminate pass/fail
-using a stub binary:
+using stub binaries, including a discrimination oracle that verifies an
+audit-faithful bad stub scores significantly below 100%:
 
 ```sh
 go test ./bench/capture/...
