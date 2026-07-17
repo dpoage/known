@@ -12,15 +12,42 @@ import (
 )
 
 // runInit implements the "known init" subcommand.
-// It writes a .known.yaml to the current directory, establishing a scope root.
+//
+// As of zv1.4, known init is OPTIONAL. Any 'known add', 'known recall', or
+// 'known search' command works without it: the project root is auto-derived by
+// walking parent directories for .git or build-system markers, and the root
+// directory name becomes the scope prefix against the system-wide
+// ~/.known/known.db. No ceremony required.
+//
+// 'known init' is kept solely for optional scaffolding: it installs Claude Code
+// skill files under .claude/ and writes a .known.yaml override template for
+// teams that want a custom DSN, a renamed scope prefix, or adjusted thresholds.
+// Running it is never a prerequisite for any other known command.
 //
 // Usage: known init [--dsn <string>] [--force] [--no-scaffold]
 func runInit(_ /* ctx */ interface{}, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `known init — optional scaffolding (NOT required to use known)
+
+Any 'known add', 'known recall', or 'known search' command works without
+running init first. The project root is auto-detected from .git or build-
+system markers, and scope is derived from the root directory name. All
+commands default to ~/.known/known.db with no setup.
+
+'known init' is useful only if you want:
+  • Claude Code skills installed under .claude/
+  • A .known.yaml override template (custom DSN, renamed scope prefix, etc.)
+
+Usage: known init [--dsn <string>] [--force] [--no-scaffold]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
 	dsn := fs.String("dsn", "", "database connection string (default: ~/.known/known.db)")
 	force := fs.Bool("force", false, "overwrite existing .known.yaml")
-	noScaffold := fs.Bool("no-scaffold", false, "skip Claude Code skill scaffolding")
-
+	noScaffold := fs.Bool("no-scaffold", false, "skip Claude Code skill scaffolding (just write .known.yaml)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
