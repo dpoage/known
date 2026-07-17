@@ -12,7 +12,17 @@ import (
 )
 
 // runInit implements the "known init" subcommand.
-// It writes a .known.yaml to the current directory, establishing a scope root.
+//
+// As of zv1.4, known init is OPTIONAL. Any 'known add', 'known recall', or
+// 'known search' command works without it: the project root is auto-derived by
+// walking parent directories for .git or build-system markers, and the root
+// directory name becomes the scope prefix against the system-wide
+// ~/.known/known.db. No ceremony required.
+//
+// 'known init' is kept solely for optional scaffolding: it installs Claude Code
+// skill files under .claude/ and writes a .known.yaml override template for
+// teams that want a custom DSN, a renamed scope prefix, or adjusted thresholds.
+// Running it is never a prerequisite for any other known command.
 //
 // Usage: known init [--dsn <string>] [--force] [--no-scaffold]
 func runInit(_ /* ctx */ interface{}, args []string) error {

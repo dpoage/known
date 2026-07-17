@@ -24,6 +24,103 @@ type projectConfig struct {
 	DefaultTTL        map[string]string `yaml:"default_ttl,omitempty"`
 }
 
+// rootMarkers lists the file/directory names that identify a project root.
+//
+// # Marker detection precedence
+//
+// Walking from cwd upward (stopping at $HOME and filesystem root), the search
+// uses a two-tier priority scheme:
+//
+//  1. VCS roots (.git as a directory or file): strongest signal. The walk stops
+//     at the first ancestor that contains a .git entry and declares it the root.
+//     Git worktrees use a .git *file* pointing to the real repo, so we accept
+//     either form. .git beats every build-system marker at any depth because VCS
+//     boundaries are the definitive unit of a project.
+//
+//  2. Build-system manifests (the remainder of this list): weaker signal. These
+//     are only consulted when no .git is found in any ancestor. Among them the
+//     nearest ancestor wins (i.e., the highest point on the path from cwd toward
+//     the root). Rationale: a monorepo may have a top-level go.mod AND a nested
+//     package.json; the nearest manifest is the most-specific project identity.
+//
+// Fallback: when neither a VCS root nor any manifest is found, findProjectRoot
+// returns the cwd itself (dir name becomes the scope prefix).
+var rootMarkers = []string{
+	// VCS — handled separately in findProjectRoot (tier 1).
+	".git",
+	// Build-system manifests — tier 2, nearest wins.
+	"go.mod",
+	"Cargo.toml",
+	"package.json",
+	"pyproject.toml",
+	"requirements.txt",
+	"CMakeLists.txt",
+	"Makefile",
+	"BUILD",
+	"BUILD.bazel",
+}
+
+// findProjectRoot walks from startDir toward the filesystem root, stopping at
+// $HOME, looking for a project root directory. See rootMarkers for the
+// full precedence definition.
+//
+// Returns the absolute path of the root directory and a boolean indicating
+// whether a marker was found. When no marker is found, startDir itself is
+// returned as the fallback root (and ok is false).
+func findProjectRoot(startDir string) (root string, ok bool) {
+	home, _ := os.UserHomeDir()
+
+	absStart, err := filepath.Abs(startDir)
+	if err != nil {
+		return startDir, false
+	}
+
+	// Tier-1 pass: walk up looking for .git. Stop at $HOME.
+	dir := absStart
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir, true
+		}
+		if dir == home {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Filesystem root.
+			break
+		}
+		dir = parent
+	}
+
+	// Tier-2 pass: build-system manifests. Walk up and record every ancestor
+	// that has a manifest; return the outermost (nearest to filesystem root)
+	// one found, which is the nearest root relative to startDir among the
+	// full ancestry chain.
+	// Actually: we want nearest to cwd (deepest in the tree), because a nested
+	// package.json inside a directory is more specific than an outer Makefile.
+	// So: first match walking from cwd upward wins.
+	manifests := rootMarkers[1:] // skip ".git"
+	dir = absStart
+	for {
+		for _, m := range manifests {
+			if _, err := os.Lstat(filepath.Join(dir, m)); err == nil {
+				return dir, true
+			}
+		}
+		if dir == home {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	// No marker found — fall back to startDir.
+	return absStart, false
+}
+
 // findProjectConfig walks up from startDir looking for a .known.yaml file.
 // Returns the file path and its parent directory if found, or empty strings if not.
 func findProjectConfig(startDir string) (filePath, dir string) {

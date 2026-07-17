@@ -248,3 +248,257 @@ default_ttl:
 		}
 	})
 }
+func TestFindProjectRoot(t *testing.T) {
+	// Suppress HOME to prevent actual home directory from affecting tests.
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	t.Run("git dir at cwd", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(root)
+		if !ok {
+			t.Error("expected ok=true for .git dir")
+		}
+		if got != root {
+			t.Errorf("root = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("git dir in ancestor", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		sub := filepath.Join(root, "pkg", "auth")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(sub)
+		if !ok {
+			t.Error("expected ok=true")
+		}
+		if got != root {
+			t.Errorf("root = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("git file (worktree) in ancestor", func(t *testing.T) {
+		root := t.TempDir()
+		// Git worktrees use a .git file, not a directory.
+		if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: ../.git/worktrees/wt"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sub := filepath.Join(root, "cmd")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(sub)
+		if !ok {
+			t.Error("expected ok=true for .git file")
+		}
+		if got != root {
+			t.Errorf("root = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("go.mod beats no marker", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/foo\ngo 1.21\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sub := filepath.Join(root, "internal")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(sub)
+		if !ok {
+			t.Error("expected ok=true for go.mod")
+		}
+		if got != root {
+			t.Errorf("root = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("git wins over deeper go.mod", func(t *testing.T) {
+		// Structure: gitroot/.git, gitroot/sub/go.mod, cwd=gitroot/sub/pkg
+		// .git is farther from cwd but git tier-1 wins.
+		gitroot := t.TempDir()
+		if err := os.Mkdir(filepath.Join(gitroot, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		submod := filepath.Join(gitroot, "sub")
+		if err := os.MkdirAll(submod, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(submod, "go.mod"), []byte("module example.com/sub\ngo 1.21\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pkg := filepath.Join(submod, "pkg")
+		if err := os.MkdirAll(pkg, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(pkg)
+		if !ok {
+			t.Error("expected ok=true")
+		}
+		// .git is at gitroot — tier-1 pass finds it first.
+		if got != gitroot {
+			t.Errorf("root = %q, want gitroot %q (git beats go.mod)", got, gitroot)
+		}
+	})
+
+	t.Run("nearest manifest wins among manifests", func(t *testing.T) {
+		// outer/Makefile and outer/inner/go.mod — cwd is outer/inner/src.
+		// Nearest to cwd is inner (has go.mod), so inner wins.
+		outer := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outer, "Makefile"), []byte("all:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inner := filepath.Join(outer, "inner")
+		if err := os.MkdirAll(inner, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(inner, "go.mod"), []byte("module example.com/inner\ngo 1.21\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(inner, "src")
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(src)
+		if !ok {
+			t.Error("expected ok=true")
+		}
+		if got != inner {
+			t.Errorf("root = %q, want inner %q (nearest manifest wins)", got, inner)
+		}
+	})
+
+	t.Run("no markers falls back to cwd", func(t *testing.T) {
+		dir := t.TempDir()
+		got, ok := findProjectRoot(dir)
+		if ok {
+			t.Error("expected ok=false when no markers found")
+		}
+		if got != dir {
+			t.Errorf("root = %q, want cwd %q", got, dir)
+		}
+	})
+
+	t.Run("package.json marker", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(root)
+		if !ok {
+			t.Error("expected ok=true for package.json")
+		}
+		if got != root {
+			t.Errorf("root = %q, want %q", got, root)
+		}
+	})
+}
+
+func TestLoadAppConfigMarkerScope(t *testing.T) {
+	// Tests the zero-config path: no .known.yaml, scope derived from marker root.
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, root string) // creates markers in root
+		cwdSubdir  string                          // relative path from root to chdir into
+		wantPrefix string                          // expected ScopePrefix (root dir name)
+		wantScope  string                          // expected DefaultScope
+	}{
+		{
+			name: "git root, cwd at root",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			// Root dir name from t.TempDir() will be something like TestLoadAppConfigMarkerScope_git_root__cwd_at_root001
+			// but we only check it's non-empty and equal to base(root).
+		},
+		{
+			name: "go.mod root, cwd in subdir",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/myapp\ngo 1.21\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			cwdSubdir: "cmd/server",
+		},
+		{
+			name: "no markers at all fallback",
+			setup: func(t *testing.T, root string) {
+				// Nothing — fallback to root itself.
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeHome := resetGlobalState(t)
+			_ = fakeHome
+
+			root := t.TempDir()
+			tt.setup(t, root)
+
+			cwd := root
+			if tt.cwdSubdir != "" {
+				cwd = filepath.Join(root, tt.cwdSubdir)
+				if err := os.MkdirAll(cwd, 0o755); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+			}
+			t.Chdir(cwd)
+
+			cfg, err := loadAppConfig(globalFlags{})
+			if err != nil {
+				t.Fatalf("loadAppConfig: %v", err)
+			}
+
+			// ScopeRoot must be set (to the marker root or cwd fallback).
+			if cfg.ScopeRoot == "" {
+				t.Error("ScopeRoot should not be empty (marker or fallback)")
+			}
+
+			// ScopePrefix must match base dir name of ScopeRoot (if valid segment).
+			wantPrefix := filepath.Base(cfg.ScopeRoot)
+			if !isValidScopeSegmentForTest(wantPrefix) {
+				wantPrefix = "" // dir name may not be a valid segment (e.g. starts with digit)
+			}
+			if cfg.ScopePrefix != wantPrefix {
+				t.Errorf("ScopePrefix = %q, want %q (base of ScopeRoot %q)", cfg.ScopePrefix, wantPrefix, cfg.ScopeRoot)
+			}
+
+			// DefaultScope must not be empty.
+			if cfg.DefaultScope == "" {
+				t.Error("DefaultScope should not be empty")
+			}
+		})
+	}
+}
+
+// isValidScopeSegmentForTest mirrors model.IsValidScopeSegment without importing model in test.
+// Duplicated to keep test self-contained.
+func isValidScopeSegmentForTest(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	c := s[0]
+	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		return false
+	}
+	for _, r := range s[1:] {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}

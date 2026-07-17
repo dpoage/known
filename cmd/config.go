@@ -55,9 +55,17 @@ func (c *AppConfig) QualifyScope(scope string) string {
 // and global config file.
 //
 // Resolution priority:
-//   - DSN: flag > env > project .known.yaml > global ~/.known/config.yaml > error
-//   - Scope default: explicit --scope flag > auto-derived from cwd > "root"
+//   - DSN: flag > env > project .known.yaml > global ~/.known/config.yaml > default ~/.known/known.db
+//   - ScopePrefix: .known.yaml scope_prefix > sanitized project-root dir name (marker-derived)
+//   - ScopeRoot: .known.yaml dir > marker-derived root > global scope_root
+//   - DefaultScope: derived from cwd relative to ScopeRoot with ScopePrefix
 //   - Other config: project .known.yaml > global config > hardcoded defaults
+//
+// .known.yaml is entirely optional. When absent, scope and DSN are derived
+// automatically: the project root is located by walking parent directories for
+// VCS/.git (highest priority) or build-system manifests (go.mod, Cargo.toml,
+// package.json, etc.), and the root directory name becomes the scope prefix.
+// Explicit flags always win; .known.yaml overrides marker-derived defaults.
 func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	cfg := &AppConfig{
 		JSON:  gf.json,
@@ -84,7 +92,7 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	// 2. Load global config via Viper.
 	loadGlobalConfig()
 
-	// 3. DSN resolution: flag > env > project .known.yaml > viper global > error.
+	// 3. DSN resolution: flag > env > project .known.yaml > viper global > default.
 	switch {
 	case gf.dsn != "":
 		cfg.DSN = gf.dsn
@@ -108,17 +116,37 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 		cfg.DSN = filepath.Join(knownDir, "known.db")
 	}
 
-	// 4. ScopeRoot: project dir > global scope_root > (absent).
+	// 4. ScopeRoot + ScopePrefix: .known.yaml dir wins; then marker-derived root;
+	//    then global scope_root; then absent (falls back to "root" scope).
+	//
+	//    When .known.yaml is absent, walk parent dirs for a project root marker
+	//    (.git, go.mod, etc.) and use the root dir name as the scope prefix.
+	//    This is the zero-config path: any project just works without 'known init'.
 	if cfg.ScopeRoot == "" {
 		if sr := viper.GetString("scope_root"); sr != "" {
 			cfg.ScopeRoot = expandHome(sr)
+			// No prefix from global scope_root — user may have set it globally.
+			if projCfg != nil {
+				cfg.ScopePrefix = projCfg.ScopePrefix
+			}
 		}
 	}
 
-	// 5. ScopePrefix + DefaultScope.
-	if projCfg != nil {
+	// 5. ScopePrefix: .known.yaml value > marker-derived dir name.
+	if projCfg != nil && projCfg.ScopePrefix != "" {
 		cfg.ScopePrefix = projCfg.ScopePrefix
+	} else if cfg.ScopeRoot == "" {
+		// No .known.yaml and no global scope_root: use marker-based detection.
+		markerRoot, _ := findProjectRoot(cwd)
+		cfg.ScopeRoot = markerRoot
+		// Derive prefix from the root dir name (sanitized to a valid scope segment).
+		dirName := filepath.Base(markerRoot)
+		if model.IsValidScopeSegment(dirName) {
+			cfg.ScopePrefix = dirName
+		}
 	}
+
+	// 6. DefaultScope from cwd relative to ScopeRoot.
 	if cfg.ScopeRoot != "" {
 		cfg.DefaultScope = deriveScope(cfg.ScopeRoot, cwd, cfg.ScopePrefix)
 	} else {

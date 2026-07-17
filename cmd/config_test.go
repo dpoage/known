@@ -223,11 +223,20 @@ func TestLoadAppConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "default scope is root when no scope root",
+			// Without .known.yaml and without a global scope_root, scope is
+			// marker-derived from the project root dir name. The cwd temp dir
+			// has no markers so findProjectRoot falls back to cwd itself; the
+			// scope prefix and default scope are derived from that dir name.
+			name: "no config file: marker-derived scope from cwd",
 			gf:   globalFlags{dsn: "postgres://test"},
 			check: func(t *testing.T, cfg *AppConfig) {
-				if cfg.DefaultScope != model.RootScope {
-					t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, model.RootScope)
+				// ScopeRoot must be set to the fallback cwd.
+				if cfg.ScopeRoot == "" {
+					t.Error("ScopeRoot should be non-empty (marker or cwd fallback)")
+				}
+				// DefaultScope must be non-empty.
+				if cfg.DefaultScope == "" {
+					t.Error("DefaultScope should not be empty")
 				}
 			},
 		},
