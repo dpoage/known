@@ -561,8 +561,10 @@ func TestSanitizeScopePrefix(t *testing.T) {
 
 func TestDSNOnlyYAMLPreservesMarkerScope(t *testing.T) {
 	// BLOCKER 2 regression: a .known.yaml with only 'dsn:' must not collapse
-	// scope to "root". The marker walk should still run and derive the prefix
-	// from the project root dir name.
+	// scope to "root". When .known.yaml has no scope_prefix, the prefix is
+	// derived from the yaml's own directory name (branch b in loadAppConfig),
+	// NOT from a marker walk. The .git here is irrelevant to prefix derivation
+	// but confirms that marker files don't interfere with yaml-sourced scope.
 	fakeHome := resetGlobalState(t)
 
 	// Use a named subdirectory so the dir name is a valid scope segment.
@@ -571,7 +573,7 @@ func TestDSNOnlyYAMLPreservesMarkerScope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Put a .git so findProjectRoot returns root as the marker root.
+	// .git present but irrelevant: prefix comes from base(ScopeRoot), not a marker walk.
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -592,8 +594,8 @@ func TestDSNOnlyYAMLPreservesMarkerScope(t *testing.T) {
 		t.Errorf("DSN = %q, want postgres://test", cfg.DSN)
 	}
 
-	// ScopePrefix must be "myapp" — derived from root dir name via markers,
-	// not collapsed to empty just because .known.yaml has no scope_prefix.
+	// ScopePrefix must be "myapp" — derived from base(ScopeRoot) because
+	// .known.yaml exists but has no scope_prefix (branch b, not a marker walk).
 	if cfg.ScopePrefix != "myapp" {
 		t.Errorf("ScopePrefix = %q, want %q", cfg.ScopePrefix, "myapp")
 	}

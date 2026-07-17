@@ -197,6 +197,22 @@ func TestLoadAppConfig(t *testing.T) {
 			},
 		},
 		{
+			// Regression: global scope_root must NOT gain a scope prefix from
+			// base(scope_root). Container-style global configs supply their own
+			// scope hierarchy; auto-deriving a prefix from the root dir name
+			// would silently re-scope existing data (behaviour change vs main).
+			name:       "global scope_root keeps empty prefix (no auto-derivation)",
+			globalYAML: "dsn: postgres://test\nscope_root: /tmp/projects\n",
+			check: func(t *testing.T, cfg *AppConfig) {
+				if cfg.ScopeRoot != "/tmp/projects" {
+					t.Errorf("ScopeRoot = %q, want /tmp/projects", cfg.ScopeRoot)
+				}
+				if cfg.ScopePrefix != "" {
+					t.Errorf("ScopePrefix = %q, want empty (global scope_root must not auto-derive prefix)", cfg.ScopePrefix)
+				}
+			},
+		},
+		{
 			name: "scope root tilde expansion via global config",
 			globalYAML: func() string {
 				return "dsn: postgres://test\nscope_root: ~/projects\n"

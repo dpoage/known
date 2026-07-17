@@ -127,25 +127,30 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	// 5. ScopePrefix + marker-derived ScopeRoot.
 	//
 	// Precedence: .known.yaml scope_prefix > sanitized dir name of ScopeRoot.
-	// When scope_prefix is absent, the project root dir name is sanitized and
-	// used as the prefix. The source of ScopeRoot depends on what was found:
-	//   a) .known.yaml present: ScopeRoot already set from yaml dir; use its
-	//      base name. No additional marker walk needed (yaml established root).
-	//   b) No .known.yaml and no global scope_root: walk for markers to find
-	//      root; use that root's base name and set ScopeRoot.
-	//   c) Global scope_root set: ScopeRoot already set; use its base name.
+	// The source of ScopeRoot determines whether a prefix is auto-derived:
 	//
-	// A DSN-only .known.yaml must not silently collapse scope to "root": the
-	// prefix comes from the yaml's own directory name, not from "root".
-	if projCfg != nil && projCfg.ScopePrefix != "" {
-		// Explicit override in .known.yaml wins outright.
+	//   a) .known.yaml present and has scope_prefix → use it (explicit override).
+	//   b) .known.yaml present but NO scope_prefix → sanitize base(yaml dir).
+	//      A DSN-only .known.yaml must not silently collapse to "root"; the
+	//      prefix comes from the yaml's own directory name.
+	//   c) Global scope_root (from ~/.known/config.yaml) → NO auto-derived
+	//      prefix. This preserves main-branch behaviour: container-style global
+	//      roots supply their own scope via the existing scope hierarchy; adding
+	//      a prefix from base(scope_root) would silently re-scope existing data.
+	//   d) No ScopeRoot yet → walk for project markers, set ScopeRoot from the
+	//      found root, and sanitize its base name as prefix.
+	switch {
+	case projCfg != nil && projCfg.ScopePrefix != "":
+		// (a) Explicit override in .known.yaml wins outright.
 		cfg.ScopePrefix = projCfg.ScopePrefix
-	} else if cfg.ScopeRoot != "" {
-		// ScopeRoot is known (from .known.yaml or global config); derive prefix
-		// from that dir's name. No marker walk needed — root is already fixed.
+	case projCfg != nil:
+		// (b) .known.yaml present but no scope_prefix: derive from yaml dir.
 		cfg.ScopePrefix = sanitizeScopePrefix(filepath.Base(cfg.ScopeRoot))
-	} else {
-		// No ScopeRoot yet: walk for project markers to find the root.
+	case cfg.ScopeRoot != "":
+		// (c) Global scope_root: preserve empty prefix (no auto-derivation).
+		// cfg.ScopePrefix remains "".
+	default:
+		// (d) No .known.yaml, no global scope_root: marker walk + sanitize.
 		markerRoot, _ := findProjectRoot(cwd)
 		cfg.ScopeRoot = markerRoot
 		cfg.ScopePrefix = sanitizeScopePrefix(filepath.Base(markerRoot))
