@@ -1,6 +1,6 @@
 ---
 description: Walk a codebase and store curated architectural knowledge
-argument-hint: [path] [--scope <prefix>] [--depth <shallow|standard|deep>]
+argument-hint: "[path] [--scope <prefix>] [--depth <shallow|standard|deep>]"
 ---
 
 Systematically analyze a codebase and store high-signal architectural knowledge

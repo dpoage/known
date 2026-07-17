@@ -51,9 +51,9 @@ markers and the scope is derived from the root directory name. All data goes
 to `~/.known/known.db` by default.
 
 ```bash
-# Store a fact — works immediately, no init needed
-known add 'The API uses JWT tokens with RS256 signing' \
-  --source-type conversation --confidence verified
+# Store a fact — works immediately, no init needed; no quotes required
+known add The API uses JWT tokens with RS256 signing \
+  --source-type conversation --provenance verified
 
 # Recall knowledge (LLM-optimized plain text output)
 known recall 'authentication'
