@@ -8,7 +8,9 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/dpoage/known/embed"
 	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/query"
 )
 
 func runLink(ctx context.Context, app *App, args []string) error {
@@ -31,15 +33,15 @@ func runLink(ctx context.Context, app *App, args []string) error {
 		for i, t := range model.PredefinedEdgeTypes() {
 			types[i] = string(t)
 		}
-		return fmt.Errorf("usage: known link <from> <to> [--type <edge-type>]\n\n" +
-			"Create a directed edge: from → to.\n" +
-			"Arguments can be entry IDs (ULIDs) or content queries.\n\n" +
-			"Subcommands:\n" +
-			"  known link accept <entry-ref> [--all | 1 2 ...]   accept suggested links\n\n" +
-			"Edge types: %s\n\n" +
-			"Examples:\n" +
-			"  known link 'renderer architecture' 'graphics pipeline'\n" +
-			"  known link 01ABC 01DEF --type elaborates\n" +
+		return fmt.Errorf("usage: known link <from> <to> [--type <edge-type>]\n\n"+
+			"Create a directed edge: from → to.\n"+
+			"Arguments can be entry IDs (ULIDs) or content queries.\n\n"+
+			"Subcommands:\n"+
+			"  known link accept <entry-ref> [--all | 1 2 ...]   accept suggested links\n\n"+
+			"Edge types: %s\n\n"+
+			"Examples:\n"+
+			"  known link 'renderer architecture' 'graphics pipeline'\n"+
+			"  known link 01ABC 01DEF --type elaborates\n"+
 			"  known link accept 'renderer architecture' 1 2",
 			strings.Join(types, ", "))
 	}
@@ -100,6 +102,8 @@ func runLink(ctx context.Context, app *App, args []string) error {
 // It recomputes the top-K suggestions for the given entry (stateless — no
 // suggestion store required) and creates edges for the accepted indices.
 // Accepted indices are 1-based to match the display in `known add` output.
+// Already-linked entries are excluded from suggestions (SuggestLinks handles
+// this), so repeat accept is idempotent.
 //
 // Examples:
 //
@@ -125,7 +129,12 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 			"  known link accept 01KJ... 2")
 	}
 
-	// Resolve the source entry.
+	// Ensure the engine is ready before resolving (resolution may need it).
+	if err := ensureEngine(ctx, app); err != nil {
+		return fmt.Errorf("init engine: %w", err)
+	}
+
+	// Resolve the source entry using the confident resolver.
 	entryID, err := resolveEntry(ctx, app, fs.Arg(0))
 	if err != nil {
 		return fmt.Errorf("entry: %w", err)
@@ -134,11 +143,6 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 	entry, err := app.Entries.Get(ctx, entryID)
 	if err != nil {
 		return fmt.Errorf("get entry %s: %w", entryID, err)
-	}
-
-	// Ensure the engine is ready (lazy-init embedder if needed).
-	if err := ensureEngine(ctx, app); err != nil {
-		return fmt.Errorf("init engine: %w", err)
 	}
 
 	const defaultK = 5
@@ -167,7 +171,11 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 			for i, s := range suggestions {
 				app.Printer.PrintMessage("  %d. [%s] %s", i+1, s.EdgeType, formatCandidate(s.Entry))
 			}
-			app.Printer.PrintMessage("Specify indices or --all: known link accept '%s' 1 2", entry.Content[:min(40, len(entry.Content))])
+			snip := entry.Content
+			if len(snip) > 40 {
+				snip = snip[:40]
+			}
+			app.Printer.PrintMessage("Specify indices or --all: known link accept '%s' 1 2", snip)
 			return fmt.Errorf("no indices specified; use --all or provide indices (1-%d)", len(suggestions))
 		}
 		for _, arg := range idxArgs {
@@ -179,7 +187,7 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 		}
 	}
 
-	// Override edge type if requested.
+	// Validate override edge type upfront.
 	var overrideType model.EdgeType
 	if *edgeType != "" {
 		overrideType = model.EdgeType(*edgeType)
@@ -200,6 +208,25 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 		if overrideType != "" {
 			et = overrideType
 		}
+
+		// Idempotency check: skip if this (from, to, type) already exists.
+		existing, err := app.Edges.EdgesBetween(ctx, entryID, s.Entry.ID)
+		if err != nil {
+			fmt.Fprintf(app.Stderr, "warning: check existing edges %s → %s: %v\n", entryID, s.Entry.ID, err)
+			continue
+		}
+		alreadyLinked := false
+		for _, ex := range existing {
+			if ex.Type == et {
+				alreadyLinked = true
+				break
+			}
+		}
+		if alreadyLinked {
+			app.Printer.PrintMessage("Already linked → %s [%s] (skipped)", formatCandidate(s.Entry), et)
+			continue
+		}
+
 		edge := model.NewEdge(entryID, s.Entry.ID, et)
 		if err := app.Edges.Create(ctx, &edge); err != nil {
 			// Non-fatal: report but continue with remaining indices.
@@ -211,19 +238,27 @@ func runLinkAccept(ctx context.Context, app *App, args []string) error {
 	}
 
 	if created == 0 {
-		return fmt.Errorf("no edges created (all failed or already existed)")
+		return fmt.Errorf("no edges created (all already linked or failed)")
 	}
 	app.Printer.PrintMessage("%d edge(s) created.", created)
 	return nil
 }
 
-// ensureEngine initializes app.Engine and app.Embedder if not already set.
-// This is the same lazy-init pattern used by searchSemantic in resolve.go.
+// ensureEngine initializes app.Engine and app.Embedder if not already set,
+// using the same lazy-init pattern as searchSemanticScored in resolve.go.
+// Returns nil immediately if the engine is already available.
 func ensureEngine(ctx context.Context, app *App) error {
 	if app.Engine != nil {
 		return nil
 	}
-	return fmt.Errorf("embedder unavailable: not configured (set KNOWN_EMBEDDER or run 'known init')")
+	embedCfg := embed.LoadConfig()
+	embedder, err := embed.NewEmbedder(embedCfg)
+	if err != nil {
+		return fmt.Errorf("embedder unavailable: %w", err)
+	}
+	app.Embedder = embedder
+	app.Engine = query.New(app.Entries, app.Edges, embedder)
+	return nil
 }
 
 // parseMeta parses a comma-separated list of key=value pairs into Metadata.
@@ -251,4 +286,3 @@ func parseMeta(s string) (model.Metadata, error) {
 	}
 	return m, nil
 }
-
