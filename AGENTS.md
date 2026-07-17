@@ -7,9 +7,9 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+bd update <id> --claim  # Claim work
+bd close <id> --reason "..."  # Complete work
+bd export -o .beads/issues.jsonl  # Refresh tracked JSONL before committing
 ```
 
 ## Landing the Plane (Session Completion)
@@ -23,8 +23,9 @@ bd sync               # Sync with git
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
+   bd export -o .beads/issues.jsonl
+   git add .beads/issues.jsonl && git commit -m "Update beads export"
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
