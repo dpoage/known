@@ -6,6 +6,9 @@ LLM agents lose context between sessions. Decisions, environment details, codeba
 conventions, user preferences — all gone after compaction. **known** is a local
 knowledge graph that persists across sessions, so agents stop re-learning the same things.
 
+Project identity, design principles, non-goals, and current goals live in
+[docs/IDENTITY.md](docs/IDENTITY.md).
+
 ## How it works
 
 ```
