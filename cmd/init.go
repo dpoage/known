@@ -27,10 +27,27 @@ import (
 // Usage: known init [--dsn <string>] [--force] [--no-scaffold]
 func runInit(_ /* ctx */ interface{}, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `known init — optional scaffolding (NOT required to use known)
+
+Any 'known add', 'known recall', or 'known search' command works without
+running init first. The project root is auto-detected from .git or build-
+system markers, and scope is derived from the root directory name. All
+commands default to ~/.known/known.db with no setup.
+
+'known init' is useful only if you want:
+  • Claude Code skills installed under .claude/
+  • A .known.yaml override template (custom DSN, renamed scope prefix, etc.)
+
+Usage: known init [--dsn <string>] [--force] [--no-scaffold]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
 	dsn := fs.String("dsn", "", "database connection string (default: ~/.known/known.db)")
 	force := fs.Bool("force", false, "overwrite existing .known.yaml")
-	noScaffold := fs.Bool("no-scaffold", false, "skip Claude Code skill scaffolding")
-
+	noScaffold := fs.Bool("no-scaffold", false, "skip Claude Code skill scaffolding (just write .known.yaml)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

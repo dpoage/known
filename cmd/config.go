@@ -22,8 +22,8 @@ type AppConfig struct {
 	RecallExpandDepth int                                // default 0
 	RecallRecency     float64                            // default 0.1
 	DefaultTTL        map[model.SourceType]time.Duration // source type -> auto-TTL
-	ScopeRoot         string                             // directory containing .known.yaml (or from global scope_root)
-	ScopePrefix       string                             // project scope prefix from .known.yaml
+	ScopeRoot         string                             // project root dir: .known.yaml dir, marker-derived, or global scope_root
+	ScopePrefix       string                             // scope prefix: .known.yaml scope_prefix, else sanitized marker-root dir name
 	DefaultScope      string                             // auto-derived scope from cwd relative to ScopeRoot
 }
 
@@ -56,16 +56,17 @@ func (c *AppConfig) QualifyScope(scope string) string {
 //
 // Resolution priority:
 //   - DSN: flag > env > project .known.yaml > global ~/.known/config.yaml > default ~/.known/known.db
-//   - ScopePrefix: .known.yaml scope_prefix > sanitized project-root dir name (marker-derived)
+//   - ScopePrefix: .known.yaml scope_prefix > sanitizeScopePrefix(marker-root dir name)
 //   - ScopeRoot: .known.yaml dir > marker-derived root > global scope_root
 //   - DefaultScope: derived from cwd relative to ScopeRoot with ScopePrefix
 //   - Other config: project .known.yaml > global config > hardcoded defaults
 //
-// .known.yaml is entirely optional. When absent, scope and DSN are derived
-// automatically: the project root is located by walking parent directories for
-// VCS/.git (highest priority) or build-system manifests (go.mod, Cargo.toml,
-// package.json, etc.), and the root directory name becomes the scope prefix.
-// Explicit flags always win; .known.yaml overrides marker-derived defaults.
+// .known.yaml is entirely optional. When absent (or present but without
+// scope_prefix), scope is derived by walking parent directories for VCS/.git
+// (highest priority) or build-system manifests (go.mod, Cargo.toml, etc.),
+// then sanitizing the root directory name into a valid scope segment
+// (invalid chars → '-', leading digits stripped). Explicit flags always win;
+// .known.yaml scope_prefix overrides the marker-derived name.
 func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 	cfg := &AppConfig{
 		JSON:  gf.json,
@@ -116,34 +117,38 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 		cfg.DSN = filepath.Join(knownDir, "known.db")
 	}
 
-	// 4. ScopeRoot + ScopePrefix: .known.yaml dir wins; then marker-derived root;
-	//    then global scope_root; then absent (falls back to "root" scope).
-	//
-	//    When .known.yaml is absent, walk parent dirs for a project root marker
-	//    (.git, go.mod, etc.) and use the root dir name as the scope prefix.
-	//    This is the zero-config path: any project just works without 'known init'.
+	// 4. ScopeRoot: .known.yaml dir (already set above) > global scope_root.
 	if cfg.ScopeRoot == "" {
 		if sr := viper.GetString("scope_root"); sr != "" {
 			cfg.ScopeRoot = expandHome(sr)
-			// No prefix from global scope_root — user may have set it globally.
-			if projCfg != nil {
-				cfg.ScopePrefix = projCfg.ScopePrefix
-			}
 		}
 	}
 
-	// 5. ScopePrefix: .known.yaml value > marker-derived dir name.
+	// 5. ScopePrefix + marker-derived ScopeRoot.
+	//
+	// Precedence: .known.yaml scope_prefix > sanitized dir name of ScopeRoot.
+	// When scope_prefix is absent, the project root dir name is sanitized and
+	// used as the prefix. The source of ScopeRoot depends on what was found:
+	//   a) .known.yaml present: ScopeRoot already set from yaml dir; use its
+	//      base name. No additional marker walk needed (yaml established root).
+	//   b) No .known.yaml and no global scope_root: walk for markers to find
+	//      root; use that root's base name and set ScopeRoot.
+	//   c) Global scope_root set: ScopeRoot already set; use its base name.
+	//
+	// A DSN-only .known.yaml must not silently collapse scope to "root": the
+	// prefix comes from the yaml's own directory name, not from "root".
 	if projCfg != nil && projCfg.ScopePrefix != "" {
+		// Explicit override in .known.yaml wins outright.
 		cfg.ScopePrefix = projCfg.ScopePrefix
-	} else if cfg.ScopeRoot == "" {
-		// No .known.yaml and no global scope_root: use marker-based detection.
+	} else if cfg.ScopeRoot != "" {
+		// ScopeRoot is known (from .known.yaml or global config); derive prefix
+		// from that dir's name. No marker walk needed — root is already fixed.
+		cfg.ScopePrefix = sanitizeScopePrefix(filepath.Base(cfg.ScopeRoot))
+	} else {
+		// No ScopeRoot yet: walk for project markers to find the root.
 		markerRoot, _ := findProjectRoot(cwd)
 		cfg.ScopeRoot = markerRoot
-		// Derive prefix from the root dir name (sanitized to a valid scope segment).
-		dirName := filepath.Base(markerRoot)
-		if model.IsValidScopeSegment(dirName) {
-			cfg.ScopePrefix = dirName
-		}
+		cfg.ScopePrefix = sanitizeScopePrefix(filepath.Base(markerRoot))
 	}
 
 	// 6. DefaultScope from cwd relative to ScopeRoot.

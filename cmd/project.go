@@ -92,13 +92,10 @@ func findProjectRoot(startDir string) (root string, ok bool) {
 		dir = parent
 	}
 
-	// Tier-2 pass: build-system manifests. Walk up and record every ancestor
-	// that has a manifest; return the outermost (nearest to filesystem root)
-	// one found, which is the nearest root relative to startDir among the
-	// full ancestry chain.
-	// Actually: we want nearest to cwd (deepest in the tree), because a nested
-	// package.json inside a directory is more specific than an outer Makefile.
-	// So: first match walking from cwd upward wins.
+	// Tier-2 pass: build-system manifests. Walk from cwd upward; the first
+	// directory that contains any manifest wins (nearest to cwd). Rationale:
+	// a nested go.mod is the more-specific project identity than an outer
+	// Makefile in a multi-language tree.
 	manifests := rootMarkers[1:] // skip ".git"
 	dir = absStart
 	for {
@@ -208,4 +205,48 @@ func deriveScope(scopeRoot, cwd, prefix string) string {
 		return prefix + "." + relScope
 	}
 	return relScope
+}
+
+// sanitizeScopePrefix converts a directory name into a valid scope segment.
+// Transformation rules (applied in order):
+//  1. Any character that is not alphanumeric, '-', or '_' is replaced with '-'.
+//     This handles dotted names like "my.app.v1" → "my-app-v1" and version
+//     suffixes like "project@2.0" → "project-2-0".
+//  2. Leading characters that are not ASCII letters are stripped. This handles
+//     digit-first names like "2048game" → "game", or "-foo" → "foo".
+//  3. Trailing '-' or '_' are stripped.
+//  4. If the result is empty or still fails model.IsValidScopeSegment, returns "".
+//     Callers that receive "" should fall back to model.RootScope.
+func sanitizeScopePrefix(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	// Step 1: replace invalid chars with '-'.
+	b := make([]byte, 0, len(name))
+	for i := range len(name) {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_' {
+			b = append(b, c)
+		} else {
+			b = append(b, '-')
+		}
+	}
+
+	// Step 2: strip leading non-letter characters.
+	for len(b) > 0 && !((b[0] >= 'a' && b[0] <= 'z') || (b[0] >= 'A' && b[0] <= 'Z')) {
+		b = b[1:]
+	}
+
+	// Step 3: strip trailing separators.
+	for len(b) > 0 && (b[len(b)-1] == '-' || b[len(b)-1] == '_') {
+		b = b[:len(b)-1]
+	}
+
+	result := string(b)
+	if !model.IsValidScopeSegment(result) {
+		return ""
+	}
+	return result
 }

@@ -133,7 +133,7 @@ Global Flags:
   --quiet           Suppress non-essential output
 
 Commands:
-  init       Initialize a scope root (.known.yaml) in the current directory
+  init       Optional scaffolding: install Claude Code skills and write a .known.yaml override template
   add        Add a new knowledge entry (use --batch for bulk JSONL from stdin)
   remember   Alias for add
   update     Update an existing entry

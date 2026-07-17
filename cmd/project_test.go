@@ -401,6 +401,34 @@ func TestFindProjectRoot(t *testing.T) {
 			t.Errorf("root = %q, want %q", got, root)
 		}
 	})
+
+	t.Run(".git above HOME is not selected", func(t *testing.T) {
+		// Create a fake HOME and place .git ABOVE it.
+		// The walk must stop at HOME and not pick up that .git.
+		aboveHome := t.TempDir()
+		if err := os.Mkdir(filepath.Join(aboveHome, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// fakeHome is a child of aboveHome — HOME is below the .git.
+		fakeHome2 := filepath.Join(aboveHome, "users", "alice")
+		if err := os.MkdirAll(fakeHome2, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", fakeHome2)
+		cwd := filepath.Join(fakeHome2, "projects", "myapp")
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := findProjectRoot(cwd)
+		// Must NOT return aboveHome (the .git above HOME).
+		if ok {
+			t.Errorf("expected ok=false (walk stopped at HOME), got root=%q", got)
+		}
+		// Fallback should be cwd itself.
+		if got != cwd {
+			t.Errorf("fallback root = %q, want cwd %q", got, cwd)
+		}
+	})
 }
 
 func TestLoadAppConfigMarkerScope(t *testing.T) {
@@ -468,13 +496,10 @@ func TestLoadAppConfigMarkerScope(t *testing.T) {
 				t.Error("ScopeRoot should not be empty (marker or fallback)")
 			}
 
-			// ScopePrefix must match base dir name of ScopeRoot (if valid segment).
-			wantPrefix := filepath.Base(cfg.ScopeRoot)
-			if !isValidScopeSegmentForTest(wantPrefix) {
-				wantPrefix = "" // dir name may not be a valid segment (e.g. starts with digit)
-			}
+			// ScopePrefix must match the sanitized base dir name of the marker root.
+			wantPrefix := sanitizeScopePrefix(filepath.Base(cfg.ScopeRoot))
 			if cfg.ScopePrefix != wantPrefix {
-				t.Errorf("ScopePrefix = %q, want %q (base of ScopeRoot %q)", cfg.ScopePrefix, wantPrefix, cfg.ScopeRoot)
+				t.Errorf("ScopePrefix = %q, want %q (sanitized base of ScopeRoot %q)", cfg.ScopePrefix, wantPrefix, cfg.ScopeRoot)
 			}
 
 			// DefaultScope must not be empty.
@@ -501,4 +526,80 @@ func isValidScopeSegmentForTest(s string) bool {
 		}
 	}
 	return true
+}
+
+func TestSanitizeScopePrefix(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain valid", "myproject", "myproject"},
+		{"hyphenated", "my-project", "my-project"},
+		{"underscore", "my_project", "my_project"},
+		{"dotted name", "my.app.v1", "my-app-v1"},
+		{"digit-first", "2048game", "game"},
+		{"digit-first complex", "123-foo", "foo"},
+		{"leading dot hidden dir", ".hidden", "hidden"},
+		{"all invalid chars", "...", ""},
+		{"version tag", "v2.0.1", "v2-0-1"},
+		{"mixed special", "project@v2", "project-v2"},
+		{"trailing separator", "foo-", "foo"},
+		{"empty", "", ""},
+		{"only digits", "123", ""},
+		{"single letter", "x", "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeScopePrefix(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeScopePrefix(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDSNOnlyYAMLPreservesMarkerScope(t *testing.T) {
+	// BLOCKER 2 regression: a .known.yaml with only 'dsn:' must not collapse
+	// scope to "root". The marker walk should still run and derive the prefix
+	// from the project root dir name.
+	fakeHome := resetGlobalState(t)
+
+	// Use a named subdirectory so the dir name is a valid scope segment.
+	root := filepath.Join(fakeHome, "myapp")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put a .git so findProjectRoot returns root as the marker root.
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a DSN-only .known.yaml (no scope_prefix field).
+	yamlContent := "dsn: postgres://test\n"
+	if err := os.WriteFile(filepath.Join(root, projectConfigFile), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	cfg, err := loadAppConfig(globalFlags{})
+	if err != nil {
+		t.Fatalf("loadAppConfig: %v", err)
+	}
+
+	// DSN must come from yaml.
+	if cfg.DSN != "postgres://test" {
+		t.Errorf("DSN = %q, want postgres://test", cfg.DSN)
+	}
+
+	// ScopePrefix must be "myapp" — derived from root dir name via markers,
+	// not collapsed to empty just because .known.yaml has no scope_prefix.
+	if cfg.ScopePrefix != "myapp" {
+		t.Errorf("ScopePrefix = %q, want %q", cfg.ScopePrefix, "myapp")
+	}
+
+	// DefaultScope must reflect the prefix (cwd == root so no subdir component).
+	if cfg.DefaultScope != "myapp" {
+		t.Errorf("DefaultScope = %q, want %q", cfg.DefaultScope, "myapp")
+	}
 }
