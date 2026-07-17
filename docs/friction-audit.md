@@ -12,9 +12,9 @@
 
 | Harness | Storage | Sessions examined |
 |---------|---------|-------------------|
-| Claude Code | `~/.claude/projects/**/*.jsonl` | 236 JSONL files across 8 project dirs |
-| opencode | `~/.local/share/opencode/opencode.db` (SQLite `message` table) | All rows |
-| omp/Pi | `~/.omp/logs/*.log` (structured JSON log lines) | 4 log files (2026-06-16 through 2026-07-17) |
+| Claude Code | `~/.claude/projects/**/*.jsonl` | 236 JSONL files across 9 project dirs |
+| opencode | `~/.local/share/opencode/opencode.db` (SQLite `message` + `part` tables) | All rows |
+| omp/Pi | `~/.omp/logs/*.log{,.gz}` (structured JSON log lines) | 6 log files (2026-06-16 through 2026-07-17) |
 
 ### Search patterns
 
@@ -25,20 +25,44 @@ known recall | known init | /known: | known forget | known update
 
 Matching JSONL lines were parsed with Python (`json.loads`); the surrounding
 ±4 lines were read to capture tool results and agent follow-up. SQLite rows
-were queried with `LIKE '%known add%' OR …`. Log files were grepped directly.
+were queried with `LIKE '%known add%' OR …` against both `message.data` and
+`part.data`. Log files were grepped directly.
+
+### Ranking rule
+
+Modes are ranked first by frequency (incident count across the corpus), then by
+severity where counts are equal. "Count" for structural failures (plugin broken,
+opencode zero) reflects the number of sessions affected rather than per-command
+occurrences.
 
 ### Corpus summary
 
-- **Claude Code:** 7 of 236 JSONL files contained any known pattern. All 7 were
-  in the `services-runtime` project (the only project observed to have `known
-  init` run). Zero matches in 8 other project directories.
-- **opencode:** 0 messages in the `message` table matched. known is not
-  installed or never invoked in any opencode session on this machine.
-- **omp/Pi:** 0 known-command log lines. However, every session log contains
-  a known-plugin YAML parse failure (see Mode 7 below).
+**Claude Code:** The `services-runtime` project is the only project in the corpus
+with `known init` run; 56 session files exist for it, split as 7 top-level
+sessions + 49 subagent transcripts. Across all 236 JSONL files in 9 project
+directories, 4 files contain real `known` invocations (3 top-level sessions + 1
+subagent transcript, all in `services-runtime`). The other 6 project directories
+(`known`, `niri-config`, `nixos-config`, `shimmy`, `bugbot`, `meify`,
+`go-research`) show zero real invocations; the `known/` project directory
+contains only static `memory/` markdown snapshots, not session JSONL files with
+tool calls.
 
-Total captured incidents: **17** across **4 JSONL files** (1 main session,
-1 subagent session, 2 other sessions) — all in Claude Code, all in one project.
+Total captured incidents: **17** across **4 JSONL files** (3 top-level sessions
++ 1 subagent transcript).
+
+**opencode:** The `message` table returned 0 rows matching any known pattern.
+The `part` table (where opencode stores message content chunks) returned 15
+rows, all of which were skill-template text (`/recall`, `/remember` skill
+guidance injected at session start) — zero real invocations. `known` is not
+installed in any active project or is not surfaced to agents in opencode.
+
+**omp/Pi:** 0 `known` command invocations across all log files. The known
+marketplace plugin (`known/0.2.0/commands/discover.md`) fails YAML frontmatter
+parsing on every session start. The error appears in every available log from
+2026-07-05 onward (earliest log with the error; the plugin directory mtime is
+2026-03-29, but logs prior to 2026-07-05 are compressed and show the same
+pattern from the first preserved entry). Zero `/known:` slash commands invoked
+in any omp session.
 
 ---
 
@@ -46,11 +70,18 @@ Total captured incidents: **17** across **4 JSONL files** (1 main session,
 
 ### Mode 1 — Missed capture (the dominant problem)
 
-**Count: 52 sessions (93% of 56 session files in the instrumented project)**
+**Count: 4 of 7 top-level sessions missed (57% human miss rate); 52 of 56
+total session files (93%) have zero known calls**
+
+The 56-file denominator = 7 top-level sessions + 49 subagent transcripts.
+The 4 files with real invocations are: `c1f50adc` (main session), `449c7ca4`,
+`70977423`, and `agent-aadf07655847c115b` (subagent of c1f50adc). The other
+4 top-level sessions (`a5405027`, `ce3a06d8`, `29112752`, `f2dd5ccd`) and all
+48 remaining subagent transcripts have zero known calls.
 
 The agent performed substantive work — architectural decisions, root-cause
 diagnoses, code design choices — and stored nothing. 105 fact-bearing assistant
-messages were identified in one sampled 4.5 MB session (a5405027) that had zero
+messages were identified in one sampled 4.5 MB session (`a5405027`) with zero
 known invocations.
 
 **Evidence — session a5405027 (4.5 MB, zero known calls):**
@@ -128,6 +159,18 @@ Embedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)
 The agent cannot confirm: (a) what was stored, (b) which ID was assigned, (c)
 whether dedup fired, or (d) what related entries exist. The output teaches
 nothing and suggests no next action.
+
+**Dedup note:** No dedup collision (`ErrDuplicateContent`) was observed in any
+session in the corpus. The two confirmed duplicate-content scenarios — a
+CORRECTION entry stored alongside (not linked to) its superseded original, and
+`known remember` run twice for `known remember "Three feature epics..."` in
+session 70977423 (lines 137 and 139, retried after the `--confidence` error) —
+did not trigger a dedup signal. The retry in 70977423 stored successfully,
+implying either the content differed slightly between attempts or dedup was not
+reached. No evidence that dedup behavior is a surprise to agents; the failure
+is the absence of an ID/success confirmation, not unexpected dedup rejections.
+zv1.2 should nonetheless define the dedup surface: should a near-duplicate
+trigger a warning with the matching entry's ID?
 
 ---
 
@@ -225,6 +268,12 @@ The error message names the flag but does not list valid flags or link to help.
 An agent mid-task will retry, but the friction adds a round-trip and a failed
 tool call.
 
+**Quoting/escaping note:** No quoting or shell-escaping failures were observed
+across the 4 invocation-bearing session files. All `known remember` commands
+used double-quoted multi-line strings (up to ~500 chars) with embedded em-dashes,
+parentheses, and technical notation; none produced shell errors related to
+quoting. The quoted-argument form appears robust in the bash tool context.
+
 ---
 
 ### Mode 6 — Scope confusion / wrong scope in worktree
@@ -269,24 +318,27 @@ The `|| true` suppresses any error. The agent never knew if this stored or faile
 
 ### Mode 7 — Plugin YAML parse failure in omp/Pi (every session)
 
-**Count: every omp session (structural, not per-invocation)**
+**Count: every omp session since at least 2026-07-05 (earliest log with the error)**
 
 The known marketplace plugin (`known/0.2.0/commands/discover.md`) fails YAML
-frontmatter parsing on every omp session start. The plugin is silently broken;
-agents in omp cannot use `/known:` slash commands.
+frontmatter parsing on every omp session start. The plugin was installed
+2026-03-29 (directory mtime); the YAML parse failure appears in every available
+log from 2026-07-05 onward. The plugin is silently broken; agents in omp cannot
+use `/known:` slash commands. Zero known invocations in any omp log.
 
-**Evidence — omp.2026-07-11.log:**
+**Evidence — omp.2026-07-05.log.gz (earliest confirmed occurrence):**
 
 ```json
-{"timestamp":"2026-07-11T09:35:10.602-06:00","level":"warn","pid":603198,
+{"timestamp":"2026-07-05T13:53:46.728-06:00","level":"warn","pid":10862,
  "message":"Failed to parse YAML frontmatter",
  "err":"Failed to parse YAML frontmatter (/home/dustin/.claude/plugins/cache/
   known-marketplace/known/0.2.0/commands/discover.md): YAML Parse error:
-  Unexpected token\n..."}
+  Unexpected token ..."}
 ```
 
-Identical errors appear in logs from 2026-07-11, 2026-07-12, and 2026-07-17.
-Zero known invocations in any omp log.
+Identical errors appear in all subsequent logs (2026-07-06, -07-07, -07-11,
+-07-12, -07-17). The 2026-06-16 compressed log predates the error and shows
+no known-marketplace entries.
 
 ---
 
@@ -364,17 +416,27 @@ potentially confused about what was a fact vs. a protocol.
 
 | # | Mode | Count | Severity | Harnesses |
 |---|------|-------|----------|-----------|
-| 1 | Missed capture (agent never invokes known) | 52 sessions / 93% | Critical | Claude Code |
+| 1 | Missed capture (agent never invokes known) | 4/7 top-level sessions (57%); 52/56 files (93%) | Critical | Claude Code |
 | 2 | Output buries result in embedding boilerplate | all successful stores | High | Claude Code |
 | 3 | Silent success — no output visible | 2 invocations | High | Claude Code |
 | 4 | ID format mismatch — link/supersede never created | 1 (blocks all updates) | High | Claude Code |
 | 5 | Unknown flag / flag ceremony | 1 error + retry | Medium | Claude Code |
 | 6 | Scope confusion in worktree | 2 invocations | Medium | Claude Code |
-| 7 | Plugin YAML parse failure in omp | every session | High | omp/Pi |
+| 7 | Plugin YAML parse failure in omp | every session since ≥2026-07-05 | High | omp/Pi |
 | 8 | Recall returns stale unrelated results, no zero-hit signal | 2 queries | Medium | Claude Code |
 | 9 | Hook output contaminates recall result | 1 | Low | Claude Code |
 
-**opencode:** zero known usage found. Not installed or not surfaced.
+**Quoting/escaping:** No failures observed. All multi-word, multi-sentence
+`known remember` arguments used double-quoted strings without shell errors.
+
+**Dedup surprises:** None observed. No `ErrDuplicateContent` triggered in corpus.
+zv1.2 should define whether near-duplicates surface a warning with the matching
+ID (currently they do not).
+
+**opencode:** `message` table: 0 matches. `part` table: 15 matches, all
+skill-template injection text, zero real invocations.
+
+**omp/Pi:** Plugin structurally broken; zero invocations across all logs.
 
 ---
 
@@ -383,7 +445,7 @@ potentially confused about what was a fact vs. a protocol.
 ### zv1.2 — Capture surface redesign
 
 **1. Capture must be ambient, not deliberate.**  
-Mode 1 (93% miss rate) is the existential problem. The fix is not better
+Mode 1 (57–93% miss rate) is the existential problem. The fix is not better
 documentation — agents under task pressure don't stop to think "should I store
 this?". Capture must happen as a side effect. Candidate directions:
 - Auto-capture on session end: the harness (or a `known` subcommand) reviews
@@ -411,6 +473,12 @@ point for zv1.2: if `--scope` is omitted and `.known.yaml` is present, use its
 `scope_prefix`. If neither exists, default to the git-root-derived scope. The
 agent should never need to guess `--scope root` vs. `--scope engine.graphics`.
 
+**5. Define dedup semantics explicitly.**  
+No dedup surprises observed, but the absence of an ID in current success output
+means agents cannot tell whether a store was new or a deduplicated no-op. The
+redesigned success line (point 2) resolves this: `stored {ID}` vs.
+`duplicate of {ID} (not stored)`.
+
 ### zv1.3 — Linking / graph building
 
 **1. Provide an `--id-only` flag on search.**  
@@ -437,3 +505,8 @@ doesn't prevent off-topic results from filling the response. Consider: if
 top-k similarity is below a threshold, print `WARNING: top result score 0.31 —
 no strong match found for this query` before the results, so agents can recognize
 a knowledge gap vs. a successful recall.
+
+**5. Fix the omp plugin before zv1.3 ships.**  
+The YAML parse failure in `discover.md` means the entire `/known:` surface is
+unreachable in omp. Any linking UX designed for zv1.3 is dead on arrival in omp
+until this is fixed. Treat as a prerequisite.
