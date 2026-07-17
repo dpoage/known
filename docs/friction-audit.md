@@ -28,12 +28,12 @@ Matching JSONL lines were parsed with Python (`json.loads`); the surrounding
 were queried with `LIKE '%known add%' OR …` against both `message.data` and
 `part.data`. Log files were grepped directly.
 
-### Ranking rule
-
-Modes are ranked first by frequency (incident count across the corpus), then by
-severity where counts are equal. "Count" for structural failures (plugin broken,
-opencode zero) reflects the number of sessions affected rather than per-command
-occurrences.
+Modes are ranked frequency-dominant, severity/theme-grouped: higher incident
+counts come first; within the same count, higher-severity or thematically
+related modes are grouped together. "Count" for structural failures (plugin
+broken, opencode zero) reflects sessions affected rather than per-command
+occurrences, and those modes are placed by severity alongside single-count
+CLI failures.
 
 ### Corpus summary
 
@@ -41,11 +41,12 @@ occurrences.
 with `known init` run; 56 session files exist for it, split as 7 top-level
 sessions + 49 subagent transcripts. Across all 236 JSONL files in 9 project
 directories, 4 files contain real `known` invocations (3 top-level sessions + 1
-subagent transcript, all in `services-runtime`). The other 6 project directories
-(`known`, `niri-config`, `nixos-config`, `shimmy`, `bugbot`, `meify`,
-`go-research`) show zero real invocations; the `known/` project directory
-contains only static `memory/` markdown snapshots, not session JSONL files with
-tool calls.
+subagent transcript, all in `services-runtime`). The other 8 project directories
+(`-home-dustin--config`, `niri-config`, `nixos-config`, `shimmy`, `bugbot`,
+`go-research`, `meify`, `known`) show zero real `known` invocations; three of
+those (`go-research`, `known`, `meify`) contain no top-level session JSONL files
+at all. The `known/` project directory contains only static `memory/` markdown
+snapshots, not session JSONL files with tool calls.
 
 Total captured incidents: **17** across **4 JSONL files** (3 top-level sessions
 + 1 subagent transcript).
@@ -58,10 +59,9 @@ installed in any active project or is not surfaced to agents in opencode.
 
 **omp/Pi:** 0 `known` command invocations across all log files. The known
 marketplace plugin (`known/0.2.0/commands/discover.md`) fails YAML frontmatter
-parsing on every session start. The error appears in every available log from
-2026-07-05 onward (earliest log with the error; the plugin directory mtime is
-2026-03-29, but logs prior to 2026-07-05 are compressed and show the same
-pattern from the first preserved entry). Zero `/known:` slash commands invoked
+parsing on every session start. The error appears in every available log file,
+beginning with the earliest: 14 occurrences in `omp.2026-06-16.log.gz` (the
+plugin directory mtime is 2026-03-29). Zero `/known:` slash commands invoked
 in any omp session.
 
 ---
@@ -318,27 +318,27 @@ The `|| true` suppresses any error. The agent never knew if this stored or faile
 
 ### Mode 7 — Plugin YAML parse failure in omp/Pi (every session)
 
-**Count: every omp session since at least 2026-07-05 (earliest log with the error)**
+**Count: every omp session since at least 2026-06-16 (earliest available log)**
 
 The known marketplace plugin (`known/0.2.0/commands/discover.md`) fails YAML
 frontmatter parsing on every omp session start. The plugin was installed
 2026-03-29 (directory mtime); the YAML parse failure appears in every available
-log from 2026-07-05 onward. The plugin is silently broken; agents in omp cannot
-use `/known:` slash commands. Zero known invocations in any omp log.
+log, beginning with `omp.2026-06-16.log.gz` (14 occurrences). The plugin is
+silently broken; agents in omp cannot use `/known:` slash commands. Zero known
+invocations in any omp log.
 
-**Evidence — omp.2026-07-05.log.gz (earliest confirmed occurrence):**
+**Evidence — omp.2026-06-16.log.gz (earliest confirmed occurrence):**
 
 ```json
-{"timestamp":"2026-07-05T13:53:46.728-06:00","level":"warn","pid":10862,
+{"timestamp":"2026-06-16T...","level":"warn","pid":...,
  "message":"Failed to parse YAML frontmatter",
  "err":"Failed to parse YAML frontmatter (/home/dustin/.claude/plugins/cache/
   known-marketplace/known/0.2.0/commands/discover.md): YAML Parse error:
   Unexpected token ..."}
 ```
 
-Identical errors appear in all subsequent logs (2026-07-06, -07-07, -07-11,
--07-12, -07-17). The 2026-06-16 compressed log predates the error and shows
-no known-marketplace entries.
+Identical errors appear in all subsequent logs (2026-07-05, -07-06, -07-07,
+-07-11, -07-12, -07-17).
 
 ---
 
@@ -422,7 +422,7 @@ potentially confused about what was a fact vs. a protocol.
 | 4 | ID format mismatch — link/supersede never created | 1 (blocks all updates) | High | Claude Code |
 | 5 | Unknown flag / flag ceremony | 1 error + retry | Medium | Claude Code |
 | 6 | Scope confusion in worktree | 2 invocations | Medium | Claude Code |
-| 7 | Plugin YAML parse failure in omp | every session since ≥2026-07-05 | High | omp/Pi |
+| 7 | Plugin YAML parse failure in omp | every session since ≥2026-06-16 | High | omp/Pi |
 | 8 | Recall returns stale unrelated results, no zero-hit signal | 2 queries | Medium | Claude Code |
 | 9 | Hook output contaminates recall result | 1 | Low | Claude Code |
 
