@@ -231,6 +231,74 @@ func (p *Printer) PrintScopes(scopes []model.Scope) {
 	}
 }
 
+// addResult is the stable JSON schema for --json add output.
+// IDs are ULIDs (26 alphanumeric chars, e.g. 01KTD44NBEHMHE0MPY6VGFCJR6).
+// Agents MUST NOT grep for integer patterns — ULIDs contain letters.
+type addResult struct {
+	ID          string             `json:"id"`
+	Scope       string             `json:"scope"`
+	Content     string             `json:"content"`
+	Deduped     bool               `json:"deduped"`
+	Suggestions []suggestionResult `json:"suggestions"`
+}
+
+type suggestionResult struct {
+	ID       string  `json:"id"`
+	Title    string  `json:"title"`
+	EdgeType string  `json:"edge_type"`
+	Score    float64 `json:"score"`
+}
+
+// PrintAddResult prints the confirmation block after a successful add.
+// It is always printed (never suppressed), replacing the old PrintEntry call
+// for add/remember so embedding boilerplate never appears on stdout.
+//
+// Human format:
+//
+//	Stored  <ULID>          (or "Duplicate <ULID>" when deduped)
+//	Scope   <scope>
+//	        "<content truncated to 120 chars>"
+//	Link?   <edge-type>:<ULID> "<title>"   (repeated, omitted when empty)
+//
+// JSON format: addResult object (see addResult type).
+func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []query.LinkSuggestion) {
+	if p.json {
+		sugg := make([]suggestionResult, len(suggestions))
+		for i, s := range suggestions {
+			sugg[i] = suggestionResult{
+				ID:       s.Entry.ID.String(),
+				Title:    s.Entry.Title,
+				EdgeType: string(s.EdgeType),
+				Score:    s.Score,
+			}
+		}
+		p.printJSON(addResult{
+			ID:          e.ID.String(),
+			Scope:       e.Scope,
+			Content:     e.Content,
+			Deduped:     deduped,
+			Suggestions: sugg,
+		})
+		return
+	}
+
+	label := "Stored "
+	if deduped {
+		label = "Duplicate"
+	}
+	fmt.Fprintf(p.w, "%-9s %s\n", label, e.ID)
+	fmt.Fprintf(p.w, "%-9s %s\n", "Scope", e.Scope)
+	fmt.Fprintf(p.w, "          %q\n", truncate(e.Content, 120))
+	for _, s := range suggestions {
+		title := s.Entry.Title
+		if title == "" {
+			title = truncate(s.Entry.Content, 40)
+		}
+		fmt.Fprintf(p.w, "%-9s %s:%s %q\n", "Link?", s.EdgeType, s.Entry.ID, title)
+	}
+	fmt.Fprintln(p.w)
+}
+
 // printJSON marshals v as indented JSON and writes it.
 func (p *Printer) printJSON(v any) {
 	enc := json.NewEncoder(p.w)
