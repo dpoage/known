@@ -9,10 +9,10 @@ structural predicate.
 | Binary | Commit | Capture rate |
 |--------|--------|-------------|
 | Baseline (pre-wave-2) | a59396f | **3/10 (30%)** |
-| Epic-current (zv1.4 merged) | 3ccf253 | **8/10 (80%)** |
+| Epic (zv1.2 + zv1.3 + zv1.4 merged) | 8c122be | **8/10 (80%)** |
 
-Five scenarios flip xfail→xpass once zv1.2 and zv1.3 code merges to the epic
-branch. Regenerate results after each wave with the one-liner below.
+Two scenarios remain XFAIL pending further work (see corpus table).
+Regenerate results after future waves with the one-liner below.
 
 ## Quick start
 
@@ -78,9 +78,8 @@ Each scenario derives from a specific friction-audit failure mode.
 | M6-scope-from-marker | Mode 6 / zv1.4 | scope from `.known.yaml` `scope_prefix` (regression guard) | — |
 | M6-scope-subdir-appended | Mode 6 / zv1.4 | subdir scope appended to prefix (regression guard) | — |
 
-**XFAIL** — expected to fail on baseline and epic-current; contract not yet
-fully implemented.  Scenarios with `zv1.2` or `zv1.3` in the XFAIL column
-will flip to XPASS once the corresponding branch merges.
+**XFAIL** — expected to fail; contract not yet fully implemented.
+Scenarios marked `zv1.2`/`zv1.3` flipped to XPASS at 8c122be.
 
 Note: `M2-tail2-visible-ulid` remains XFAIL even on zv1.2 because the
 compact 3-line output still puts the ULID on line 1 of 3 (not in `tail -2`).
@@ -99,27 +98,30 @@ Predicates match structure, not prose:
 
 ## Committed results
 
-| File | Binary provenance | Build command | Capture rate |
-|------|-------------------|---------------|-------------|
-| `results/baseline-a59396f.json` | a59396f | `git archive a59396f \| tar -x -C /tmp/bl && go build -o /tmp/known-baseline ./cmd/known` (run in `/tmp/bl`) | 3/10 (30%) |
-| `results/epic-current.json` | 3ccf253 (zv1-bench-capture HEAD) | `go build -o /tmp/known-epic ./cmd/known` (in worktree) | 8/10 (80%) |
+| File | Binary | Build command | Capture rate |
+|------|--------|---------------|-------------|
+| `results/baseline-a59396f.json` | a59396f | `git archive a59396f \| tar -x -C /tmp/bl && go build -o /tmp/bl/known-baseline /tmp/bl/cmd/known` | 3/10 (30%) |
+| `results/epic-interim-3ccf253.json` | 3ccf253 (pre-merge bench worktree HEAD) | `go build -o /tmp/known-epic ./cmd/known` | 8/10 (80%) — interim, zv1.2/zv1.3 not yet merged |
+| `results/epic-8c122be.json` | 8c122be (zv1.2+zv1.3+zv1.4 merged) | binary at `/tmp/known-epic` | **8/10 (80%)** — definitive after |
 
-## Re-running after wave 2 lands
+The interim result (3ccf253) is kept for traceability; 8c122be is the
+authoritative post-wave-2 measurement.
 
-Once zv1.2 and zv1.3 merge to the epic branch, regenerate results:
+## Re-running
 
 ```sh
-go build -o /tmp/known-w2 ./cmd/known
 go run ./bench/capture \
-  -bin /tmp/known-w2 \
+  -bin /path/to/known \
   -commit $(git rev-parse HEAD) \
-  -out bench/capture/results/wave2.json
+  -model-cache ~/.known/models \
+  -out bench/capture/results/run.json
 ```
 
-Expected: M2-compact-confirmation, M2-stored-label, M2-dedup-explicit,
-M4-link-accept-subcommand, M5-unknown-flag-suggests-valid all flip
-xfail→xpass; M4-link-by-content flips when content resolution handles
-overlapping-word ambiguity.
+Remaining XFAIL scenarios to watch:
+- `M2-tail2-visible-ulid`: ULID in last 2 output lines — passes only if output
+  is ≤2 non-empty lines (currently 3 in zv1.2; agents should read full output).
+- `M4-link-by-content`: content resolver returns ambiguity when two entries
+  share vocabulary; needs stricter disambiguation or exact-match preference.
 
 ## Self-tests
 
