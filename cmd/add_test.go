@@ -3,10 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"math"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
@@ -111,10 +109,6 @@ func newTestApp(repo *stubEntryRepo) *App {
 		Config: &AppConfig{
 			DefaultScope:     "root",
 			MaxContentLength: model.MaxContentLength,
-			DefaultTTL: map[model.SourceType]time.Duration{
-				model.SourceConversation: 7 * 24 * time.Hour,
-				model.SourceManual:       90 * 24 * time.Hour,
-			},
 		},
 	}
 }
@@ -147,16 +141,15 @@ func TestRunAdd_TTLZero_PermanentEntry(t *testing.T) {
 	}
 }
 
-func TestRunAdd_TTLZero_OverridesDefault(t *testing.T) {
-	// Ensure --ttl 0 prevents the default TTL from being applied,
-	// even for source types that have a default.
+func TestRunAdd_TTLZero_ExplicitPermanent(t *testing.T) {
+	// --ttl 0 is accepted for compat; results in no expiry (same as omitting --ttl).
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
 	err := runAdd(context.Background(), app, []string{
 		"--ttl", "0",
 		"--source-type", "conversation",
-		"override default TTL",
+		"explicitly permanent entry",
 	})
 	if err != nil {
 		t.Fatalf("runAdd: %v", err)
@@ -166,63 +159,33 @@ func TestRunAdd_TTLZero_OverridesDefault(t *testing.T) {
 		t.Fatal("expected an entry to be created")
 	}
 	if repo.created.TTL != nil {
-		t.Errorf("TTL should be nil (--ttl 0 overrides conversation default), got %v", repo.created.TTL)
+		t.Errorf("TTL should be nil for --ttl 0, got %v", repo.created.TTL)
 	}
 	if repo.created.ExpiresAt != nil {
-		t.Errorf("ExpiresAt should be nil, got %v", repo.created.ExpiresAt)
+		t.Errorf("ExpiresAt should be nil for --ttl 0, got %v", repo.created.ExpiresAt)
 	}
 }
 
-func TestRunAdd_TTLExplicit_SetsExpiry(t *testing.T) {
+func TestRunAdd_NoTTLFlag_PermanentEntry(t *testing.T) {
+	// Without --ttl, unflagged adds are permanent: no TTL, no ExpiresAt.
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--ttl", "24h", "ephemeral fact"})
-	if err != nil {
-		t.Fatalf("runAdd with --ttl 24h: %v", err)
-	}
-
-	if repo.created == nil {
-		t.Fatal("expected an entry to be created")
-	}
-	if repo.created.TTL == nil {
-		t.Fatal("TTL should be set for --ttl 24h")
-	}
-	if repo.created.TTL.Duration != 24*time.Hour {
-		t.Errorf("TTL = %v, want 24h", repo.created.TTL.Duration)
-	}
-	if repo.created.ExpiresAt == nil {
-		t.Fatal("ExpiresAt should be set for --ttl 24h")
-	}
-	// ExpiresAt should be approximately CreatedAt + 24h.
-	diff := repo.created.ExpiresAt.Sub(repo.created.CreatedAt)
-	if math.Abs(diff.Hours()-24) > 0.01 {
-		t.Errorf("ExpiresAt - CreatedAt = %v, want ~24h", diff)
-	}
-}
-
-func TestRunAdd_NoTTLFlag_AppliesDefault(t *testing.T) {
-	repo := &stubEntryRepo{}
-	app := newTestApp(repo)
-
-	// source-type=manual has a 90d default TTL in newTestApp.
-	err := runAdd(context.Background(), app, []string{"--source-type", "manual", "fact with default ttl"})
-	if err != nil {
-		t.Fatalf("runAdd: %v", err)
-	}
-
-	if repo.created == nil {
-		t.Fatal("expected an entry to be created")
-	}
-	if repo.created.TTL == nil {
-		t.Fatal("TTL should be set from default")
-	}
-	want := 90 * 24 * time.Hour
-	if repo.created.TTL.Duration != want {
-		t.Errorf("TTL = %v, want %v", repo.created.TTL.Duration, want)
-	}
-	if repo.created.ExpiresAt == nil {
-		t.Fatal("ExpiresAt should be set from default TTL")
+	for _, st := range []string{"manual", "conversation", "file", "url"} {
+		repo.created = nil
+		err := runAdd(context.Background(), app, []string{"--source-type", st, "fact without ttl"})
+		if err != nil {
+			t.Fatalf("runAdd (source-type=%s): %v", st, err)
+		}
+		if repo.created == nil {
+			t.Fatalf("source-type=%s: expected entry to be created", st)
+		}
+		if repo.created.TTL != nil {
+			t.Errorf("source-type=%s: TTL should be nil (permanent by default), got %v", st, repo.created.TTL)
+		}
+		if repo.created.ExpiresAt != nil {
+			t.Errorf("source-type=%s: ExpiresAt should be nil (permanent by default), got %v", st, repo.created.ExpiresAt)
+		}
 	}
 }
 
@@ -554,7 +517,10 @@ func TestRunAdd_Dedup_ShowsExistingID(t *testing.T) {
 }
 
 func TestLevenshtein(t *testing.T) {
-	cases := []struct{ a, b string; want int }{
+	cases := []struct {
+		a, b string
+		want int
+	}{
 		{"confidence", "provenance", 7},
 		{"scope", "scope", 0},
 		{"ttl", "ttl", 0},

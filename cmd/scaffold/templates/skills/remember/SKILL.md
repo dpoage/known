@@ -56,7 +56,7 @@ All flags are optional. Defaults are applied automatically.
 | `--provenance <level>` | `inferred` | Use `verified` when the user stated the fact directly |
 | `--source-type <type>` | `manual` | Use `file` when derived from a source file |
 | `--source-ref <ref>` | `cli` | Path to the source (with `--source-type file`) |
-| `--ttl <duration>` | 90d (`manual`), 7d (`conversation`) | Pass `--ttl 0` for a fact that must never expire |
+| `--ttl <duration>` | permanent (no expiry) | Opt-in for ephemera: `--ttl 24h`, `--ttl 168h`; `--ttl 0` is a no-op (explicit permanent) |
 | `--label <tag>` | none | Categorical tag, repeatable |
 | `--link <type:id>` | none | Inline edge using a ULID from prior output |
 

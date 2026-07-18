@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/dpoage/known/model"
 	"github.com/spf13/viper"
@@ -423,47 +422,17 @@ func TestLoadAppConfig(t *testing.T) {
 			},
 		},
 
-		// --- DefaultTTL ---
+		// --- TTL is opt-in: AppConfig has no DefaultTTL field ---
 		{
-			name: "default ttl hardcoded defaults",
+			name: "no auto TTL applied by config (TTL is opt-in)",
 			gf:   globalFlags{dsn: "postgres://test"},
 			check: func(t *testing.T, cfg *AppConfig) {
-				if cfg.DefaultTTL[model.SourceConversation] != 7*24*time.Hour {
-					t.Errorf("conversation TTL = %v, want 7d", cfg.DefaultTTL[model.SourceConversation])
-				}
-				if cfg.DefaultTTL[model.SourceManual] != 90*24*time.Hour {
-					t.Errorf("manual TTL = %v, want 90d", cfg.DefaultTTL[model.SourceManual])
-				}
-			},
-		},
-		{
-			name:       "default ttl global config overrides",
-			globalYAML: "dsn: postgres://test\ndefault_ttl:\n  conversation: 48h\n  manual: 720h\n",
-			check: func(t *testing.T, cfg *AppConfig) {
-				if cfg.DefaultTTL[model.SourceConversation] != 48*time.Hour {
-					t.Errorf("conversation TTL = %v, want 48h", cfg.DefaultTTL[model.SourceConversation])
-				}
-				if cfg.DefaultTTL[model.SourceManual] != 720*time.Hour {
-					t.Errorf("manual TTL = %v, want 720h", cfg.DefaultTTL[model.SourceManual])
+				// AppConfig no longer carries DefaultTTL; TTL is opt-in via --ttl only.
+				// Verify config loads cleanly without DefaultTTL.
+				if cfg.DSN != "postgres://test" {
+					t.Errorf("DSN = %q, want %q", cfg.DSN, "postgres://test")
 				}
 			},
-		},
-		{
-			name:        "project ttl beats global ttl",
-			globalYAML:  "dsn: postgres://test\ndefault_ttl:\n  conversation: 48h\n",
-			projectYAML: "dsn: postgres://test\ndefault_ttl:\n  conversation: 24h\n",
-			check: func(t *testing.T, cfg *AppConfig) {
-				if cfg.DefaultTTL[model.SourceConversation] != 24*time.Hour {
-					t.Errorf("conversation TTL = %v, want 24h", cfg.DefaultTTL[model.SourceConversation])
-				}
-			},
-		},
-
-		// --- Error paths ---
-		{
-			name:        "invalid ttl in project config",
-			projectYAML: "dsn: postgres://test\ndefault_ttl:\n  conversation: notaduration\n",
-			wantErr:     "invalid project default_ttl.conversation",
 		},
 		{
 			name:        "malformed project yaml",

@@ -214,9 +214,6 @@ default_ttl:
 		if cfg.RecallRecency == nil || *cfg.RecallRecency != 0.3 {
 			t.Errorf("RecallRecency = %v, want 0.3", cfg.RecallRecency)
 		}
-		if cfg.DefaultTTL["conversation"] != "168h" {
-			t.Errorf("DefaultTTL[conversation] = %q, want %q", cfg.DefaultTTL["conversation"], "168h")
-		}
 	})
 
 	t.Run("minimal config", func(t *testing.T) {

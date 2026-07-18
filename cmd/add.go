@@ -120,8 +120,8 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 		entry.Freshness.SourceHash = *sourceHash
 	}
 
-	// Parse TTL if provided, otherwise apply default by source type.
-	// --ttl 0 means "permanent" (no TTL, no ExpiresAt), same as update.go.
+	// TTL is opt-in: only apply when --ttl is explicitly provided.
+	// --ttl 0 is accepted for compat (no-op: entry stays permanent).
 	if *ttl != "" {
 		if *ttl == "0" {
 			entry.TTL = nil
@@ -133,8 +133,6 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 			}
 			entry.SetTTL(dur)
 		}
-	} else if d, ok := app.Config.DefaultTTL[entry.Source.Type]; ok {
-		entry.SetTTL(d)
 	}
 
 	// Parse metadata.
@@ -320,7 +318,6 @@ func nearestFlag(name string, candidates []string) string {
 	}
 	return best
 }
-
 
 // levenshtein computes the edit distance between two strings.
 func levenshtein(a, b string) int {

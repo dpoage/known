@@ -183,9 +183,6 @@ template with `known init`:
 # Optional: tuning overrides
 # max_content_length: 4096
 # search_threshold: 0.3
-# default_ttl:
-#   conversation: 168h
-#   manual: 2160h
 ```
 
 ### Global config (`~/.known/config.yaml`)

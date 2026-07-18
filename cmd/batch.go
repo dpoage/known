@@ -110,7 +110,7 @@ func runAddBatch(ctx context.Context, app *App, args []string) error {
 		}
 		entry.Provenance = model.Provenance{Level: prov}
 
-		// TTL handling.
+		// TTL is opt-in: only apply when explicitly set in the batch entry.
 		if b.TTL != "" {
 			if b.TTL == "0" {
 				entry.TTL = nil
@@ -122,8 +122,6 @@ func runAddBatch(ctx context.Context, app *App, args []string) error {
 				}
 				entry.SetTTL(dur)
 			}
-		} else if d, ok := app.Config.DefaultTTL[entry.Source.Type]; ok {
-			entry.SetTTL(d)
 		}
 
 		// Metadata.
