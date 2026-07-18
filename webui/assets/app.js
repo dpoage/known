@@ -531,6 +531,15 @@ function fmtTime(t) {
   return t || "\u2014";
 }
 
+// Shared label fallback for peer/conflict refs (api/entry): title, else a
+// content snippet, else "(missing)" -- reached only for a genuinely
+// dangling peer, which the server already marks with title "(missing)"
+// and content "". Untitled entries are the common case in real data, so
+// the content snippet (not "(missing)") is what most rows actually show.
+function peerLabel(peer) {
+  return peer.title || (peer.content ? peer.content.slice(0, 40) : "") || "(missing)";
+}
+
 function edgeTypeBadge(type) {
   const span = document.createElement("span");
   span.className = "type-badge";
@@ -552,7 +561,7 @@ function renderEdgeRow(edgeWithPeer, isOutgoing) {
   row.appendChild(arrow);
   const title = document.createElement("span");
   title.className = "peer-title";
-  title.textContent = edgeWithPeer.peer.title || "(missing)";
+  title.textContent = peerLabel(edgeWithPeer.peer);
   row.appendChild(title);
   row.addEventListener("click", () => navigateToPeer(edgeWithPeer.peer.id));
   return row;
@@ -653,7 +662,7 @@ function renderPanel(detail) {
     for (const c of detail.conflicts) {
       const row = document.createElement("div");
       row.className = "conflict-row";
-      row.textContent = (c.title || "(missing)") + " \u2014 " + c.scope;
+      row.textContent = peerLabel(c) + " \u2014 " + c.scope;
       row.addEventListener("click", () => navigateToPeer(c.id));
       conflictSection.appendChild(row);
     }

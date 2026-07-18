@@ -3,7 +3,7 @@
     "id": "01795J4WN7BCRF0XW2YQQEP905",
     "title": "Path mode UX",
     "content": "Toggle path mode, click node A then node B, fetch api/path, highlight the path and dim everything else.",
-    "scope": "webui/explore",
+    "scope": "webui.explore",
     "source": {
       "type": "conversation",
       "reference": "design-review-2026-06-01"
@@ -22,7 +22,7 @@
     "id": "01795J4WN7BCRF0XW2YQQEP905",
     "title": "Path mode UX",
     "content": "Toggle path mode, click node A then node B, fetch api/path, highlight the path and dim everything else.",
-    "scope": "webui/explore",
+    "scope": "webui.explore",
     "source_type": "conversation",
     "created_at": "2026-06-01T09:20:00Z",
     "updated_at": "2026-06-01T09:20:00Z",
@@ -42,7 +42,8 @@
       "peer": {
         "id": "01MVJ7P8N9E2MFDRV64VH8W6RM",
         "title": "REST endpoint /api/graph",
-        "scope": "server/api"
+        "content": "Whole-graph snapshot; entries via EntryRepo.List with ScopePrefix, optional label, limit default 500.",
+        "scope": "server.api"
       }
     },
     {
@@ -57,8 +58,26 @@
       },
       "peer": {
         "id": "01WGZDH95VSS1EZ6FRP5FGHA71",
-        "title": "Search debounce interval",
-        "scope": "webui/explore"
+        "title": "",
+        "content": "Debounce the search input by 250ms before calling api/search to avoid flooding the FTS engine.",
+        "scope": "webui.explore"
+      }
+    },
+    {
+      "edge": {
+        "id": "01DANGLINGEDGE0000000001",
+        "from": "01795J4WN7BCRF0XW2YQQEP905",
+        "to": "01DANGLINGPEER0000000001",
+        "type": "depends-on",
+        "weight": 0.5,
+        "explicit": false,
+        "created_at": "2026-06-02T10:20:00Z"
+      },
+      "peer": {
+        "id": "01DANGLINGPEER0000000001",
+        "title": "(missing)",
+        "content": "",
+        "scope": ""
       }
     }
   ],
@@ -75,8 +94,9 @@
       },
       "peer": {
         "id": "01WGZDH95VSS1EZ6FRP5FGHA71",
-        "title": "Search debounce interval",
-        "scope": "webui/explore"
+        "title": "",
+        "content": "Debounce the search input by 250ms before calling api/search to avoid flooding the FTS engine.",
+        "scope": "webui.explore"
       }
     },
     {
@@ -92,7 +112,8 @@
       "peer": {
         "id": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
         "title": "Error banner behavior",
-        "scope": "webui/explore"
+        "content": "All fetch failures and {error:...} bodies surface as a dismissible banner, never console-only.",
+        "scope": "webui.explore"
       }
     }
   ],
@@ -100,7 +121,8 @@
     {
       "id": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
       "title": "Error banner behavior",
-      "scope": "webui/explore"
+      "content": "All fetch failures and {error:...} bodies surface as a dismissible banner, never console-only.",
+      "scope": "webui.explore"
     }
   ]
 }
