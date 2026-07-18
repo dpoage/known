@@ -16,16 +16,35 @@ import (
 // stubs for the query engine and entry listing.
 // ---------------------------------------------------------------------------
 
-// recallEntryRepo extends stubEntryRepo with List support for recallByScope.
+// recallEntryRepo extends stubEntryRepo with List and SearchSimilar support.
 type recallEntryRepo struct {
 	stubEntryRepo
-	listEntries []model.Entry
-	listFilter  storage.EntryFilter // captured for inspection
+	listEntries      []model.Entry
+	listFilter       storage.EntryFilter // captured for inspection
+	searchSimilarFn  func(query []float32, scope string, limit int) ([]storage.SimilarityResult, error)
+	storedEntries    map[string]*model.Entry // for Get() lookups during expansion
 }
 
 func (r *recallEntryRepo) List(_ context.Context, filter storage.EntryFilter) ([]model.Entry, error) {
 	r.listFilter = filter
 	return r.listEntries, nil
+}
+
+func (r *recallEntryRepo) SearchSimilar(_ context.Context, q []float32, scope string, _ storage.SimilarityMetric, limit int) ([]storage.SimilarityResult, error) {
+	if r.searchSimilarFn != nil {
+		return r.searchSimilarFn(q, scope, limit)
+	}
+	return nil, nil
+}
+
+func (r *recallEntryRepo) Get(_ context.Context, id model.ID) (*model.Entry, error) {
+	if r.storedEntries != nil {
+		if e, ok := r.storedEntries[id.String()]; ok {
+			clone := *e
+			return &clone, nil
+		}
+	}
+	return nil, storage.ErrNotFound
 }
 
 // newRecallTestApp constructs a minimal App for recall tests.
@@ -334,6 +353,80 @@ func TestRunRecall_AllFlagsTogether(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("runRecall with all flags: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: --label (or --provenance/--source) with --limit must not drop
+// matching entries ranked below the limit in the unfiltered result set.
+// Before the fix, TotalLimit was always set to *limit, so SearchHybrid
+// truncated to N before label filtering ran — entries at rank > N were lost.
+// ---------------------------------------------------------------------------
+
+func TestRunRecall_LabelFilterNotDroppedByLimit(t *testing.T) {
+	// Seed: 3 unlabelled entries (high scores) + 1 labelled entry (lower score).
+	// --limit 3 --label X must still return the labelled entry even though it
+	// ranked 4th in the unfiltered result set.
+	labelledID := model.NewID()
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+
+	makeE := func(id model.ID, content string, score float64, labels []string) *model.Entry {
+		e := model.NewEntry(content, src).WithScope("root")
+		e.ID = id
+		e.Labels = labels
+		return &e
+	}
+
+	u1 := model.NewID()
+	u2 := model.NewID()
+	u3 := model.NewID()
+
+	entries := map[string]*model.Entry{
+		u1.String():        makeE(u1, "unlabelled 1", 0, nil),
+		u2.String():        makeE(u2, "unlabelled 2", 0, nil),
+		u3.String():        makeE(u3, "unlabelled 3", 0, nil),
+		labelledID.String(): makeE(labelledID, "labelled entry", 0, []string{"target"}),
+	}
+
+	// SearchSimilar returns all four entries in score order (labelled last).
+	repo := &recallEntryRepo{
+		storedEntries: entries,
+		searchSimilarFn: func(_ []float32, _ string, _ int) ([]storage.SimilarityResult, error) {
+			return []storage.SimilarityResult{
+				{Entry: *entries[u1.String()], Distance: 0.05},
+				{Entry: *entries[u2.String()], Distance: 0.10},
+				{Entry: *entries[u3.String()], Distance: 0.15},
+				{Entry: *entries[labelledID.String()], Distance: 0.20},
+			}, nil
+		},
+	}
+
+	var out bytes.Buffer
+	app := &App{
+		Entries:  repo,
+		Edges:    &stubEdgeRepo{},
+		Embedder: &stubEmbedder{dims: 3},
+		Engine:   query.New(repo, &stubEdgeRepo{}, &stubEmbedder{dims: 3}),
+		Printer:  NewPrinter(&out, false, true),
+		Config:   &AppConfig{DefaultScope: "root"},
+	}
+
+	err := runRecall(context.Background(), app, []string{
+		"--limit", "3",
+		"--label", "target",
+		"test query",
+	})
+	if err != nil {
+		t.Fatalf("runRecall: %v", err)
+	}
+
+	output := out.String()
+	if output == "" || output == "No matching knowledge found.\n" {
+		t.Errorf("--label filter with --limit 3 dropped the matching entry ranked 4th; got: %q", output)
+	}
+	// The labelled entry must appear in output.
+	if !bytes.Contains(out.Bytes(), []byte("labelled entry")) {
+		t.Errorf("labelled entry not found in output; got:\n%s", output)
 	}
 }
 
