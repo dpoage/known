@@ -92,7 +92,26 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 	// scores are commensurable after known-1so rescoring).
 	sortResultsByScore(allResults)
 
-	// Apply TotalLimit to the combined result set.
+	// Enrich results with superseded status (incoming supersedes edges).
+	// Design: DEMOTE superseded entries (known-5oq). After sorting, any result
+	// whose entry is the TARGET of a supersedes edge gets Score*0.1, pushing
+	// it below the correction. IncludeSuperseded skips demotion so all results
+	// appear at full score. The threshold check (known-bqo) must happen AFTER
+	// demotion so it sees the real top score.
+	if err := e.enrichSuperseded(ctx, allResults); err != nil {
+		return nil, fmt.Errorf("enrich superseded: %w", err)
+	}
+	if !opts.IncludeSuperseded {
+		for i := range allResults {
+			if allResults[i].IsSuperseded {
+				allResults[i].Score *= 0.1
+			}
+		}
+		sortResultsByScore(allResults)
+	}
+
+	// Apply TotalLimit to the combined result set (after demotion so
+	// the truncation sees demoted scores).
 	if opts.TotalLimit > 0 && len(allResults) > opts.TotalLimit {
 		allResults = allResults[:opts.TotalLimit]
 	}
@@ -252,4 +271,27 @@ func fuseByRRF(vectorResults, textResults []Result, k int) []Result {
 	}
 	sortResultsByScore(results)
 	return results
+}
+
+// enrichSuperseded checks each result for incoming supersedes edges and
+// populates the IsSuperseded and SupersededBy fields. Skips results already enriched.
+func (e *Engine) enrichSuperseded(ctx context.Context, results []Result) error {
+	for i := range results {
+		if results[i].IsSuperseded || results[i].SupersededBy != nil {
+			continue
+		}
+		edges, err := e.edges.EdgesTo(ctx, results[i].Entry.ID, storage.EdgeFilter{Type: model.EdgeSupersedes})
+		if err != nil {
+			return err
+		}
+		if len(edges) > 0 {
+			results[i].IsSuperseded = true
+			ids := make([]model.ID, len(edges))
+			for j, edge := range edges {
+				ids[j] = edge.FromID
+			}
+			results[i].SupersededBy = ids
+		}
+	}
+	return nil
 }

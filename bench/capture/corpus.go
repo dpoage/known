@@ -428,6 +428,99 @@ func corpus() []Scenario {
 				return combined, addCode, pred, hasEdge
 			},
 		},
+
+		// ---- Mode 7: Superseded entry outranks correction (known-5oq) ----
+		//
+		// Without score demotion, a recalled entry that has been superseded may rank
+		// above the correcting entry. The contract: after `known add --supersedes`,
+		// recalling with a text search must show entry B (correction) NOT BELOW entry A
+		// (original/superseded). We use --text to avoid needing a real embedder.
+		// Predicate: in recall output, the correction line appears before (or instead
+		// of) the superseded marker, OR the superseded marker "[superseded by:" appears.
+		{
+			ID:                 "M7-supersede-recall-ordering",
+			Name:               "recall: correction ranks above superseded original after --supersedes",
+			AuditMode:          "Mode 7 — known-5oq: superseded entry outranks correction",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+
+				const (
+					originalContent = "architecture decision renderer SIBLING original supersede-ordering"
+					correction      = "CORRECTION architecture decision renderer supersede-ordering fix"
+				)
+
+				// Store the original entry.
+				firstOut, firstCode := run(bin, env, dir, "add", originalContent)
+				if firstCode != 0 {
+					return firstOut, firstCode, "first add (original) must exit 0", false
+				}
+
+				// Store correction with supersedes edge.
+				addOut, addCode := runArgs(bin, env, dir, []string{
+					"add", correction, "--supersedes", originalContent,
+				})
+				if addCode != 0 || !strings.Contains(addOut, "Supersedes") {
+					return addOut, addCode, "add --supersedes must exit 0 and print 'Supersedes'", false
+				}
+
+				// Recall using text search (no embedder needed).
+				recallOut, recallCode := runArgs(bin, env, dir, []string{
+					"recall", "--text", "architecture decision renderer supersede-ordering",
+				})
+				if recallCode != 0 {
+					return recallOut, recallCode, "recall --text must exit 0", false
+				}
+
+				// Pass if: the superseded marker appears (demotion worked) OR
+				// the correction content appears before the original in output.
+				hasSupersededMarker := strings.Contains(recallOut, "[superseded by:")
+				correctionPos := strings.Index(recallOut, "CORRECTION")
+				originalPos := strings.Index(recallOut, "SIBLING original")
+				correctionFirst := correctionPos >= 0 && originalPos >= 0 && correctionPos < originalPos
+				pass := hasSupersededMarker || correctionFirst
+				pred := fmt.Sprintf("output contains '[superseded by:' marker (%v) OR correction appears before original (%v)", hasSupersededMarker, correctionFirst)
+				return recallOut, recallCode, pred, pass
+			},
+		},
+
+		// ---- Mode 8: No low-relevance signal for zero-hit recall (known-bqo) ----
+		//
+		// When a recall query finds no relevant entries (all scores below threshold),
+		// the output must emit a "below relevance threshold" note. Text search is used
+		// to avoid needing a real embedder. An entry about "database indexing" is added,
+		// then we recall "weather forecast" — completely unrelated, so FTS5 finds nothing
+		// or irrelevant results. The low-relevance signal must appear OR "No matching
+		// knowledge found." must be printed (both are acceptable UX signals).
+		{
+			ID:                 "M8-zero-hit-signal",
+			Name:               "recall: low-relevance signal when querying unrelated topic",
+			AuditMode:          "Mode 8 — known-bqo: no signal for zero-hit recall",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+
+				// Add an entry about a completely unrelated topic.
+				addOut, addCode := run(bin, env, dir, "add", "database indexing B-tree clustered index performance tuning")
+				if addCode != 0 {
+					return addOut, addCode, "add must exit 0", false
+				}
+
+				// Recall with a completely unrelated query using text search.
+				recallOut, recallCode := runArgs(bin, env, dir, []string{
+					"recall", "--text", "weather forecast precipitation temperature",
+				})
+
+				hasSignal := strings.Contains(recallOut, "below relevance threshold") ||
+					strings.Contains(recallOut, "No matching knowledge found")
+				// Exit 0 is acceptable even when signalling low relevance.
+				pass := (recallCode == 0 || recallCode == 1) && hasSignal
+				pred := "output contains 'below relevance threshold' or 'No matching knowledge found'"
+				return recallOut, recallCode, pred, pass
+			},
+		},
 	}
 }
 

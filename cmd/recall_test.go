@@ -430,5 +430,113 @@ func TestRunRecall_LabelFilterNotDroppedByLimit(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests — --include-superseded flag and PrintRecallResults low-relevance signal
+// ---------------------------------------------------------------------------
+
+func TestRunRecall_IncludeSupersededFlag(t *testing.T) {
+	// --include-superseded must parse without error; with empty DB it returns no results.
+	repo := &recallEntryRepo{}
+	app := newRecallTestApp(repo)
+
+	err := runRecall(context.Background(), app, []string{"--include-superseded", "test query"})
+	if err != nil {
+		t.Fatalf("runRecall with --include-superseded: %v", err)
+	}
+}
+
+func TestPrintRecallResults_LowRelevance_PlainText(t *testing.T) {
+	var buf bytes.Buffer
+	p := NewPrinter(&buf, false, false)
+
+	results := []query.Result{
+		{
+			Score: 0.1, // below LowRelevanceThreshold (0.3)
+			Entry: model.Entry{
+				Content:    "some entry content",
+				Provenance: model.Provenance{Level: model.ProvenanceInferred},
+				Source:     model.Source{Reference: "test"},
+				CreatedAt:  time.Now(),
+			},
+		},
+	}
+
+	p.PrintRecallResults(results, true)
+	out := buf.String()
+
+	if !bytes.Contains(buf.Bytes(), []byte("below relevance threshold")) {
+		t.Errorf("expected low-relevance note in output, got: %q", out)
+	}
+}
+
+func TestPrintRecallResults_NoLowRelevance(t *testing.T) {
+	var buf bytes.Buffer
+	p := NewPrinter(&buf, false, false)
+
+	results := []query.Result{
+		{
+			Score: 0.9,
+			Entry: model.Entry{
+				Content:    "highly relevant entry",
+				Provenance: model.Provenance{Level: model.ProvenanceVerified},
+				Source:     model.Source{Reference: "test"},
+				CreatedAt:  time.Now(),
+			},
+		},
+	}
+
+	p.PrintRecallResults(results, false)
+	out := buf.String()
+
+	if bytes.Contains(buf.Bytes(), []byte("below relevance threshold")) {
+		t.Errorf("unexpected low-relevance note in output: %q", out)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("highly relevant entry")) {
+		t.Errorf("expected entry content in output, got: %q", out)
+	}
+}
+
+func TestPrintRecallResults_SupersededMarker(t *testing.T) {
+	var buf bytes.Buffer
+	p := NewPrinter(&buf, false, false)
+
+	supersederID := model.NewID()
+	results := []query.Result{
+		{
+			Score:        0.05,
+			IsSuperseded: true,
+			SupersededBy: []model.ID{supersederID},
+			Entry: model.Entry{
+				Content:    "old superseded content",
+				Provenance: model.Provenance{Level: model.ProvenanceInferred},
+				Source:     model.Source{Reference: "test"},
+				CreatedAt:  time.Now(),
+			},
+		},
+	}
+
+	p.PrintRecallResults(results, false)
+	out := buf.String()
+
+	if !bytes.Contains(buf.Bytes(), []byte("[superseded by:")) {
+		t.Errorf("expected [superseded by:] marker in output, got: %q", out)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte(supersederID.String())) {
+		t.Errorf("expected superseder ID %s in output, got: %q", supersederID, out)
+	}
+}
+
+func TestPrintRecallResults_LowRelevance_JSON(t *testing.T) {
+	var buf bytes.Buffer
+	p := NewPrinter(&buf, true, false) // JSON mode
+
+	p.PrintRecallResults([]query.Result{}, true)
+	out := buf.String()
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"low_relevance"`)) {
+		t.Errorf("expected low_relevance key in JSON output, got: %q", out)
+	}
+}
+
 // Verify the recallEntryRepo satisfies the interface.
 var _ storage.EntryRepo = (*recallEntryRepo)(nil)

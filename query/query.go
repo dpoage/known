@@ -31,6 +31,10 @@ const (
 	ReachText ReachMethod = "text"
 )
 
+// LowRelevanceThreshold is the minimum top-result score below which
+// recall/search emit an explicit "no relevant entries" signal (known-bqo).
+const LowRelevanceThreshold = 0.3
+
 // ErrNoEmbedder is returned by SearchVector and SearchHybrid when the engine
 // was created without an embedder (embed.Embedder is nil). Callers that handle
 // this error explicitly can provide a friendlier message or fall back to text
@@ -42,14 +46,16 @@ var ErrNoEmbedder = fmt.Errorf("no embedder configured: vector search requires a
 // Result is a single query result with full metadata, provenance, scores,
 // conflict flags, and information about how the result was reached.
 type Result struct {
-	Entry       model.Entry  `json:"entry"`
-	Score       float64      `json:"score"`               // similarity score (higher is better, 0-1)
-	Distance    float64      `json:"distance"`            // raw distance from vector search (lower is closer)
-	Reach       ReachMethod  `json:"reach"`               // how this result was discovered
-	Depth       int          `json:"depth"`               // graph traversal depth (0 for direct search)
-	EdgePath    []model.Edge `json:"edge_path,omitempty"` // edges traversed to reach this result
-	HasConflict bool         `json:"has_conflict"`        // whether conflicts exist for this entry
-	Conflicts   []model.ID   `json:"conflicts,omitempty"` // IDs of conflicting entries
+	Entry        model.Entry  `json:"entry"`
+	Score        float64      `json:"score"`               // similarity score (higher is better, 0-1)
+	Distance     float64      `json:"distance"`            // raw distance from vector search (lower is closer)
+	Reach        ReachMethod  `json:"reach"`               // how this result was discovered
+	Depth        int          `json:"depth"`               // graph traversal depth (0 for direct search)
+	EdgePath     []model.Edge `json:"edge_path,omitempty"` // edges traversed to reach this result
+	HasConflict  bool         `json:"has_conflict"`        // whether conflicts exist for this entry
+	Conflicts    []model.ID   `json:"conflicts,omitempty"` // IDs of conflicting entries
+	IsSuperseded bool         `json:"is_superseded"`       // this entry has been superseded by another
+	SupersededBy []model.ID   `json:"superseded_by,omitempty"` // IDs of entries that supersede this one
 }
 
 // ConflictPair represents a pair of entries connected by a contradicts edge.
@@ -152,6 +158,11 @@ type HybridOptions struct {
 	// Wire the --limit flag here so it governs total output, not just the
 	// vector phase (see known-6hj).
 	TotalLimit int
+
+	// IncludeSuperseded when true disables score demotion of superseded entries.
+	// By default, entries with an incoming supersedes edge have their Score
+	// multiplied by 0.1, pushing them below the correcting entry.
+	IncludeSuperseded bool
 }
 
 const defaultRRFk = 60
