@@ -288,6 +288,72 @@ func corpus() []Scenario {
 				return out, code, "Scope contains 'proj' prefix", pass
 			},
 		},
+		// ---- known-nyo: Default lifetime is permanent ----
+		//
+		// Known-nyo decision: TTL is opt-in. Unflagged `known add` must store an
+		// entry with no ExpiresAt. Verified by: add → extract ULID → show --json →
+		// assert entry.expires_at is absent/null.
+		//
+		// ExpectFailBaseline=true: baseline a59396f applied 90d default TTL, so
+		// show --json would return "expires_at":"..." — this scenario correctly
+		// fails on baseline and passes on the p1-ttl branch.
+		{
+			ID:                 "Nyo-no-ttl-permanent",
+			Name:               "add without --ttl: entry has no expires_at (permanent by default)",
+			AuditMode:          "known-nyo (p1-ttl): TTL opt-in; default lifetime is permanent",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+				addOut, code := run(bin, env, dir, "add", "permanent fact without ttl flag nyo")
+				if code != 0 {
+					return addOut, code, "add exit 0", false
+				}
+				ulid := reULID.FindString(addOut)
+				if ulid == "" {
+					return addOut, -1, "add output must contain ULID", false
+				}
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", ulid})
+				if showCode != 0 {
+					return showOut, showCode, "show exit 0", false
+				}
+				// expires_at is omitempty: absent or null means permanent.
+				hasExpiry := strings.Contains(showOut, `"expires_at"`)
+				pass := !hasExpiry
+				return addOut + "\n---show--json---\n" + showOut, showCode,
+					"show --json output must NOT contain \"expires_at\" key", pass
+			},
+		},
+
+		// ---- known-nyo: Explicit --ttl sets expires_at (regression guard) ----
+		//
+		// When --ttl is provided, show --json must include "expires_at".
+		// Baseline already applied TTL; this is a regression guard (non-xfail).
+		{
+			ID:        "Nyo-explicit-ttl-sets-expiry",
+			Name:      "add with --ttl 24h: show --json contains expires_at",
+			AuditMode: "known-nyo (p1-ttl): explicit --ttl must persist ExpiresAt",
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+				addOut, code := runArgs(bin, env, dir, []string{"add", "ephemeral fact with explicit ttl nyo", "--ttl", "24h"})
+				if code != 0 {
+					return addOut, code, "add exit 0", false
+				}
+				ulid := reULID.FindString(addOut)
+				if ulid == "" {
+					return addOut, -1, "add output must contain ULID", false
+				}
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", ulid})
+				if showCode != 0 {
+					return showOut, showCode, "show exit 0", false
+				}
+				hasExpiry := strings.Contains(showOut, `"expires_at"`)
+				pass := hasExpiry
+				return addOut + "\n---show--json---\n" + showOut, showCode,
+					"show --json output must contain \"expires_at\" key", pass
+			},
+		},
 	}
 }
 

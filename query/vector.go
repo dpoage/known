@@ -22,6 +22,10 @@ func (e *Engine) SearchVector(ctx context.Context, opts VectorOptions) ([]Result
 		opts.Limit = 10
 	}
 
+	if e.embedder == nil {
+		return nil, ErrNoEmbedder
+	}
+
 	// Embed the query text.
 	queryVec, err := e.embedder.Embed(ctx, opts.Text)
 	if err != nil {

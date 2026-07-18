@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -608,9 +609,124 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	return results, nil
 }
 
-// SearchText is not implemented for PostgreSQL. Use SearchSimilar for vector search.
+// SearchText finds entries matching a full-text query within the given scope.
+// Uses PostgreSQL tsvector/tsquery with ts_rank for relevance scoring.
+//
+// Semantic contract matches SQLite SearchText:
+//   - Empty query returns an error.
+//   - Scope filter is inclusive: exact match + descendants (scope LIKE 'scope.%').
+//   - Results are ordered by descending ts_rank (most relevant first).
+//   - Distance field holds the ts_rank score (positive; higher = more relevant).
+//     This is inverted from SQLite's BM25 (negative; more negative = more relevant)
+//     but RRF in hybrid.go uses only rank position, so the sign difference is safe.
+//   - Expired entries are excluded.
+//   - Empty result set returns nil, nil (not an error).
+//
+// Semantic delta from SQLite: SQLite BM25 scores are negative; Postgres ts_rank
+// scores are positive. Both are consistent within their own backend and RRF
+// (used by hybrid search) normalises by position, making this difference harmless.
 func (s *EntryStore) SearchText(ctx context.Context, query string, scope string, limit int) ([]storage.SimilarityResult, error) {
-	return nil, fmt.Errorf("full-text search not implemented for PostgreSQL backend")
+	if query == "" {
+		return nil, fmt.Errorf("query text must not be empty")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	conn := s.conn(ctx)
+	now := time.Now()
+
+	// Pass 1: rank IDs using the precomputed tsvector GIN index.
+	// plainto_tsquery turns the free-form query string into a tsquery safely
+	// (no special syntax needed from callers, matching SQLite's FTS5 sanitization intent).
+	// ts_rank returns a float between 0 and 1; higher is more relevant.
+	rows, err := conn.Query(ctx, `
+		SELECT id, ts_rank(search_vec, plainto_tsquery('english', $1)) AS rank
+		FROM entries
+		WHERE search_vec @@ plainto_tsquery('english', $1)
+		  AND (scope = $2 OR scope LIKE $3)
+		  AND (expires_at IS NULL OR expires_at > $4)
+		ORDER BY rank DESC, id
+		LIMIT $5
+	`, query, scope, scope+".%", now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search text (scan): %w", err)
+	}
+
+	type candidate struct {
+		id   string
+		rank float64
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.rank); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan text candidate: %w", err)
+		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate text candidates: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	// Pass 2: fetch full rows for the winners.
+	rankByID := make(map[string]float64, len(candidates))
+	ids := make([]string, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.id
+		rankByID[c.id] = c.rank
+	}
+
+	fetchRows, err := conn.Query(ctx, `SELECT `+entryColumns+` FROM entries WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("search text (fetch): %w", err)
+	}
+	defer fetchRows.Close()
+
+	results := make([]storage.SimilarityResult, 0, len(candidates))
+	for fetchRows.Next() {
+		entry, err := scanEntryFromRowsV2(fetchRows)
+		if err != nil {
+			return nil, fmt.Errorf("scan text result: %w", err)
+		}
+		results = append(results, storage.SimilarityResult{
+			Entry:    *entry,
+			Distance: rankByID[entry.ID.String()],
+		})
+	}
+	if err := fetchRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate text results: %w", err)
+	}
+
+	// Re-sort by rank descending then ID ascending (ANY query doesn't preserve order;
+	// ID tiebreaks equal-scoring results deterministically).
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Distance != results[j].Distance {
+			return results[i].Distance > results[j].Distance
+		}
+		return results[i].Entry.ID.String() < results[j].Entry.ID.String()
+	})
+
+	if len(results) > 0 {
+		resultEntries := make([]model.Entry, len(results))
+		for i := range results {
+			resultEntries[i] = results[i].Entry
+		}
+		if err := loadLabelsForEntries(ctx, conn, resultEntries); err != nil {
+			return nil, fmt.Errorf("load labels: %w", err)
+		}
+		for i := range results {
+			results[i].Entry = resultEntries[i]
+		}
+	}
+
+	return results, nil
 }
 
 // ListLabels returns all distinct labels across all entries, sorted alphabetically.
@@ -651,7 +767,7 @@ func scanEntryV2(row pgx.Row) (*model.Entry, error) {
 		entry       model.Entry
 		idStr       string
 		contentHash string
-		embVec      pgvector.Vector
+		embVec      *pgvector.Vector
 		embDim      *int
 		embMod      *string
 		srcType     string
@@ -687,7 +803,7 @@ func scanEntryFromRowsV2(rows pgx.Rows) (*model.Entry, error) {
 		entry       model.Entry
 		idStr       string
 		contentHash string
-		embVec      pgvector.Vector
+		embVec      *pgvector.Vector
 		embDim      *int
 		embMod      *string
 		srcType     string
@@ -722,7 +838,7 @@ func populateEntryV2(
 	entry model.Entry,
 	idStr string,
 	contentHash string,
-	embVec pgvector.Vector,
+	embVec *pgvector.Vector,
 	embDim *int, embMod *string,
 	srcType, srcRef string,
 	srcMeta []byte,
@@ -740,7 +856,9 @@ func populateEntryV2(
 	entry.ContentHash = contentHash
 	entry.Version = version
 
-	entry.Embedding = embVec.Slice()
+	if embVec != nil {
+		entry.Embedding = embVec.Slice()
+	}
 	if embDim != nil {
 		entry.EmbeddingDim = *embDim
 	}

@@ -105,8 +105,9 @@ func initApp(ctx context.Context, gf globalFlags, needsEmbedder bool) (*App, err
 		app.Engine = query.New(app.Entries, app.Edges, embedder)
 	} else {
 		// Create engine without embedder for graph-only commands.
-		// SearchVector/SearchHybrid will panic if called without an embedder,
-		// but Traverse, FindPath, FindConflicts, and DetectAllConflicts are safe.
+		// SearchVector/SearchHybrid return ErrNoEmbedder (not panic) when called
+		// without an embedder; Traverse, FindPath, FindConflicts, and
+		// DetectAllConflicts are safe and do not require one.
 		app.Engine = query.New(app.Entries, app.Edges, nil)
 	}
 

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/dpoage/known/model"
 	"github.com/spf13/viper"
@@ -16,15 +15,16 @@ type AppConfig struct {
 	DSN               string
 	JSON              bool
 	Quiet             bool
-	MaxContentLength  int                                // default 4096
-	SearchThreshold   float64                            // default 0.4
-	RecallLimit       int                                // default 5
-	RecallExpandDepth int                                // default 0
-	RecallRecency     float64                            // default 0.1
-	DefaultTTL        map[model.SourceType]time.Duration // source type -> auto-TTL
-	ScopeRoot         string                             // project root dir: .known.yaml dir, marker-derived, or global scope_root
-	ScopePrefix       string                             // scope prefix: .known.yaml scope_prefix, else sanitized marker-root dir name
-	DefaultScope      string                             // auto-derived scope from cwd relative to ScopeRoot
+	MaxContentLength  int     // default 4096
+	SearchThreshold   float64 // default 0.4
+	RecallLimit       int     // default 5
+	RecallExpandDepth int     // default 0
+	RecallRecency     float64 // default 0.1
+	// DefaultTTL is intentionally absent: TTL is opt-in via --ttl flag.
+	// Unflagged adds are permanent (no ExpiresAt set).
+	ScopeRoot    string // project root dir: .known.yaml dir, marker-derived, or global scope_root
+	ScopePrefix  string // scope prefix: .known.yaml scope_prefix, else sanitized marker-root dir name
+	DefaultScope string // auto-derived scope from cwd relative to ScopeRoot
 }
 
 // QualifyScope prepends the project's scope prefix to a user-provided scope value.
@@ -203,32 +203,7 @@ func loadAppConfig(gf globalFlags) (*AppConfig, error) {
 		cfg.RecallRecency = viper.GetFloat64("recall_recency")
 	}
 
-	// 11. DefaultTTL: hardcoded defaults, overridable by project then global.
-	cfg.DefaultTTL = map[model.SourceType]time.Duration{
-		model.SourceConversation: 7 * 24 * time.Hour,  // 7 days
-		model.SourceManual:       90 * 24 * time.Hour, // 90 days
-	}
-	// Override from global config (e.g., default_ttl.conversation: 168h).
-	for _, st := range []model.SourceType{model.SourceFile, model.SourceURL, model.SourceConversation, model.SourceManual} {
-		key := "default_ttl." + string(st)
-		if viper.IsSet(key) {
-			d, err := time.ParseDuration(viper.GetString(key))
-			if err != nil {
-				return nil, fmt.Errorf("invalid default_ttl.%s: %w", st, err)
-			}
-			cfg.DefaultTTL[st] = d
-		}
-	}
-	// Override from project config (takes precedence over global).
-	if projCfg != nil {
-		for stKey, durStr := range projCfg.DefaultTTL {
-			d, err := time.ParseDuration(durStr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid project default_ttl.%s: %w", stKey, err)
-			}
-			cfg.DefaultTTL[model.SourceType(stKey)] = d
-		}
-	}
+	// DefaultTTL removed: TTL is strictly opt-in via --ttl. No auto-application.
 
 	return cfg, nil
 }

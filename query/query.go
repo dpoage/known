@@ -7,6 +7,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -29,6 +30,14 @@ const (
 	// ReachText means the result was found via full-text search.
 	ReachText ReachMethod = "text"
 )
+
+// ErrNoEmbedder is returned by SearchVector and SearchHybrid when the engine
+// was created without an embedder (embed.Embedder is nil). Callers that handle
+// this error explicitly can provide a friendlier message or fall back to text
+// search. The needsEmbedder guard in cmd/root.go remains as a UX fast-path so
+// users get the error before the DB is even opened, but it is no longer the
+// only safety net — this sentinel makes the engine safe to call in any order.
+var ErrNoEmbedder = fmt.Errorf("no embedder configured: vector search requires an embedding model")
 
 // Result is a single query result with full metadata, provenance, scores,
 // conflict flags, and information about how the result was reached.
@@ -137,9 +146,25 @@ type HybridOptions struct {
 	// influence of high-ranked results. Standard default is 60.
 	// Zero means use the default (60).
 	RRFk int
+
+	// TotalLimit caps the final combined result set (vector + expansion)
+	// after sorting by unified score. Zero means unlimited.
+	// Wire the --limit flag here so it governs total output, not just the
+	// vector phase (see known-6hj).
+	TotalLimit int
 }
 
 const defaultRRFk = 60
+
+// expansionDepthDecay is applied per hop during graph expansion scoring.
+// A score at depth d is multiplied by expansionDepthDecay^d, so each
+// additional hop reduces the inherited relevance by ~20 %. The value 0.8
+// is conservative enough to keep depth-1 neighbours competitive with
+// direct results while still penalising deep, weakly-connected nodes.
+// Chosen to satisfy: decay^2 < 0.65, ensuring a depth-2 node can only
+// beat a direct 0.8-score result if it has parentScore*edge >= 0.96.
+// Do NOT add a second decay constant; adjust this one if re-tuning.
+const expansionDepthDecay = 0.8
 
 func (o HybridOptions) rrfK() int {
 	if o.RRFk > 0 {

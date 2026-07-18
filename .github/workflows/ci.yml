@@ -7,6 +7,29 @@ on:
   pull_request:
 
 jobs:
+  # ── build ──────────────────────────────────────────────────────────────────
+  # go vet does not link main packages; a separate build step catches linker
+  # errors in cmd/known and any other main packages.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: build
+        run: go build ./...
+
+  # ── vet + unit tests (with race detector) ──────────────────────────────────
+  # Known third-party race: github.com/gomlx/gomlx@v0.26.0/backends/simplego
+  # executeParallel workers race on shared buffers.  This surfaces via
+  # cmd.TestRunLink_ContentAddressable and cmd.TestRunLink_Ambiguous (which
+  # call embed.(*HugotEmbedder).Embed → hugot/backends.RunSessionOnBatch →
+  # gomlx simplego).  The race is entirely inside the upstream gomlx dependency,
+  # not in project code.  Tracked for upstream fix; -race is kept here so any
+  # NEW race in project code is caught immediately.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -16,6 +39,66 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - run: go vet ./...
+      - name: vet
+        run: go vet ./...
 
-      - run: go test ./...
+      - name: test (race)
+        run: go test -race ./...
+
+  # ── lint ───────────────────────────────────────────────────────────────────
+  # Uses .golangci.yml in the repo root.  errcheck/ineffassign/staticcheck/unused
+  # are disabled today — each has a comment in .golangci.yml explaining why and
+  # a follow-up cleanup task.  All other default linters run.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
+  # ── integration: Postgres (testcontainers) + hermetic acceptance ───────────
+  # storage/postgres/TestMain spins up pgvector/pgvector:pg17 via testcontainers
+  # (Docker is available on ubuntu-latest runners).  Set KNOWN_INTEGRATION=1 to
+  # un-gate TestMain; TESTCONTAINERS_RYUK_DISABLED=true avoids the Ryuk reaper
+  # container which requires extra Docker permissions on some runners.
+  #
+  # Hermetic tests also included:
+  #   test/acceptance — in-memory SQLite, //go:build integration gated,
+  #   no network, no model downloads.
+  #
+  # EXCLUDED (network/model-download dependent — flakier than the gap):
+  #   embed/integration_test.go — TestOllamaIntegration requires Ollama at
+  #     localhost:11434; TestHugotIntegration downloads all-MiniLM-L6-v2
+  #     (~80 MB from HuggingFace).  Run locally: go test -tags integration ./embed/...
+  #   test/cli/cli_test.go — builds and exercises the binary end-to-end via
+  #     hugot, which downloads the same ONNX model on first run.
+  #     Run locally: go test -tags integration ./test/cli/...
+  #
+  # NOTE: 001_initial.up.sql:62 has a partial index using NOW() (STABLE, not
+  # IMMUTABLE) which Postgres rejects.  This is a pre-existing bug on main,
+  # being fixed in the p1-pg branch (PgParity).  The job structure is correct;
+  # the postgres suite will turn green once that migration fix is merged.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: postgres integration tests
+        env:
+          KNOWN_INTEGRATION: "1"
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: go test -v -timeout 5m ./storage/postgres/...
+
+      - name: acceptance integration tests (hermetic SQLite)
+        run: go test -tags integration -v ./test/acceptance/...
