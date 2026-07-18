@@ -127,6 +127,26 @@ select, input {
   color: var(--text);
   font-size: 12px;
   padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.loaded-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loaded-scope-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.loaded-scope-sep {
+  color: var(--text-dim);
 }
 
 .search-field {

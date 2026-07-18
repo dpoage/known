@@ -172,16 +172,36 @@ function hashHue(str) {
 function scopeSegment(scope) {
   return (scope || "").split(".")[0] || "(none)";
 }
+
+// Rank-based palette (round 4): built once at boot from api/meta's distinct
+// project segments, hue = sort-rank * golden-angle. Guarantees a minimum
+// pairwise separation across every scope known at boot -- hashing alone
+// cannot (e.g. real-world "bugbot"/"llmkit" hashed only ~17deg apart).
+// Empty until loadMeta() populates it; scopeColor/mutedScopeColor fall
+// back to the hash for any segment not present in it.
+const GOLDEN_ANGLE_DEG = 137.508;
+const scopePalette = new Map();
+function buildScopePalette(meta) {
+  const segments = new Set();
+  for (const s of (meta && meta.scopes) || []) segments.add(scopeSegment(s));
+  const sorted = Array.from(segments).sort();
+  scopePalette.clear();
+  sorted.forEach((seg, i) => scopePalette.set(seg, (i * GOLDEN_ANGLE_DEG) % 360));
+}
+function hueForSegment(segment) {
+  return scopePalette.has(segment) ? scopePalette.get(segment) : hashHue(segment);
+}
 function scopeColor(scope) {
-  return "hsl(" + hashHue(scopeSegment(scope)) + ", 55%, 55%)";
+  return "hsl(" + hueForSegment(scopeSegment(scope)) + ", 55%, 55%)";
 }
 // Desaturated/darkened variant of scopeColor for external:true ghost nodes
-// -- same hue-hash so a scope is still recognizable at a glance, but
+// -- same hue as the vivid variant (rank-based or hash-fallback, whichever
+// scopeColor used) so a scope is still recognizable at a glance, but
 // visually reads as "grayed out" regardless of scope, distinct from a
 // superseded node (which keeps its normal vivid scopeColor, just dimmed
 // by opacity).
 function mutedScopeColor(scope) {
-  return "hsl(" + hashHue(scopeSegment(scope)) + ", 20%, 38%)";
+  return "hsl(" + hueForSegment(scopeSegment(scope)) + ", 20%, 38%)";
 }
 
 /* ------------------------------------------------------------------ *
@@ -372,7 +392,40 @@ function recomputeDerived() {
       });
     });
   });
-  el.loadedScopes.textContent = loadedSegments.size ? Array.from(loadedSegments).sort().join(" + ") : "\u2014";
+  renderLoadedScopesIndicator(loadedSegments);
+}
+
+// DOM-only rendering (createElement + textContent/style, never innerHTML
+// with interpolated content) -- scope segment strings are attacker-
+// controlled (arbitrary entry scope values), so this must stay immune to
+// injection the same way the rest of the panel/legend rendering is.
+function renderLoadedScopesIndicator(loadedSegments) {
+  el.loadedScopes.innerHTML = ""; // clear only, never assigned interpolated content
+  if (!loadedSegments.size) {
+    el.loadedScopes.textContent = "\u2014";
+    return;
+  }
+  const sorted = Array.from(loadedSegments).sort();
+  sorted.forEach((seg, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "loaded-scope-sep";
+      sep.textContent = "+";
+      el.loadedScopes.appendChild(sep);
+    }
+    const chip = document.createElement("span");
+    chip.className = "loaded-scope-chip";
+    const swatch = document.createElement("span");
+    swatch.className = "loaded-scope-swatch";
+    // Same color a primary node of this project renders with -- scopeColor
+    // on a bare segment is a no-op through scopeSegment's split(".").
+    swatch.style.background = scopeColor(seg);
+    const label = document.createElement("span");
+    label.textContent = seg;
+    chip.appendChild(swatch);
+    chip.appendChild(label);
+    el.loadedScopes.appendChild(chip);
+  });
 }
 
 function runLayout(randomize) {
@@ -462,6 +515,7 @@ function addNodeLegendItem(label, styleSwatch) {
 async function loadMeta() {
   const meta = await api.meta();
   currentMeta = meta;
+  buildScopePalette(meta);
   populateSelect(el.scopeSelect, meta.scopes || [], meta.default_scope || "", "(all scopes)");
   populateSelect(el.labelSelect, meta.labels || [], "", "(all labels)");
   renderLegend();
