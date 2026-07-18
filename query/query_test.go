@@ -106,7 +106,7 @@ func (m *mockEntryRepo) SearchSimilar(_ context.Context, query []float32, scope 
 		if !e.HasEmbedding() {
 			continue
 		}
-		if e.Scope != scope && !strings.HasPrefix(e.Scope, scope+".") {
+		if scope != "" && e.Scope != scope && !strings.HasPrefix(e.Scope, scope+".") {
 			continue
 		}
 		if e.ExpiresAt != nil && time.Now().After(*e.ExpiresAt) {

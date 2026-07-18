@@ -163,7 +163,7 @@ func (p *Printer) PrintMessage(format string, args ...any) {
 func (p *Printer) PrintRecallResults(results []query.Result, lowRelevance bool) {
 	if p.json {
 		type recallJSON struct {
-			LowRelevance bool         `json:"low_relevance,omitempty"`
+			LowRelevance bool           `json:"low_relevance,omitempty"`
 			Results      []query.Result `json:"results"`
 		}
 		out := recallJSON{LowRelevance: lowRelevance, Results: results}
@@ -270,6 +270,7 @@ type suggestionResult struct {
 	Title    string  `json:"title"`
 	EdgeType string  `json:"edge_type"`
 	Score    float64 `json:"score"`
+	Scope    string  `json:"scope"`
 }
 
 // PrintAddResult prints the confirmation block after a successful add.
@@ -282,8 +283,11 @@ type suggestionResult struct {
 //	Scope   <scope>
 //	        "<content truncated to 120 chars>"
 //	Link?   <edge-type>:<ULID> "<title>"   (repeated, omitted when empty)
+//	                       a trailing "[<scope>]" is appended when the
+//	                       suggestion's scope differs from the entry's own
 //
-// JSON format: addResult object (see addResult type).
+// JSON format: addResult object (see addResult type). Each suggestion's
+// Scope field is always populated (not just on a cross-scope suggestion).
 func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []query.LinkSuggestion) {
 	if p.json {
 		sugg := make([]suggestionResult, len(suggestions))
@@ -293,6 +297,7 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 				Title:    s.Entry.Title,
 				EdgeType: string(s.EdgeType),
 				Score:    s.Score,
+				Scope:    s.Entry.Scope,
 			}
 		}
 		var hints []string
@@ -332,7 +337,11 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 		if title == "" {
 			title = truncate(s.Entry.Content, 40)
 		}
-		fmt.Fprintf(p.w, "%-9s %s:%s %q\n", "Link?", s.EdgeType, s.Entry.ID, title)
+		if s.Entry.Scope != e.Scope {
+			fmt.Fprintf(p.w, "%-9s %s:%s %q [%s]\n", "Link?", s.EdgeType, s.Entry.ID, title, s.Entry.Scope)
+		} else {
+			fmt.Fprintf(p.w, "%-9s %s:%s %q\n", "Link?", s.EdgeType, s.Entry.ID, title)
+		}
 	}
 	fmt.Fprintln(p.w)
 }

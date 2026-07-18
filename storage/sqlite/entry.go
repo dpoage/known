@@ -489,14 +489,21 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	conn := s.conn(ctx)
 
 	// Pass 1: read only id + embedding BLOB to rank candidates.
-	rows, err := conn.QueryContext(ctx, `
+	// An empty scope means unfiltered (global search across all scopes),
+	// matching EntryFilter.List's "empty = unfiltered" convention.
+	scanQuery := `
 		SELECT id, embedding
 		FROM entries
 		WHERE embedding IS NOT NULL
 		  AND embedding_dim = ?
-		  AND (scope = ? OR scope LIKE ?)
 		  AND (expires_at IS NULL OR expires_at > ?)
-	`, len(query), scope, scope+".%", now)
+	`
+	scanArgs := []any{len(query), now}
+	if scope != "" {
+		scanQuery += " AND (scope = ? OR scope LIKE ?)"
+		scanArgs = append(scanArgs, scope, scope+".%")
+	}
+	rows, err := conn.QueryContext(ctx, scanQuery, scanArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("search similar (scan): %w", err)
 	}
@@ -608,17 +615,23 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 	conn := s.conn(ctx)
 
 	// Pass 1: fetch only IDs and ranks from FTS5 to avoid reading full rows
-	// (including embedding BLOBs) for all matches.
-	rows, err := conn.QueryContext(ctx, `
+	// (including embedding BLOBs) for all matches. An empty scope means
+	// unfiltered (global search across all scopes).
+	textQuery := `
 		SELECT e.id, fts.rank
 		FROM entries_fts fts
 		JOIN entries e ON e.rowid = fts.rowid
 		WHERE entries_fts MATCH ?
-		  AND (e.scope = ? OR e.scope LIKE ?)
 		  AND (e.expires_at IS NULL OR e.expires_at > ?)
-		ORDER BY fts.rank, e.id
-		LIMIT ?
-	`, query, scope, scope+".%", now, limit)
+	`
+	textArgs := []any{query, now}
+	if scope != "" {
+		textQuery += " AND (e.scope = ? OR e.scope LIKE ?)"
+		textArgs = append(textArgs, scope, scope+".%")
+	}
+	textQuery += " ORDER BY fts.rank, e.id LIMIT ?"
+	textArgs = append(textArgs, limit)
+	rows, err := conn.QueryContext(ctx, textQuery, textArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("search text (scan): %w", err)
 	}
