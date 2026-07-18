@@ -1,0 +1,32 @@
+{
+  "scenarios": {},
+  "overall": 0,
+  "effectiveness": {
+    "full_dump": {
+      "1": 0.8,
+      "2": 0.9,
+      "3": 0.9,
+      "4": 1,
+      "5": 0.5
+    },
+    "no_memory": {
+      "1": 0.4,
+      "2": 0,
+      "3": 0.3,
+      "4": 0.1,
+      "5": 0
+    },
+    "with_memory": {
+      "1": 0.6,
+      "2": 0.8,
+      "3": 0.9,
+      "4": 1,
+      "5": 0.5
+    }
+  },
+  "effectiveness_overall": {
+    "full_dump": 0.82,
+    "no_memory": 0.16,
+    "with_memory": 0.76
+  }
+}

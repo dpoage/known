@@ -43,3 +43,6 @@ Thumbs.db
 .beads-credential-key
 .beads/proxieddb/
 /capture
+# Benchmark generated artifacts
+bench/testdata/seed.db
+bench/testdata/baseline.json

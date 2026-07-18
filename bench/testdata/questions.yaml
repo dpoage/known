@@ -1,0 +1,418 @@
+scenario: pipeliner-codebase
+sessions:
+  - session: 1
+    name: "Onboarding"
+    description: "Basic project structure, entry points, and package layout"
+    questions:
+      - id: s1_q1
+        question: "What is the Go module name declared in go.mod?"
+        recall_query: "module name go.mod"
+        answer:
+          type: exact
+          value: "pipeliner"
+
+      - id: s1_q2
+        question: "What function in main.go is called first to load configuration?"
+        recall_query: "main.go entry point config loading"
+        answer:
+          type: exact
+          value: "config.Load"
+
+      - id: s1_q3
+        question: "What is the default config file path used when no CLI argument is provided?"
+        recall_query: "default config file path"
+        answer:
+          type: exact
+          value: "config/default.yaml"
+
+      - id: s1_q4
+        question: "List all top-level packages under internal/ (just the directory names, alphabetically)."
+        recall_query: "internal packages directory structure"
+        answer:
+          type: exact_set
+          value:
+            - auth
+            - config
+            - errors
+            - output
+            - pipeline
+            - processors
+            - registry
+
+      - id: s1_q5
+        question: "What interface must all data processors implement? Give the fully qualified name as package.Interface."
+        recall_query: "processor interface definition"
+        answer:
+          type: exact
+          value: "registry.Processor"
+
+      - id: s1_q6
+        question: "What are the three methods defined on the Processor interface?"
+        recall_query: "Processor interface methods"
+        answer:
+          type: exact_set
+          value:
+            - Name
+            - Process
+            - Validate
+
+      - id: s1_q7
+        question: "What struct type represents a single data record flowing through the pipeline?"
+        recall_query: "data record struct type"
+        answer:
+          type: exact
+          value: "config.Record"
+
+      - id: s1_q8
+        question: "What are the fields of the Record struct (names only)?"
+        recall_query: "Record struct fields"
+        answer:
+          type: exact_set
+          value:
+            - ID
+            - Fields
+            - Meta
+            - Raw
+
+      - id: s1_q9
+        question: "How does main.go ensure processor init() functions run? What import syntax is used?"
+        recall_query: "processor registration blank import"
+        answer:
+          type: contains
+          value: "_ \"pipeliner/internal/processors\""
+
+      - id: s1_q10
+        question: "What function builds the ordered processor chain from config names?"
+        recall_query: "build processor chain from names"
+        answer:
+          type: exact
+          value: "registry.BuildChain"
+
+  - session: 2
+    name: "Feature Work"
+    description: "Understanding data flow, processor registration, and config-driven behavior"
+    depends_on_knowledge_from: [1]
+    questions:
+      - id: s2_q1
+        question: "What are the registered names of all four processors (as they appear in the registry, not filenames)?"
+        recall_query: "processor registration names registry"
+        answer:
+          type: exact_set
+          value:
+            - csv-transform
+            - json-transform
+            - xml-transform
+            - filter
+
+      - id: s2_q2
+        question: "The file csv.go registers its processor under what name?"
+        recall_query: "csv processor registration name vs filename"
+        answer:
+          type: exact
+          value: "csv-transform"
+
+      - id: s2_q3
+        question: "What three processors does default.yaml configure in its pipeline, in order?"
+        recall_query: "default config processor list"
+        answer:
+          type: exact
+          value:
+            - csv-transform
+            - filter
+            - json-transform
+
+      - id: s2_q4
+        question: "When pipeline.parallel is false, what execution strategy is used — and what happens on the first error?"
+        recall_query: "sequential pipeline execution error handling"
+        answer:
+          type: contains
+          value: "fail"
+
+      - id: s2_q5
+        question: "When pipeline.parallel is true, what function is called to execute the processors?"
+        recall_query: "parallel pipeline execution function"
+        answer:
+          type: exact
+          value: "RunParallel"
+
+      - id: s2_q6
+        question: "What does the filter processor's default rule do when a record has field status equal to 'deleted'?"
+        recall_query: "filter processor default rules"
+        answer:
+          type: exact
+          value: "drop"
+
+      - id: s2_q7
+        question: "What middleware wraps each processor in sequential mode? Give the function name."
+        recall_query: "processor middleware wrapper function"
+        answer:
+          type: exact
+          value: "WithMiddleware"
+
+      - id: s2_q8
+        question: "What are the two possible output.type values that NewWriter supports?"
+        recall_query: "output writer types supported"
+        answer:
+          type: exact_set
+          value:
+            - file
+            - webhook
+
+      - id: s2_q9
+        question: "What format does the filter processor produce according to the formatMap in validate.go?"
+        recall_query: "filter processor output format validate"
+        answer:
+          type: exact
+          value: "passthrough"
+
+      - id: s2_q10
+        question: "What input formats does json-transform accept according to formatMap?"
+        recall_query: "json-transform accepted input formats"
+        answer:
+          type: exact_set
+          value:
+            - raw
+            - json
+            - csv
+
+  - session: 3
+    name: "Bug Investigation"
+    description: "Cross-file reasoning to find the three planted bugs"
+    depends_on_knowledge_from: [1, 2]
+    questions:
+      - id: s3_q1
+        question: "What function in xml.go handles parsing XML attributes from a tag?"
+        recall_query: "XML attribute parsing function"
+        answer:
+          type: exact
+          value: "parseAttributes"
+
+      - id: s3_q2
+        question: "What character does parseAttributes split on to separate attribute keys from values?"
+        recall_query: "parseAttributes split character bug"
+        answer:
+          type: exact
+          value: ":"
+
+      - id: s3_q3
+        question: "What character should parseAttributes split on instead (the correct XML attribute delimiter)?"
+        recall_query: "XML attribute assignment character"
+        answer:
+          type: exact
+          value: "="
+
+      - id: s3_q4
+        question: "In RunParallel, what synchronization primitive protects the errors slice?"
+        recall_query: "parallel execution mutex synchronization"
+        answer:
+          type: exact
+          value: "sync.Mutex"
+
+      - id: s3_q5
+        question: "In RunParallel, what synchronization protects the results slice when goroutines append to it?"
+        recall_query: "parallel results slice race condition"
+        answer:
+          type: one_of
+          value:
+            - "none"
+            - "nothing"
+
+      - id: s3_q6
+        question: "In config.Load(), which function is called first — loadDefaults or loadOverrides?"
+        recall_query: "config Load function call order defaults overrides"
+        answer:
+          type: exact
+          value: "loadOverrides"
+
+      - id: s3_q7
+        question: "In config.Load(), which function is called second — loadDefaults or loadOverrides?"
+        recall_query: "config load order bug defaults overwrite overrides"
+        answer:
+          type: exact
+          value: "loadDefaults"
+
+      - id: s3_q8
+        question: "Because loadDefaults runs after loadOverrides, what value does pipeline.max_records end up with when loading config/default.yaml (which triggers production.yaml as override)?"
+        recall_query: "config override bug max_records effective value"
+        answer:
+          type: exact
+          value: "10000"
+
+      - id: s3_q9
+        question: "What happens to an XML attribute like xml:lang=\"en\" when parseAttributes processes it?"
+        recall_query: "namespaced XML attribute silent data loss"
+        answer:
+          type: contains
+          value: "drop"
+
+      - id: s3_q10
+        question: "What is the effective value of pipeline.parallel after Load() processes config/default.yaml with the production override present?"
+        recall_query: "config override bug parallel effective value"
+        answer:
+          type: one_of
+          value:
+            - "false"
+
+  - session: 4
+    name: "Refactoring"
+    description: "Understanding coupling, blast radius, and validation design"
+    depends_on_knowledge_from: [1, 2, 3]
+    questions:
+      - id: s4_q1
+        question: "If you rename the csv-transform registration to 'csv', which file outside of processors/ also needs updating?"
+        recall_query: "processor registration name dependencies formatMap validate"
+        answer:
+          type: one_of
+          value:
+            - "internal/pipeline/validate.go"
+            - "pipeline/validate.go"
+
+      - id: s4_q2
+        question: "What package imports the auth package? Give the package name, not the file."
+        recall_query: "auth package imports coupling"
+        answer:
+          type: exact
+          value: "output"
+
+      - id: s4_q3
+        question: "What does Processor.Validate() return on all current processor implementations?"
+        recall_query: "processor Validate method no-op"
+        answer:
+          type: exact
+          value: "nil"
+
+      - id: s4_q4
+        question: "Where does the real chain-level format validation happen? Give the function name."
+        recall_query: "chain format validation function"
+        answer:
+          type: exact
+          value: "ValidateChain"
+
+      - id: s4_q5
+        question: "The formatMap variable is defined in which file?"
+        recall_query: "formatMap definition location"
+        answer:
+          type: one_of
+          value:
+            - "internal/pipeline/validate.go"
+            - "pipeline/validate.go"
+
+      - id: s4_q6
+        question: "If you add a new processor and forget to add it to formatMap, what error message will ValidateChain produce?"
+        recall_query: "ValidateChain unknown format mapping error"
+        answer:
+          type: contains
+          value: "unknown format mapping"
+
+      - id: s4_q7
+        question: "What data structure holds processor factories in the registry, and what is its key type and value type?"
+        recall_query: "registry processor map type factory"
+        answer:
+          type: contains
+          value: "map[string]func() Processor"
+
+      - id: s4_q8
+        question: "How many error code constants are defined in the errors package?"
+        recall_query: "error codes pipeline error categories"
+        answer:
+          type: exact
+          value: "5"
+
+      - id: s4_q9
+        question: "Which packages use the errors package (import pipeliner/internal/errors)? List the package names."
+        recall_query: "errors package dependents importers"
+        answer:
+          type: exact_set
+          value:
+            - auth
+            - output
+
+      - id: s4_q10
+        question: "What happens if ValidateChain detects the same processor name twice in a chain?"
+        recall_query: "ValidateChain duplicate processor detection"
+        answer:
+          type: contains
+          value: "duplicate processor"
+
+  - session: 5
+    name: "Code Review"
+    description: "Combining all prior knowledge for cross-cutting analysis"
+    depends_on_knowledge_from: [1, 2, 3, 4]
+    questions:
+      - id: s5_q1
+        question: "If pipeline.parallel is true and the XML processor encounters a namespaced attribute like xmlns:xsi, is the data race or the attribute loss bug hit first?"
+        recall_query: "parallel mode XML namespace attribute race condition interaction"
+        answer:
+          type: one_of
+          value:
+            - "attribute loss"
+            - "attribute"
+            - "silent data loss"
+
+      - id: s5_q2
+        question: "Which config values from production.yaml actually take effect after Load() given the call-order bug? List the keys that survive."
+        recall_query: "config override bug which production values survive"
+        answer:
+          type: one_of
+          value:
+            - "none"
+            - "nothing"
+
+      - id: s5_q3
+        question: "In production, output.type should be 'webhook' per production.yaml — but after the config bug, what is the actual effective output.type?"
+        recall_query: "config override bug effective output type"
+        answer:
+          type: exact
+          value: "file"
+
+      - id: s5_q4
+        question: "What is the complete default processor chain from default.yaml, and what final output format does that chain produce according to formatMap?"
+        recall_query: "default processor chain final output format"
+        answer:
+          type: exact
+          value: "json"
+
+      - id: s5_q5
+        question: "In sequential mode, what three cross-cutting concerns does the middleware add? List them as named in the Process method comments."
+        recall_query: "middleware cross-cutting concerns recovery timing logging"
+        answer:
+          type: exact_set
+          value:
+            - recovery
+            - timing
+            - logging
+
+      - id: s5_q6
+        question: "If strict_mode is true (as production.yaml sets) but the config bug means it reverts to false, what validation is lost in the middleware?"
+        recall_query: "strict mode middleware validation empty record ID"
+        answer:
+          type: contains
+          value: "record missing ID"
+
+      - id: s5_q7
+        question: "What function does the webhook writer use to generate HMAC signatures, and from which package?"
+        recall_query: "webhook HMAC signature signing function auth"
+        answer:
+          type: exact
+          value: "auth.Validator.SignPayload"
+
+      - id: s5_q8
+        question: "The parallel.go file deep-copies records before handing them to each goroutine. What function does this?"
+        recall_query: "parallel record deep copy function"
+        answer:
+          type: exact
+          value: "copyRecords"
+
+      - id: s5_q9
+        question: "How many total files are in the codebase under internal/ (count .go files only)?"
+        recall_query: "codebase file count internal go files"
+        answer:
+          type: exact
+          value: "16"
+
+      - id: s5_q10
+        question: "If you fix the config load order bug so overrides apply after defaults, and production.yaml takes effect, what output.type and output.endpoint would the pipeline use?"
+        recall_query: "production config webhook endpoint corrected"
+        answer:
+          type: contains
+          value: "https://api.internal.example.com/ingest"
