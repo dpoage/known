@@ -17,6 +17,7 @@ const CUSTOM_EDGE_COLOR = "#2fbf9f"; // teal fallback for any non-predefined edg
 const PREDEFINED_EDGE_TYPES = ["depends-on", "contradicts", "supersedes", "elaborates", "related-to"];
 
 const SUPERSEDED_OPACITY = 0.45;
+const GHOST_OPACITY = 0.5; // external:true boundary nodes -- distinct from superseded fade
 const IMPLICIT_EDGE_OPACITY = 0.55;
 const NODE_MIN_SIZE = 22;
 const NODE_MAX_SIZE = 64;
@@ -168,6 +169,15 @@ function scopeColor(scope) {
   const first = (scope || "").split(".")[0] || "(none)";
   return "hsl(" + hashHue(first) + ", 55%, 55%)";
 }
+// Desaturated/darkened variant of scopeColor for external:true ghost nodes
+// -- same hue-hash so a scope is still recognizable at a glance, but
+// visually reads as "grayed out" regardless of scope, distinct from a
+// superseded node (which keeps its normal vivid scopeColor, just dimmed
+// by opacity).
+function mutedScopeColor(scope) {
+  const first = (scope || "").split(".")[0] || "(none)";
+  return "hsl(" + hashHue(first) + ", 20%, 38%)";
+}
 
 /* ------------------------------------------------------------------ *
  * Cytoscape setup
@@ -189,6 +199,7 @@ const cy = cytoscape({
         "width": "data(_size)",
         "height": "data(_size)",
         "border-width": "data(_borderWidth)",
+        "border-style": "data(_borderStyle)",
         "border-color": "data(_borderColor)",
         "opacity": "data(_opacity)",
         "text-valign": "bottom",
@@ -242,6 +253,12 @@ function nodeToEleData(node) {
     created_at: node.created_at || "",
     updated_at: node.updated_at || "",
     observed_at: node.observed_at || "",
+    // Explicit boolean (never omitted) so every merge -- api/graph,
+    // api/neighbors, api/entry's node field, search/path results -- either
+    // (re)marks this node as a ghost or clears ghost state, per contract:
+    // "a node returned WITHOUT external:true by any later fetch loses
+    // ghost state".
+    external: !!node.external,
   };
 }
 
@@ -297,18 +314,25 @@ function recomputeDerived() {
       const size = Math.max(NODE_MIN_SIZE, Math.min(NODE_MAX_SIZE, NODE_MIN_SIZE + degree * NODE_SIZE_PER_DEGREE));
       const hasConflict = n.connectedEdges('[type = "contradicts"]').length > 0;
       const isSuperseded = n.connectedEdges('[type = "supersedes"]').some((e) => e.data("target") === n.id());
+      const isExternal = !!n.data("external");
       const title = n.data("title");
       const content = n.data("content") || "";
       const label = title || (content ? content.slice(0, 40) : "") || "(untitled)";
       n.data({
-        _color: scopeColor(n.data("scope")),
+        _color: isExternal ? mutedScopeColor(n.data("scope")) : scopeColor(n.data("scope")),
         _size: size,
         _borderColor: hasConflict ? "#e0473e" : "#454b58",
         _borderWidth: hasConflict ? 3 : 1,
-        _opacity: isSuperseded ? SUPERSEDED_OPACITY : 1,
+        _borderStyle: isExternal ? "dashed" : "solid",
+        // Ghost takes precedence over superseded when both are true: the
+        // "this node isn't really in your current view" signal outranks
+        // the edge-derived fade, and border-style already keeps the two
+        // states visually distinguishable on their own.
+        _opacity: isExternal ? GHOST_OPACITY : isSuperseded ? SUPERSEDED_OPACITY : 1,
         _label: label,
         _conflict: hasConflict,
         _superseded: isSuperseded,
+        _external: isExternal,
       });
     });
     cy.edges().forEach((e) => {
@@ -384,6 +408,13 @@ function renderLegend() {
   addNodeLegendItem("superseded (faded)", (swatch) => {
     swatch.style.background = "#454b58";
     swatch.style.opacity = "0.45";
+  });
+  addNodeLegendItem("external (ghost)", (swatch) => {
+    swatch.style.background = "#454b58";
+    swatch.style.borderStyle = "dashed";
+    swatch.style.borderColor = "#8a8f98";
+    swatch.style.borderWidth = "2px";
+    swatch.style.opacity = "0.5";
   });
 }
 
