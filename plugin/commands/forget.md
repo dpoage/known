@@ -1,51 +1,53 @@
 ---
-description: Find and delete a knowledge entry
-argument-hint: <query describing what to forget>
+description: Delete a knowledge entry by content or ID
+argument-hint: <exact content or ULID of the entry to forget>
 ---
 
-Find and delete a knowledge entry. Search first, confirm with the user, then delete.
+Delete a knowledge entry in one shot using `known forget`.
 
 ## Instructions
 
-1. Search for matching entries using JSON output to get IDs. Note: `--json` is a global flag and goes **before** the subcommand:
+1. Delete by exact content (preferred — no search step needed):
 
 ```bash
-known --json search '<query>'
+known forget "<exact content of the entry>" --force
 ```
 
-2. Present the matching entries to the user and ask which one(s) to delete. Show the entry content and ID for each match.
+2. If the exact content is ambiguous or unknown, the command will list candidates:
 
-3. After the user confirms, delete the selected entry:
+```
+Multiple entries match "staging API":
+  1. 01J5X... — "Staging API endpoint is api.staging.example.com"
+  2. 01J5Y... — "Staging API uses mTLS for auth"
+Use a more specific query or provide the full ID.
+```
+
+Retry with the full exact content or the ULID:
 
 ```bash
-known delete <id> --force
+known forget 01J5X... --force
 ```
 
-4. Report success back to the user.
+3. Report the deleted content back to the user so they can verify what was removed.
 
 ## Important
 
-- Always confirm with the user before deleting. Never delete without explicit approval.
-- Use `--force` on the delete command to skip the interactive prompt (since we already confirmed with the user).
-- If multiple entries match, let the user choose which to delete — don't delete all matches.
+- `known forget` resolves the query to a **single confident match** before deleting.
+  It refuses with candidates on any ambiguity — no silent wrong-target deletion.
+- Provide exact content (quoted, full string) for reliable one-shot deletion.
+- Use the ULID when content is ambiguous or the entry has been truncated/paraphrased.
+- Multi-word queries work unquoted: `known forget the staging API endpoint --force`
+  resolves the full phrase, not just the first word.
 
 ## Example
 
 User says: "/known:forget the staging API endpoint"
 
-Step 1 — Search:
 ```bash
-known --json search 'staging API endpoint'
+known forget "Staging API endpoint is api.staging.example.com" --force
 ```
 
-Step 2 — Show results and ask:
-> I found these entries:
-> 1. `01J5X...` — "Staging API endpoint is api.staging.example.com"
-> 2. `01J5Y...` — "Staging API uses mTLS for auth"
->
-> Which would you like to delete?
-
-Step 3 — Delete after confirmation:
-```bash
-known delete 01J5X... --force
+Output:
+```
+Deleted 01J5X...: Staging API endpoint is api.staging.example.com
 ```

@@ -11,14 +11,17 @@ import (
 	"golang.org/x/term"
 )
 
-// runDelete implements the "known delete" subcommand.
+// runDelete implements the "known delete" and "known forget" subcommands.
 //
-// Usage: known delete <id> [--force]
+// Usage: known delete <id|query> [--force]
+//
+//	known forget <id|query> [--force]
 //
 // Without --force, shows the entry and prompts for confirmation.
 // In quiet mode, --force is required.
-func runDelete(ctx context.Context, app *App, args []string) error {
-	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+// On deletion, the entry content is echoed so the caller can verify what was removed.
+func runDelete(ctx context.Context, app *App, args []string, cmdName string) error {
+	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	force := fs.BoolP("force", "f", false, "skip confirmation prompt")
 
 	if err := fs.Parse(args); err != nil {
@@ -26,10 +29,15 @@ func runDelete(ctx context.Context, app *App, args []string) error {
 	}
 
 	if fs.NArg() == 0 {
-		return fmt.Errorf("entry ID or query is required\nUsage: known delete <id|query> [--force]")
+		return fmt.Errorf("entry ID or query is required\nUsage: known %s <id|query> [--force]", cmdName)
 	}
 
-	id, err := resolveEntry(ctx, app, fs.Arg(0))
+	// Join all positional args with spaces so unquoted multi-word queries work
+	// symmetrically with how add/remember joins words: `known forget the mars rover`
+	// resolves the full phrase, not just "the".
+	query := strings.Join(fs.Args(), " ")
+
+	id, err := resolveEntry(ctx, app, query)
 	if err != nil {
 		return err
 	}
@@ -67,6 +75,7 @@ func runDelete(ctx context.Context, app *App, args []string) error {
 		return fmt.Errorf("delete entry: %w", err)
 	}
 
-	app.Printer.PrintMessage("Deleted entry %s", id.String())
+	// Echo deleted content so the caller can verify what was removed.
+	app.Printer.PrintMessage("Deleted %s: %s", id.String(), entry.Content)
 	return nil
 }
