@@ -165,7 +165,7 @@ function hashHue(str) {
   return Math.floor(((h * 0.6180339887498949) % 1) * 360);
 }
 function scopeColor(scope) {
-  const first = (scope || "").split("/")[0] || "(none)";
+  const first = (scope || "").split(".")[0] || "(none)";
   return "hsl(" + hashHue(first) + ", 55%, 55%)";
 }
 
