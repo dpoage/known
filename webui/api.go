@@ -32,6 +32,10 @@ type Node struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	// External is true iff this node is outside the /api/graph primary set
+	// (out-of-scope/label peer or truncation-clipped) and was pulled in only
+	// as a boundary-edge endpoint. Omitted (zero value) for primary nodes.
+	External bool `json:"external,omitempty"`
 }
 
 // Edge is a directed, typed, weighted relationship between two nodes.
@@ -299,30 +303,82 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, graph)
 }
 
-// buildGraph projects entries to nodes and includes every edge whose both
-// endpoints are present in the resulting node set.
+// buildGraph projects entries to primary nodes, then walks each primary
+// node's edges in BOTH directions (EdgesFrom and EdgesTo). An edge whose
+// other endpoint is also primary is included as-is. An edge whose other
+// endpoint is outside the primary set (a "boundary edge") is included too,
+// and that endpoint is appended to the node list as a full Node with
+// External:true (deduped). Because we only ever walk edges FROM primary
+// nodes, an edge between two external nodes is never discovered, and
+// externals never affect truncation (that's computed purely from len(entries)
+// vs the requested limit before buildGraph runs).
 func (s *Server) buildGraph(ctx context.Context, entries []model.Entry) (Graph, error) {
-	nodeSet := make(map[string]bool, len(entries))
+	primary := make(map[string]bool, len(entries))
 	nodes := make([]Node, 0, len(entries))
 	for _, e := range entries {
-		nodeSet[e.ID.String()] = true
+		primary[e.ID.String()] = true
 		nodes = append(nodes, newNode(e))
 	}
 
-	edges := make([]Edge, 0)
+	edgeSet := make(map[string]Edge)
+	external := make(map[string]bool) // peer IDs already appended as external nodes
+	dangling := make(map[string]bool) // peer IDs confirmed missing; skip re-lookup
+
 	for _, e := range entries {
 		out, err := s.edges.EdgesFrom(ctx, e.ID, storage.EdgeFilter{})
 		if err != nil {
 			return Graph{}, fmt.Errorf("edges from %s: %w", e.ID, err)
 		}
-		for _, edge := range out {
-			if nodeSet[edge.ToID.String()] {
-				edges = append(edges, newEdge(edge))
+		in, err := s.edges.EdgesTo(ctx, e.ID, storage.EdgeFilter{})
+		if err != nil {
+			return Graph{}, fmt.Errorf("edges to %s: %w", e.ID, err)
+		}
+
+		for _, edge := range append(out, in...) {
+			peerID := otherEndpoint(edge, e.ID)
+			peerKey := peerID.String()
+
+			if !primary[peerKey] && !external[peerKey] {
+				if dangling[peerKey] {
+					continue
+				}
+				peer, err := s.entries.Get(ctx, peerID)
+				if errors.Is(err, storage.ErrNotFound) {
+					// Dangling edge to a deleted entry: there's no entry
+					// data to build a full Node from, so drop the boundary
+					// edge entirely rather than fabricate a placeholder.
+					dangling[peerKey] = true
+					continue
+				}
+				if err != nil {
+					return Graph{}, fmt.Errorf("get entry %s: %w", peerID, err)
+				}
+				node := newNode(*peer)
+				node.External = true
+				nodes = append(nodes, node)
+				external[peerKey] = true
+			}
+			if primary[peerKey] || external[peerKey] {
+				edgeSet[edge.ID.String()] = newEdge(edge)
 			}
 		}
 	}
 
+	edges := make([]Edge, 0, len(edgeSet))
+	for _, edge := range edgeSet {
+		edges = append(edges, edge)
+	}
+	sortEdges(edges)
+
 	return Graph{Nodes: nodes, Edges: edges}, nil
+}
+
+// otherEndpoint returns the end of edge that is not of.
+func otherEndpoint(edge model.Edge, of model.ID) model.ID {
+	if edge.FromID == of {
+		return edge.ToID
+	}
+	return edge.FromID
 }
 
 // handleEntry implements GET /api/entry/{id}.

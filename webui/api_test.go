@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/query"
@@ -217,44 +218,71 @@ func TestHandleGraph_ScopeFilter(t *testing.T) {
 		t.Fatalf("nodes/edges must never be null: %+v", got)
 	}
 
-	gotIDs := map[string]bool{}
+	primary := map[string]bool{}
+	external := map[string]bool{}
 	for _, n := range got.Nodes {
-		gotIDs[n.ID] = true
+		if n.External {
+			external[n.ID] = true
+		} else {
+			primary[n.ID] = true
+		}
 	}
-	wantIDs := map[string]bool{
+
+	wantPrimary := map[string]bool{
 		f.oauth.ID.String():   true,
 		f.refresh.ID.String(): true,
 		f.legacy.ID.String():  true,
 	}
-	if len(gotIDs) != len(wantIDs) {
-		t.Fatalf("nodes = %v, want exactly %v", gotIDs, wantIDs)
+	if len(primary) != len(wantPrimary) {
+		t.Fatalf("primary nodes = %v, want exactly %v", primary, wantPrimary)
 	}
-	for id := range wantIDs {
-		if !gotIDs[id] {
-			t.Errorf("missing expected node %s in scope filter result", id)
+	for id := range wantPrimary {
+		if !primary[id] {
+			t.Errorf("missing expected primary node %s in scope filter result", id)
 		}
 	}
 
-	// supersedes (oauth->refresh) has both endpoints in scope; the schema
-	// edges (from root scope) must NOT appear.
-	foundSupersedes := false
-	for _, e := range got.Edges {
-		if e.ID == f.supersedes.ID.String() {
-			foundSupersedes = true
-		}
-		if e.ID == f.dependsOn.ID.String() || e.ID == f.contradicts.ID.String() {
-			t.Errorf("edge %s from outside the scope filter leaked into results", e.ID)
+	// ROUND 2: schema (root scope) is pulled in as external via the
+	// elaborates (oauth->schema) and contradicts (schema->legacy) boundary
+	// edges; ulids (root scope) via the related-to (refresh->ulids) boundary
+	// edge. orphan has no edges at all, so it must not appear at all.
+	wantExternal := map[string]bool{
+		f.schema.ID.String(): true,
+		f.ulids.ID.String():  true,
+	}
+	if len(external) != len(wantExternal) {
+		t.Fatalf("external nodes = %v, want exactly %v", external, wantExternal)
+	}
+	for id := range wantExternal {
+		if !external[id] {
+			t.Errorf("missing expected external node %s in scope filter result", id)
 		}
 	}
-	if !foundSupersedes {
-		t.Errorf("expected supersedes edge (both endpoints in scope) in results")
+	if primary[f.orphan.ID.String()] || external[f.orphan.ID.String()] {
+		t.Errorf("orphan (no edges) must not appear in scope filter result")
+	}
+
+	edgeIDs := map[string]bool{}
+	for _, e := range got.Edges {
+		edgeIDs[e.ID] = true
+	}
+	// depends-on (schema->ulids) touches NEITHER primary node, so it must
+	// stay excluded even under the round-2 boundary-edge rule.
+	if edgeIDs[f.dependsOn.ID.String()] {
+		t.Errorf("depends-on edge %s touches no primary node and must be excluded", f.dependsOn.ID)
+	}
+	for _, want := range []model.Edge{f.supersedes, f.elaborates, f.contradicts, f.relatedTo} {
+		if !edgeIDs[want.ID.String()] {
+			t.Errorf("expected boundary/interior edge %s in scope filter result", want.ID)
+		}
 	}
 }
 
 func TestHandleGraph_BothEndpointsRule(t *testing.T) {
 	f := newTestFixture(t)
 
-	// Whole-graph snapshot: every edge whose endpoints are both present.
+	// Whole-graph snapshot: every entry is primary, so no external nodes are
+	// possible and the round-1 both-endpoints-present rule still governs.
 	var got Graph
 	if code := f.get(t, "/api/graph", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
@@ -264,15 +292,242 @@ func TestHandleGraph_BothEndpointsRule(t *testing.T) {
 	for _, e := range got.Edges {
 		edgeIDs[e.ID] = true
 	}
-	// dangling points at a non-existent entry, so it must be excluded even
-	// though its source (schema) is present.
+	// dangling points at a non-existent entry: there is no entry data to
+	// build a Node from, so it must be excluded even though its source
+	// (schema) is present.
 	if edgeIDs[f.dangling.ID.String()] {
-		t.Errorf("dangling edge %s must be excluded (peer not in node set)", f.dangling.ID)
+		t.Errorf("dangling edge %s must be excluded (peer entry does not exist)", f.dangling.ID)
 	}
 	for _, want := range []model.Edge{f.dependsOn, f.contradicts, f.supersedes, f.elaborates, f.relatedTo} {
 		if !edgeIDs[want.ID.String()] {
 			t.Errorf("expected edge %s (both endpoints present) in whole-graph result", want.ID)
 		}
+	}
+}
+
+func TestHandleGraph_NoFilterNoTruncation_ZeroExternals(t *testing.T) {
+	f := newTestFixture(t)
+
+	var got Graph
+	if code := f.get(t, "/api/graph", &got); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if got.Truncated {
+		t.Fatalf("truncated = true, want false (default limit 500 comfortably covers the fixture)")
+	}
+	for _, n := range got.Nodes {
+		if n.External {
+			t.Errorf("node %s: external = true, want false (no scope/label filter, no truncation)", n.ID)
+		}
+	}
+}
+
+func TestHandleGraph_LabelBoundary(t *testing.T) {
+	f := newTestFixture(t)
+
+	var got Graph
+	if code := f.get(t, "/api/graph?label=security", &got); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+
+	primary := map[string]bool{}
+	external := map[string]bool{}
+	for _, n := range got.Nodes {
+		if n.External {
+			external[n.ID] = true
+		} else {
+			primary[n.ID] = true
+		}
+	}
+
+	// Only oauth carries the "security" label.
+	if want := map[string]bool{f.oauth.ID.String(): true}; len(primary) != len(want) || !primary[f.oauth.ID.String()] {
+		t.Fatalf("primary nodes = %v, want exactly %v", primary, want)
+	}
+
+	// oauth's out-edges reach refresh (supersedes) and schema (elaborates);
+	// neither carries the "security" label, so both are external.
+	wantExternal := map[string]bool{
+		f.refresh.ID.String(): true,
+		f.schema.ID.String():  true,
+	}
+	if len(external) != len(wantExternal) {
+		t.Fatalf("external nodes = %v, want exactly %v", external, wantExternal)
+	}
+	for id := range wantExternal {
+		if !external[id] {
+			t.Errorf("missing expected external node %s in label filter result", id)
+		}
+	}
+
+	edgeIDs := map[string]bool{}
+	for _, e := range got.Edges {
+		edgeIDs[e.ID] = true
+	}
+	for _, want := range []model.Edge{f.supersedes, f.elaborates} {
+		if !edgeIDs[want.ID.String()] {
+			t.Errorf("expected boundary edge %s in label filter result", want.ID)
+		}
+	}
+	for _, notWant := range []model.Edge{f.dependsOn, f.contradicts, f.relatedTo} {
+		if edgeIDs[notWant.ID.String()] {
+			t.Errorf("edge %s touches no primary node and must be excluded", notWant.ID)
+		}
+	}
+}
+
+// TestHandleGraph_TruncationBoundary uses its own tiny fixture with
+// explicit, well-separated CreatedAt values (rather than the shared
+// testFixture, whose entries are all created via back-to-back time.Now()
+// calls and are not safe to order deterministically) so that limit=2's
+// clipped-out entry is a known, asserted identity: EntryRepo.List orders by
+// created_at DESC, so "oldest" is the one truncation clips.
+func TestHandleGraph_TruncationBoundary(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	entries := db.Entries()
+	edgeRepo := db.Edges()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mustCreateAt := func(content string, offset time.Duration) model.Entry {
+		t.Helper()
+		e := model.NewEntry(content, model.Source{Type: model.SourceManual, Reference: "test"})
+		e.Scope = model.RootScope
+		e.CreatedAt = base.Add(offset)
+		e.Freshness.ObservedAt = e.CreatedAt
+		result, err := entries.CreateOrUpdate(ctx, &e)
+		if err != nil {
+			t.Fatalf("create entry %q: %v", content, err)
+		}
+		return *result
+	}
+
+	oldest := mustCreateAt("Oldest entry", 0)
+	middle := mustCreateAt("Middle entry", time.Second)
+	newest := mustCreateAt("Newest entry", 2*time.Second)
+
+	edge := model.NewEdge(newest.ID, oldest.ID, model.EdgeRelatedTo)
+	if err := edgeRepo.Create(ctx, &edge); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	engine := query.New(entries, edgeRepo, nil)
+	server := New(entries, edgeRepo, db.Scopes(), db.Labels(), engine, model.RootScope)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/graph?limit=2", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got Graph
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if !got.Truncated {
+		t.Fatalf("truncated = false, want true (limit=2 of 3 entries)")
+	}
+
+	byID := map[string]Node{}
+	for _, n := range got.Nodes {
+		byID[n.ID] = n
+	}
+
+	newestNode, ok := byID[newest.ID.String()]
+	if !ok || newestNode.External {
+		t.Errorf("newest node = %+v (ok=%v), want present and primary (external=false)", newestNode, ok)
+	}
+	middleNode, ok := byID[middle.ID.String()]
+	if !ok || middleNode.External {
+		t.Errorf("middle node = %+v (ok=%v), want present and primary (external=false)", middleNode, ok)
+	}
+	oldestNode, ok := byID[oldest.ID.String()]
+	if !ok || !oldestNode.External {
+		t.Errorf("oldest node = %+v (ok=%v), want present and external=true (truncation-clipped boundary peer)", oldestNode, ok)
+	}
+
+	foundEdge := false
+	for _, e := range got.Edges {
+		if e.ID == edge.ID.String() {
+			foundEdge = true
+		}
+	}
+	if !foundEdge {
+		t.Errorf("expected boundary edge %s (newest->oldest) in truncated result", edge.ID)
+	}
+}
+
+// TestHandleGraph_ExternalNodeShape asserts the external node carries the
+// full Node projection (not a stripped-down peer ref) plus external:true,
+// and that a primary node's raw JSON omits the "external" key entirely
+// (not just false) per the contract's "OMITTED for primary nodes" wording.
+func TestHandleGraph_ExternalNodeShape(t *testing.T) {
+	f := newTestFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/graph?scope=root.sub", nil)
+	rec := httptest.NewRecorder()
+	f.server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+
+	var got Graph
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var schemaNode, oauthNode Node
+	for _, n := range got.Nodes {
+		switch n.ID {
+		case f.schema.ID.String():
+			schemaNode = n
+		case f.oauth.ID.String():
+			oauthNode = n
+		}
+	}
+	if schemaNode.ID == "" {
+		t.Fatalf("schema external node not found in %+v", got.Nodes)
+	}
+	if !schemaNode.External {
+		t.Errorf("schema node external = false, want true")
+	}
+	if schemaNode.Title != f.schema.Title || schemaNode.Content != f.schema.Content ||
+		schemaNode.Scope != f.schema.Scope || schemaNode.SourceType != string(f.schema.Source.Type) {
+		t.Errorf("external node = %+v, want full projection of %+v", schemaNode, f.schema)
+	}
+
+	// Raw JSON check: a primary node (oauth) must omit "external" entirely,
+	// not merely encode it as false.
+	var raw struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	found := false
+	for _, n := range raw.Nodes {
+		if n["id"] != f.oauth.ID.String() {
+			continue
+		}
+		found = true
+		if _, present := n["external"]; present {
+			t.Errorf("primary node raw JSON = %v, want no \"external\" key", n)
+		}
+	}
+	if !found {
+		t.Fatalf("oauth primary node not found in raw JSON: %s", body)
+	}
+	if oauthNode.External {
+		t.Errorf("oauth node external = true, want false")
 	}
 }
 
@@ -283,8 +538,14 @@ func TestHandleGraph_Truncated(t *testing.T) {
 	if code := f.get(t, "/api/graph?limit=2", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
-	if len(got.Nodes) != 2 {
-		t.Fatalf("nodes = %d, want 2 (limit)", len(got.Nodes))
+	primaryCount := 0
+	for _, n := range got.Nodes {
+		if !n.External {
+			primaryCount++
+		}
+	}
+	if primaryCount != 2 {
+		t.Fatalf("primary nodes = %d, want 2 (limit)", primaryCount)
 	}
 	if !got.Truncated {
 		t.Errorf("truncated = false, want true when limit clips the node set")
