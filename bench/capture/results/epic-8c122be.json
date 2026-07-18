@@ -1,0 +1,92 @@
+{
+  "bin": "/tmp/known-epic",
+  "commit": "8c122be",
+  "timestamp": "2026-07-18T00:24:18Z",
+  "corpus_hash": "6e49bfe0da8622aa6c3fecfe1ac820aeca9c9fbe017d839179f578566954ecb5",
+  "pass": 10,
+  "total": 10,
+  "xfail": 0,
+  "capture_rate_pct": 100,
+  "scenarios": [
+    {
+      "id": "M2-compact-confirmation",
+      "name": "add: confirmation block is compact (≤4 non-empty lines, no embedding line)",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9Q7QTS0SCMMJQ0SBS50M1\nScope     work\n          \"DeferredRenderer distance field target for engine.graphics\"\n\n",
+      "predicate": "contains ULID AND no 'Embedding:' line AND ≤4 non-empty lines (got 3)"
+    },
+    {
+      "id": "M2-tail2-visible-ulid",
+      "name": "remember: ULID on first output line or output ≤3 non-empty lines",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9QAPV3PGXDS37FAQZ4YE4\nScope     work\n          \"Renderer architecture decision 2026-06 SIBLING RendererInterface\"\n\n",
+      "predicate": "ULID on first line (true) OR ≤3 non-empty lines (got 3)"
+    },
+    {
+      "id": "M2-stored-label",
+      "name": "add: first output line uses 'Stored'/'Duplicate' label (not 'ID:')",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9QDTJ07VRSMVXPSMY9XZ4\nScope     work\n          \"radiance cascades GI-zero bug DeferredRenderer\"\n\n",
+      "predicate": "first stdout line starts with 'Stored'/'Duplicate' and contains a ULID"
+    },
+    {
+      "id": "M2-dedup-explicit",
+      "name": "add (dedup): second identical add prints 'Duplicate \u003cULID\u003e' on first line",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Duplicate 01KXS9QH0X7Y64Y3JN9H8MMCA7\nScope     work\n          \"Three feature epics opened 2026-06-08 services-runtime\"\nHint      known update 01KXS9QH0X7Y64Y3JN9H8MMCA7 --content '...'\n          known add '\u003cnew fact\u003e' --link elaborates:01KXS9QH0X7Y64Y3JN9H8MMCA7\n\n",
+      "predicate": "first line of second add starts with 'Duplicate' and contains original ULID"
+    },
+    {
+      "id": "M3-nonempty-with-ulid",
+      "name": "add: stdout is non-empty and contains a ULID on success",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9QMFX07N6JCQ8C3YTPZTD\nScope     work\n          \"radiance cascades DeferredRenderer GI\"\n\n",
+      "predicate": "exit 0 AND stdout contains a ULID"
+    },
+    {
+      "id": "M4-link-by-content",
+      "name": "link: supersedes edge created by exact content query, no ULIDs typed",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Resolved \"CORRECTION to renderer decoupling decision\" → 01KXS9QQVQNK9GCSNBJ4AXJC1M  CORRECTION to renderer decoupling decision  [work]\nResolved \"renderer architecture decision original SIBLING RendererInterface\" → 01KXS9QQESSK43MME3PRG7CY7X  renderer architecture decision original SIBLING RendererI...  [work]\nID:      01KXS9QRNG5WMQDX7BZV81S31B\nFrom:    01KXS9QQVQNK9GCSNBJ4AXJC1M\nTo:      01KXS9QQESSK43MME3PRG7CY7X\nType:    supersedes\nCreated: 2026-07-17T18:24:06-06:00\n\nEdge created.\n",
+      "predicate": "exit 0 AND stdout contains 'Edge created.'"
+    },
+    {
+      "id": "M4-link-accept-subcommand",
+      "name": "link accept: subcommand exists and accepts an entry query",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Resolved \"renderer architecture decision original\" → 01KXS9QV2R6KEE429PC3SA8T5R  renderer architecture decision original baseline  [work]\nLinked → 01KXS9QVD8HNH1B01V1FN3P1F0  radiance cascade related entry for suggestion  [work] [related-to]\n1 edge(s) created.\n",
+      "predicate": "link accept subcommand exits 0"
+    },
+    {
+      "id": "M5-unknown-flag-suggests-valid",
+      "name": "unknown flag --confidence: error message names a valid alternative",
+      "pass": true,
+      "exit_code": 1,
+      "output": "error: unknown flag: --confidence\n       Did you mean: --provenance?\n       Usage: known add \u003ccontent\u003e [flags]\n              known add --help for full flag list\n",
+      "predicate": "exit non-zero AND output names a valid flag / 'Did you mean'"
+    },
+    {
+      "id": "M6-scope-from-marker",
+      "name": "scope derived from .known.yaml scope_prefix in CWD",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9R1JK6B864D6Z41B85AZR\nScope     myproject\n          \"GI-zero bug in DeferredRenderer radiance cascades\"\n\n",
+      "predicate": "Scope line contains 'myproject' and is not 'root'"
+    },
+    {
+      "id": "M6-scope-subdir-appended",
+      "name": "scope appends CWD-relative subdir path to prefix",
+      "pass": true,
+      "exit_code": 0,
+      "output": "Stored    01KXS9R4KCFPYDJG70K4Z1M6JG\nScope     proj.engine.graphics\n          \"renderer subdir scope test\"\n\n",
+      "predicate": "Scope contains 'proj' prefix"
+    }
+  ]
+}
