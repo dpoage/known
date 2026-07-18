@@ -288,48 +288,70 @@ func corpus() []Scenario {
 				return out, code, "Scope contains 'proj' prefix", pass
 			},
 		},
-		// ---- known-nyo: Default lifetime is permanent (regression guard) ----
+		// ---- known-nyo: Default lifetime is permanent ----
 		//
-		// Known-nyo decision: TTL is opt-in. Unflagged `known add` must produce
-		// an entry with no expiry — no "Expires:" line in human output.
-		// This is a regression guard: baseline (a59396f) FAILED this (applied 90d
-		// default TTL) but after known-nyo it must always pass.
+		// Known-nyo decision: TTL is opt-in. Unflagged `known add` must store an
+		// entry with no ExpiresAt. Verified by: add → extract ULID → show --json →
+		// assert entry.expires_at is absent/null.
+		//
+		// ExpectFailBaseline=true: baseline a59396f applied 90d default TTL, so
+		// show --json would return "expires_at":"..." — this scenario correctly
+		// fails on baseline and passes on the p1-ttl branch.
 		{
-			ID:                 "Pn6-no-ttl-permanent",
-			Name:               "add without --ttl: output has no Expires line (permanent by default)",
+			ID:                 "Nyo-no-ttl-permanent",
+			Name:               "add without --ttl: entry has no expires_at (permanent by default)",
 			AuditMode:          "known-nyo (p1-ttl): TTL opt-in; default lifetime is permanent",
 			ExpectFailBaseline: true,
 			Run: func(bin string) (string, int, string, bool) {
 				env, dir, cleanup := isolatedEnv()
 				defer cleanup()
-				out, code := run(bin, env, dir, "add", "permanent fact no TTL set")
+				addOut, code := run(bin, env, dir, "add", "permanent fact without ttl flag nyo")
 				if code != 0 {
-					return out, code, "exit 0", false
+					return addOut, code, "add exit 0", false
 				}
-				noExpires := !strings.Contains(out, "Expires:")
-				pass := noExpires
-				return out, code, "output must NOT contain 'Expires:' line", pass
+				ulid := reULID.FindString(addOut)
+				if ulid == "" {
+					return addOut, -1, "add output must contain ULID", false
+				}
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", ulid})
+				if showCode != 0 {
+					return showOut, showCode, "show exit 0", false
+				}
+				// expires_at is omitempty: absent or null means permanent.
+				hasExpiry := strings.Contains(showOut, `"expires_at"`)
+				pass := !hasExpiry
+				return addOut + "\n---show--json---\n" + showOut, showCode,
+					"show --json output must NOT contain \"expires_at\" key", pass
 			},
 		},
 
-		// ---- known-nyo: Explicit --ttl sets expiry (regression guard) ----
+		// ---- known-nyo: Explicit --ttl sets expires_at (regression guard) ----
 		//
-		// When --ttl is provided, the Expires: line must appear.
-		// Baseline already passed this; it is a regression guard.
+		// When --ttl is provided, show --json must include "expires_at".
+		// Baseline already applied TTL; this is a regression guard (non-xfail).
 		{
-			ID:        "Pn6-explicit-ttl-sets-expiry",
-			Name:      "add with --ttl 24h: output contains Expires line",
-			AuditMode: "known-nyo (p1-ttl): explicit --ttl must set ExpiresAt",
+			ID:        "Nyo-explicit-ttl-sets-expiry",
+			Name:      "add with --ttl 24h: show --json contains expires_at",
+			AuditMode: "known-nyo (p1-ttl): explicit --ttl must persist ExpiresAt",
 			Run: func(bin string) (string, int, string, bool) {
 				env, dir, cleanup := isolatedEnv()
 				defer cleanup()
-				out, code := runArgs(bin, env, dir, []string{"add", "ephemeral fact with ttl set", "--ttl", "24h"})
+				addOut, code := runArgs(bin, env, dir, []string{"add", "ephemeral fact with explicit ttl nyo", "--ttl", "24h"})
 				if code != 0 {
-					return out, code, "exit 0", false
+					return addOut, code, "add exit 0", false
 				}
-				hasExpires := strings.Contains(out, "Expires:")
-				pass := hasExpires
-				return out, code, "output must contain 'Expires:' line", pass
+				ulid := reULID.FindString(addOut)
+				if ulid == "" {
+					return addOut, -1, "add output must contain ULID", false
+				}
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", ulid})
+				if showCode != 0 {
+					return showOut, showCode, "show exit 0", false
+				}
+				hasExpiry := strings.Contains(showOut, `"expires_at"`)
+				pass := hasExpiry
+				return addOut + "\n---show--json---\n" + showOut, showCode,
+					"show --json output must contain \"expires_at\" key", pass
 			},
 		},
 	}

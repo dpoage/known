@@ -407,7 +407,10 @@ func TestDiscriminatorOracleFails(t *testing.T) {
 		"Provenance: inferred\nFreshness:  fresh\nVersion:    1\n" +
 		"Created:    2026-01-01T00:00:00Z\nUpdated:    2026-01-01T00:00:00Z\n" +
 		"Expires:    2026-04-01T00:00:00Z\n" +
-		"Embedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n"
+		"Embedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n" +
+		// Baseline show --json also carried expires_at (90d default TTL).
+		// Including it here ensures Nyo-no-ttl-permanent correctly FAILs on baseline.
+		`{"entry":{"id":"01KXS5B55PBGZM993P6ZN4T3K8","content":"test","scope":"known","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-01-01T00:00:00Z"},"ttl":"2160h0m0s","expires_at":"2026-04-01T00:00:00Z","version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},"outgoing_edges":[],"incoming_edges":[]}` + "\n"
 
 	bin := stubBinary(t, badOut, 0)
 	scenarios := corpus()
@@ -455,13 +458,19 @@ func TestDiscriminatorOracleFails(t *testing.T) {
 	}
 }
 
-// ---- Pn6-no-ttl-permanent ----
+// ---- Nyo-no-ttl-permanent ----
+//
+// Stubs two calls: first (add) returns compact human output with ULID;
+// second (show --json) returns a JSON entry object without expires_at.
+// Real CLI: PrintAddResult has no Expires line; expiry state is only in show --json.
 
 func TestNoTTLPermanent_Pass(t *testing.T) {
-	// Compact output with no Expires: line — permanent entry.
-	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"permanent fact no TTL set\"\n"
-	bin := stubBinary(t, out, 0)
-	sc := scenarioByID("Pn6-no-ttl-permanent")
+	// Stub call 1 (add): compact output with ULID, no Expires: line.
+	addOut := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"permanent fact without ttl flag nyo\"\n"
+	// Stub call 2 (show --json): entry without expires_at (permanent).
+	showOut := `{"entry":{"id":"01KXS5B55PBGZM993P6ZN4T3K8","content":"permanent fact without ttl flag nyo","content_hash":"abc","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-07-17T00:00:00Z"},"scope":"root","version":1,"created_at":"2026-07-17T00:00:00Z","updated_at":"2026-07-17T00:00:00Z"},"outgoing_edges":[],"incoming_edges":[]}` + "\n"
+	bin := stubCallN(t, []string{addOut, showOut}, []int{0, 0})
+	sc := scenarioByID("Nyo-no-ttl-permanent")
 	r := runScenario(bin, sc)
 	if !r.Pass {
 		t.Errorf("expected PASS; output=%q predicate=%q", r.Output, r.PredicateDesc)
@@ -469,23 +478,30 @@ func TestNoTTLPermanent_Pass(t *testing.T) {
 }
 
 func TestNoTTLPermanent_Fail(t *testing.T) {
-	// Output includes Expires: — old auto-TTL behavior should fail.
-	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\nExpires:  2026-10-17T00:00:00Z\n"
-	bin := stubBinary(t, out, 0)
-	sc := scenarioByID("Pn6-no-ttl-permanent")
+	// Stub call 1 (add): compact output — baseline-style (no Expires in add output).
+	addOut := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"permanent fact without ttl flag nyo\"\n"
+	// Stub call 2 (show --json): entry WITH expires_at — old 90d default behavior.
+	showOut := `{"entry":{"id":"01KXS5B55PBGZM993P6ZN4T3K8","content":"permanent fact without ttl flag nyo","content_hash":"abc","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-07-17T00:00:00Z"},"scope":"root","ttl":"2160h0m0s","expires_at":"2026-10-24T00:00:00Z","version":1,"created_at":"2026-07-17T00:00:00Z","updated_at":"2026-07-17T00:00:00Z"},"outgoing_edges":[],"incoming_edges":[]}` + "\n"
+	bin := stubCallN(t, []string{addOut, showOut}, []int{0, 0})
+	sc := scenarioByID("Nyo-no-ttl-permanent")
 	r := runScenario(bin, sc)
 	if r.Pass {
-		t.Errorf("expected FAIL (Expires: present = old auto-TTL behavior); output=%q", r.Output)
+		t.Errorf("expected FAIL (expires_at present in show --json = old auto-TTL behavior); output=%q", r.Output)
 	}
 }
 
-// ---- Pn6-explicit-ttl-sets-expiry ----
+// ---- Nyo-explicit-ttl-sets-expiry ----
+//
+// Stubs two calls: add returns compact human output with ULID;
+// show --json returns entry with or without expires_at.
 
 func TestExplicitTTLSetsExpiry_Pass(t *testing.T) {
-	// Output includes Expires: line — explicit --ttl worked.
-	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\nExpires:  2026-07-18T00:00:00Z\n"
-	bin := stubBinary(t, out, 0)
-	sc := scenarioByID("Pn6-explicit-ttl-sets-expiry")
+	// Stub call 1 (add with --ttl 24h): compact output with ULID.
+	addOut := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"ephemeral fact with explicit ttl nyo\"\n"
+	// Stub call 2 (show --json): entry WITH expires_at (--ttl 24h worked).
+	showOut := `{"entry":{"id":"01KXS5B55PBGZM993P6ZN4T3K8","content":"ephemeral fact with explicit ttl nyo","content_hash":"abc","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-07-17T00:00:00Z"},"scope":"root","ttl":"24h0m0s","expires_at":"2026-07-18T00:00:00Z","version":1,"created_at":"2026-07-17T00:00:00Z","updated_at":"2026-07-17T00:00:00Z"},"outgoing_edges":[],"incoming_edges":[]}` + "\n"
+	bin := stubCallN(t, []string{addOut, showOut}, []int{0, 0})
+	sc := scenarioByID("Nyo-explicit-ttl-sets-expiry")
 	r := runScenario(bin, sc)
 	if !r.Pass {
 		t.Errorf("expected PASS; output=%q predicate=%q", r.Output, r.PredicateDesc)
@@ -493,13 +509,15 @@ func TestExplicitTTLSetsExpiry_Pass(t *testing.T) {
 }
 
 func TestExplicitTTLSetsExpiry_Fail(t *testing.T) {
-	// No Expires: line — --ttl was ignored.
-	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n"
-	bin := stubBinary(t, out, 0)
-	sc := scenarioByID("Pn6-explicit-ttl-sets-expiry")
+	// Stub call 1 (add): compact output with ULID.
+	addOut := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"ephemeral fact with explicit ttl nyo\"\n"
+	// Stub call 2 (show --json): entry WITHOUT expires_at — --ttl was silently dropped.
+	showOut := `{"entry":{"id":"01KXS5B55PBGZM993P6ZN4T3K8","content":"ephemeral fact with explicit ttl nyo","content_hash":"abc","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-07-17T00:00:00Z"},"scope":"root","version":1,"created_at":"2026-07-17T00:00:00Z","updated_at":"2026-07-17T00:00:00Z"},"outgoing_edges":[],"incoming_edges":[]}` + "\n"
+	bin := stubCallN(t, []string{addOut, showOut}, []int{0, 0})
+	sc := scenarioByID("Nyo-explicit-ttl-sets-expiry")
 	r := runScenario(bin, sc)
 	if r.Pass {
-		t.Errorf("expected FAIL (no Expires: line when --ttl was given); output=%q", r.Output)
+		t.Errorf("expected FAIL (no expires_at in show --json when --ttl was given); output=%q", r.Output)
 	}
 }
 
