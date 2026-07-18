@@ -155,6 +155,8 @@ func TestContract(t *testing.T) {
 			t.Run("SearchText", func(t *testing.T) { contractSearchText(t, ctx, be) })
 			t.Run("SearchTextDivergent", func(t *testing.T) { contractSearchTextDivergent(t, ctx, be) })
 			t.Run("SearchSimilarInnerProduct", func(t *testing.T) { contractSearchSimilarInnerProduct(t, ctx, be) })
+			t.Run("SearchSimilarEmptyScope", func(t *testing.T) { contractSearchSimilarEmptyScope(t, ctx, be) })
+			t.Run("SearchTextEmptyScope", func(t *testing.T) { contractSearchTextEmptyScope(t, ctx, be) })
 		})
 	}
 }
@@ -875,5 +877,118 @@ func contractSearchSimilarInnerProduct(t *testing.T, ctx context.Context, be sto
 			t.Errorf("results not sorted: [%d].Distance=%f < [%d].Distance=%f",
 				i, results[i].Distance, i-1, results[i-1].Distance)
 		}
+	}
+}
+
+// contractSearchSimilarEmptyScope verifies that an empty scope argument to
+// SearchSimilar is unfiltered: it must return matching entries from every
+// scope, not just one. This underlies query.SuggestLinks' cross-project
+// suggestion search (known-lxj).
+func contractSearchSimilarEmptyScope(t *testing.T, ctx context.Context, be storage.Backend) {
+	t.Helper()
+	mustEnsureScope(t, ctx, be, "contract.vec.scopeA")
+	mustEnsureScope(t, ctx, be, "contract.vec.scopeB")
+
+	// Use a 5-dimensional embedding (unique in this file — other contract
+	// vector fixtures use dim 3) so SearchSimilar's embedding_dim filter
+	// keeps this test's global (scope="") query from picking up unrelated
+	// entries seeded by other subtests sharing the same backend instance.
+	eA := newTestEntry("empty-scope vec a", "contract.vec.scopeA")
+	eA.Embedding = []float32{1.0, 0.0, 0.0, 0.0, 0.0}
+	eA.EmbeddingModel = "test-model"
+	eA.EmbeddingDim = 5
+
+	eB := newTestEntry("empty-scope vec b", "contract.vec.scopeB")
+	eB.Embedding = []float32{0.5, 0.5, 0.0, 0.0, 0.0}
+	eB.EmbeddingModel = "test-model"
+	eB.EmbeddingDim = 5
+
+	for _, e := range []*model.Entry{&eA, &eB} {
+		if err := be.Entries().Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	query := []float32{1.0, 0.0, 0.0, 0.0, 0.0}
+
+	// Non-empty scope must stay restricted to that scope's tree (unchanged
+	// contract) — scopeA search must not see scopeB's entry.
+	scoped, err := be.Entries().SearchSimilar(ctx, query, "contract.vec.scopeA", storage.Cosine, 10)
+	if err != nil {
+		t.Fatalf("SearchSimilar(scope=scopeA): %v", err)
+	}
+	for _, r := range scoped {
+		if r.Entry.ID == eB.ID {
+			t.Error("SearchSimilar(scope=scopeA) must not return an entry from scopeB")
+		}
+	}
+
+	// Empty scope must be unfiltered: both entries, from both scopes, must
+	// be returned, with eA (the exact match) ranked ahead of eB.
+	global, err := be.Entries().SearchSimilar(ctx, query, "", storage.Cosine, 10)
+	if err != nil {
+		t.Fatalf(`SearchSimilar(scope=""): %v`, err)
+	}
+	var distA, distB float64
+	var sawA, sawB bool
+	for _, r := range global {
+		switch r.Entry.ID {
+		case eA.ID:
+			sawA, distA = true, r.Distance
+		case eB.ID:
+			sawB, distB = true, r.Distance
+		}
+	}
+	if !sawA || !sawB {
+		t.Fatalf(`SearchSimilar(scope="") expected both scopeA and scopeB entries, sawA=%v sawB=%v`, sawA, sawB)
+	}
+	if distA >= distB {
+		t.Errorf("SearchSimilar(scope=\"\") expected eA (exact match) closer than eB: distA=%f distB=%f", distA, distB)
+	}
+}
+
+// contractSearchTextEmptyScope verifies that an empty scope argument to
+// SearchText is unfiltered, matching contractSearchSimilarEmptyScope's
+// SearchSimilar contract.
+func contractSearchTextEmptyScope(t *testing.T, ctx context.Context, be storage.Backend) {
+	t.Helper()
+	mustEnsureScope(t, ctx, be, "contract.fts.scopeA")
+	mustEnsureScope(t, ctx, be, "contract.fts.scopeB")
+
+	eA := newTestEntry("quokkaburst distinctive marker term alpha", "contract.fts.scopeA")
+	eB := newTestEntry("quokkaburst distinctive marker term beta", "contract.fts.scopeB")
+
+	for _, e := range []*model.Entry{&eA, &eB} {
+		if err := be.Entries().Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	// Non-empty scope must stay restricted (unchanged contract).
+	scoped, err := be.Entries().SearchText(ctx, "quokkaburst", "contract.fts.scopeA", 10)
+	if err != nil {
+		t.Fatalf("SearchText(scope=scopeA): %v", err)
+	}
+	for _, r := range scoped {
+		if r.Entry.ID == eB.ID {
+			t.Error("SearchText(scope=scopeA) must not return an entry from scopeB")
+		}
+	}
+
+	global, err := be.Entries().SearchText(ctx, "quokkaburst", "", 10)
+	if err != nil {
+		t.Fatalf(`SearchText(scope=""): %v`, err)
+	}
+	var sawA, sawB bool
+	for _, r := range global {
+		switch r.Entry.ID {
+		case eA.ID:
+			sawA = true
+		case eB.ID:
+			sawB = true
+		}
+	}
+	if !sawA || !sawB {
+		t.Errorf(`SearchText(scope="") expected both scopeA and scopeB entries, sawA=%v sawB=%v`, sawA, sawB)
 	}
 }

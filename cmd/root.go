@@ -156,6 +156,7 @@ Commands:
   gc         Delete expired entries and reinforce edges
   session    Manage agent sessions (start, end)
   stats      Show knowledge graph statistics
+  explore    Launch the web-based graph explorer
   export     Export entries as JSON or JSONL
   import     Import entries from JSON or JSONL (use --re-embed to recompute)
   completion Generate shell completions (bash, fish, zsh)
@@ -287,6 +288,8 @@ func Run(ctx context.Context, args []string) int {
 		err = runGC(ctx, app, subArgs)
 	case "stats":
 		err = runStats(ctx, app, subArgs)
+	case "explore":
+		err = runExplore(ctx, app, subArgs)
 	case "export":
 		err = runExport(ctx, app, subArgs)
 	case "import":

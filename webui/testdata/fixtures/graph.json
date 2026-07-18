@@ -1,0 +1,359 @@
+{
+  "nodes": [
+    {
+      "id": "01CSB6VGBVYJXJWDRW646FA141",
+      "title": "Cytoscape layout choice",
+      "content": "Use built-in cose force-directed layout; no extra layout extension needed to keep zero new deps.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:00:00Z",
+      "updated_at": "2026-06-01T09:00:00Z",
+      "observed_at": "2026-06-01T09:00:00Z",
+      "labels": [
+        "architecture"
+      ]
+    },
+    {
+      "id": "01WGZDH95VSS1EZ6FRP5FGHA71",
+      "title": "Search debounce interval",
+      "content": "Debounce the search input by 250ms before calling api/search to avoid flooding the FTS engine.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:05:00Z",
+      "updated_at": "2026-06-01T09:05:00Z",
+      "observed_at": "2026-06-01T09:05:00Z"
+    },
+    {
+      "id": "018QNNY9SAJ2G735M9F7EQCC4Z",
+      "title": "Detail panel spec",
+      "content": "Right-hand panel shows entry title, content, scope, source, provenance, freshness, edges, conflicts.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:10:00Z",
+      "updated_at": "2026-06-01T09:10:00Z",
+      "observed_at": "2026-06-01T09:10:00Z",
+      "labels": [
+        "convention"
+      ]
+    },
+    {
+      "id": "01H6J1NCF0FA5HMYCPKASRXMX2",
+      "title": "Edge type legend colors",
+      "content": "depends-on orange, elaborates blue, related-to gray, supersedes purple, contradicts red dashed, custom teal.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:15:00Z",
+      "updated_at": "2026-06-01T09:15:00Z",
+      "observed_at": "2026-06-01T09:15:00Z",
+      "labels": [
+        "convention"
+      ]
+    },
+    {
+      "id": "01795J4WN7BCRF0XW2YQQEP905",
+      "title": "Path mode UX",
+      "content": "Toggle path mode, click node A then node B, fetch api/path, highlight the path and dim everything else.",
+      "scope": "webui.explore",
+      "source_type": "conversation",
+      "created_at": "2026-06-01T09:20:00Z",
+      "updated_at": "2026-06-01T09:20:00Z",
+      "observed_at": "2026-06-01T09:20:00Z"
+    },
+    {
+      "id": "01ZR4C19KYSPR49JR3T21TB3PC",
+      "title": "Vendor cytoscape 3.30.4",
+      "content": "Vendored MIT-licensed cytoscape.min.js under webui/assets/vendor; no CDN reference at runtime.",
+      "scope": "webui.explore",
+      "source_type": "file",
+      "created_at": "2026-06-01T09:25:00Z",
+      "updated_at": "2026-06-01T09:25:00Z",
+      "observed_at": "2026-06-01T09:25:00Z",
+      "labels": [
+        "architecture"
+      ]
+    },
+    {
+      "id": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+      "title": "Error banner behavior",
+      "content": "All fetch failures and {error:...} bodies surface as a dismissible banner, never console-only.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:30:00Z",
+      "updated_at": "2026-06-01T09:30:00Z",
+      "observed_at": "2026-06-01T09:30:00Z"
+    },
+    {
+      "id": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "title": "REST endpoint /api/graph",
+      "content": "Whole-graph snapshot; entries via EntryRepo.List with ScopePrefix, optional label, limit default 500.",
+      "scope": "server.api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:35:00Z",
+      "updated_at": "2026-06-01T09:35:00Z",
+      "observed_at": "2026-06-01T09:35:00Z",
+      "labels": [
+        "architecture"
+      ]
+    },
+    {
+      "id": "01YY5MY4576CNW86FR48XR3KC3",
+      "title": "ULID id format",
+      "content": "Entry and edge ids are ULID strings; sortable, 26 chars, Crockford base32.",
+      "scope": "server.api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:40:00Z",
+      "updated_at": "2026-06-01T09:40:00Z",
+      "observed_at": "2026-06-01T09:40:00Z"
+    },
+    {
+      "id": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "title": "FTS search engine",
+      "content": "known explore runs without an embedder; search is FTS text search only via Engine.SearchText.",
+      "scope": "server.api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:45:00Z",
+      "updated_at": "2026-06-01T09:45:00Z",
+      "observed_at": "2026-06-01T09:45:00Z",
+      "labels": [
+        "note"
+      ]
+    },
+    {
+      "id": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "title": "Edge weight decay",
+      "content": "Reinforced edges converge toward the neutral default of 0.5 over time via the decay factor.",
+      "scope": "server.api",
+      "source_type": "conversation",
+      "created_at": "2026-06-01T09:50:00Z",
+      "updated_at": "2026-06-01T09:50:00Z",
+      "observed_at": "2026-06-01T09:50:00Z"
+    },
+    {
+      "id": "0137BGFK2YXQANMM7G30G56QTZ",
+      "title": "ScopeRepo.List ordering",
+      "content": "Scopes are returned as ordered paths from ScopeRepo.List, consumed directly by api/meta.",
+      "scope": "server.api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:55:00Z",
+      "updated_at": "2026-06-01T09:55:00Z",
+      "observed_at": "2026-06-01T09:55:00Z",
+      "labels": [
+        "convention"
+      ]
+    },
+    {
+      "id": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "title": "Deprecated auth flow",
+      "content": "Legacy token-based auth, superseded by the session-cookie flow; kept for historical cross-reference.",
+      "scope": "legacy.archive",
+      "source_type": "manual",
+      "created_at": "2025-01-10T08:00:00Z",
+      "updated_at": "2025-01-10T08:00:00Z",
+      "observed_at": "2025-01-10T08:00:00Z",
+      "external": true
+    },
+    {
+      "id": "013VESBWW0J7BGS3K3YX967QZB",
+      "title": "Legacy migration notes",
+      "content": "Notes from the pre-ULID id migration; referenced by current schema-convention entries for context.",
+      "scope": "legacy.archive",
+      "source_type": "file",
+      "created_at": "2025-02-14T08:00:00Z",
+      "updated_at": "2025-02-14T08:00:00Z",
+      "observed_at": "2025-02-14T08:00:00Z",
+      "external": true
+    }
+  ],
+  "edges": [
+    {
+      "id": "01E3X2VA0JWVC4YHE58F7KX2NT",
+      "from": "01CSB6VGBVYJXJWDRW646FA141",
+      "to": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "type": "depends-on",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:00:00Z"
+    },
+    {
+      "id": "019ZGEVAZM8D9DZPZEBZT2GAGZ",
+      "from": "01795J4WN7BCRF0XW2YQQEP905",
+      "to": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "type": "depends-on",
+      "weight": 0.9,
+      "explicit": true,
+      "created_at": "2026-06-02T10:01:00Z"
+    },
+    {
+      "id": "01E7BNFQRTWKF2SZSNMX8Y114D",
+      "from": "01WGZDH95VSS1EZ6FRP5FGHA71",
+      "to": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "type": "depends-on",
+      "weight": 0.5,
+      "explicit": false,
+      "created_at": "2026-06-02T10:02:00Z"
+    },
+    {
+      "id": "01Q1C8G42D2M6GDFPPJH3X3HTH",
+      "from": "018QNNY9SAJ2G735M9F7EQCC4Z",
+      "to": "01YY5MY4576CNW86FR48XR3KC3",
+      "type": "depends-on",
+      "weight": 0.35,
+      "explicit": false,
+      "created_at": "2026-06-02T10:03:00Z"
+    },
+    {
+      "id": "01E7W1F67KNHNMYQA64QMQYEGV",
+      "from": "018QNNY9SAJ2G735M9F7EQCC4Z",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "elaborates",
+      "weight": 0.4,
+      "explicit": false,
+      "created_at": "2026-06-02T10:04:00Z"
+    },
+    {
+      "id": "010N5CH6AESZCAYZRK97XJ1M33",
+      "from": "01ZR4C19KYSPR49JR3T21TB3PC",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "elaborates",
+      "weight": 0.7,
+      "explicit": true,
+      "created_at": "2026-06-02T10:05:00Z"
+    },
+    {
+      "id": "01Y2F1EP0SY2TCFFF8E340VYHH",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "type": "elaborates",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:06:00Z"
+    },
+    {
+      "id": "018425M69610T5QJC8X8JNCPVN",
+      "from": "01H6J1NCF0FA5HMYCPKASRXMX2",
+      "to": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+      "type": "related-to",
+      "weight": 0.5,
+      "explicit": false,
+      "created_at": "2026-06-02T10:07:00Z"
+    },
+    {
+      "id": "01DEVD6EN4SW2YN8518SCQRQJ9",
+      "from": "01YY5MY4576CNW86FR48XR3KC3",
+      "to": "0137BGFK2YXQANMM7G30G56QTZ",
+      "type": "related-to",
+      "weight": 0.3,
+      "explicit": true,
+      "created_at": "2026-06-02T10:08:00Z"
+    },
+    {
+      "id": "01NCWBE3VFB4Y0FCTAYH1W3AB6",
+      "from": "01WGZDH95VSS1EZ6FRP5FGHA71",
+      "to": "01795J4WN7BCRF0XW2YQQEP905",
+      "type": "related-to",
+      "weight": 0.45,
+      "explicit": false,
+      "created_at": "2026-06-02T10:09:00Z"
+    },
+    {
+      "id": "01NP0GP653AYBAQ88KGGR2MPM9",
+      "from": "018QNNY9SAJ2G735M9F7EQCC4Z",
+      "to": "01H6J1NCF0FA5HMYCPKASRXMX2",
+      "type": "related-to",
+      "weight": 0.5,
+      "explicit": false,
+      "created_at": "2026-06-02T10:10:00Z"
+    },
+    {
+      "id": "01GCJH94XKW8D73VPTREZQ5060",
+      "from": "01ZR4C19KYSPR49JR3T21TB3PC",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "supersedes",
+      "weight": 0.8,
+      "explicit": true,
+      "created_at": "2026-06-02T10:11:00Z"
+    },
+    {
+      "id": "01WE6KASKSQRBC3G2WA7VGHRZK",
+      "from": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "to": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "type": "supersedes",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:12:00Z"
+    },
+    {
+      "id": "01EA9DRP34Q21B5N532CKWG5W2",
+      "from": "01795J4WN7BCRF0XW2YQQEP905",
+      "to": "01WGZDH95VSS1EZ6FRP5FGHA71",
+      "type": "supersedes",
+      "weight": 0.5,
+      "explicit": true,
+      "created_at": "2026-06-02T10:13:00Z"
+    },
+    {
+      "id": "01JRDZFK3RR612TXJYNP35SRP8",
+      "from": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+      "to": "01795J4WN7BCRF0XW2YQQEP905",
+      "type": "contradicts",
+      "weight": 0.55,
+      "explicit": true,
+      "created_at": "2026-06-02T10:14:00Z"
+    },
+    {
+      "id": "01PVKW8TFXFDER76DEZQ8239H7",
+      "from": "01YY5MY4576CNW86FR48XR3KC3",
+      "to": "0137BGFK2YXQANMM7G30G56QTZ",
+      "type": "contradicts",
+      "weight": 0.15,
+      "explicit": true,
+      "created_at": "2026-06-02T10:15:00Z"
+    },
+    {
+      "id": "01HXHNFRGKXGJH8Q39EFY365GV",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "blocks",
+      "weight": 0.5,
+      "explicit": false,
+      "created_at": "2026-06-02T10:16:00Z"
+    },
+    {
+      "id": "01Y1AMT8TR0VQPXNM0MH700CM8",
+      "from": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "to": "01H6J1NCF0FA5HMYCPKASRXMX2",
+      "type": "blocks",
+      "weight": 0.45,
+      "explicit": false,
+      "created_at": "2026-06-02T10:17:00Z"
+    },
+    {
+      "id": "01VCQK6P4H01G5EMTQ5MZC51DC",
+      "from": "0137BGFK2YXQANMM7G30G56QTZ",
+      "to": "01WGZDH95VSS1EZ6FRP5FGHA71",
+      "type": "blocks",
+      "weight": 0.4,
+      "explicit": true,
+      "created_at": "2026-06-02T10:18:00Z"
+    },
+    {
+      "id": "0100C67K7KXTE1F3DBCQTKAD0C",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "type": "depends-on",
+      "weight": 0.4,
+      "explicit": false,
+      "created_at": "2026-06-02T11:00:00Z"
+    },
+    {
+      "id": "01NN2GM65815WEJX32EWQ27MPQ",
+      "from": "013VESBWW0J7BGS3K3YX967QZB",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "related-to",
+      "weight": 0.3,
+      "explicit": false,
+      "created_at": "2026-06-02T11:05:00Z"
+    }
+  ],
+  "truncated": false
+}

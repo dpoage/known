@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>known explore</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="error-banner" class="banner error-banner hidden" role="alert">
+  <span id="error-banner-text"></span>
+  <button id="error-banner-close" type="button" aria-label="Dismiss error">&times;</button>
+</div>
+
+<div id="path-notice" class="banner path-notice hidden" role="status"></div>
+
+<header id="toolbar">
+  <div class="toolbar-row">
+    <label class="field">
+      <span>Scope</span>
+      <select id="scope-select"></select>
+    </label>
+    <div class="field loaded-scopes-field">
+      <span>Loaded</span>
+      <span id="loaded-scopes" class="loaded-scopes"></span>
+    </div>
+    <label class="field">
+      <span>Label</span>
+      <select id="label-select"></select>
+    </label>
+    <div class="field search-field">
+      <span>Search</span>
+      <input id="search-input" type="text" placeholder="search entries" autocomplete="off" spellcheck="false">
+      <div id="search-results" class="search-results hidden"></div>
+    </div>
+    <button id="reload-btn" type="button" class="btn">Reload</button>
+    <button id="path-mode-btn" type="button" class="btn toggle" aria-pressed="false">Path mode</button>
+  </div>
+  <div class="toolbar-row legend-row">
+    <div id="legend" class="legend"></div>
+    <div class="weight-hint">edge width: thin &rarr; thick = low &rarr; high weight &middot; faded edge = implicit (never explicitly rated)</div>
+  </div>
+</header>
+
+<main id="main">
+  <div id="cy"></div>
+  <div id="edge-popover" class="edge-popover hidden"></div>
+  <aside id="detail-panel" class="detail-panel hidden">
+    <div class="panel-header">
+      <h2 id="panel-title"></h2>
+      <button id="panel-close" type="button" aria-label="Close panel">&times;</button>
+    </div>
+    <div id="panel-body" class="panel-body"></div>
+  </aside>
+</main>
+
+<!-- Vendored cytoscape 3.30.4 (MIT). See vendor/README.md. No CDN, no build step. -->
+<script src="vendor/cytoscape.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

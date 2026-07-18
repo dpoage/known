@@ -349,3 +349,81 @@ func TestRunLinkAccept_NoIndicesShowsSuggestions(t *testing.T) {
 		t.Errorf("expected suggestions list in output, got:\n%s", out)
 	}
 }
+
+// TestRunLinkAccept_CrossScope verifies that `known link accept` resolves
+// and creates an edge for a suggestion whose entry lives in a different
+// scope from the source entry (known-lxj: SuggestLinks now searches
+// globally, so cross-scope candidates must be acceptable too).
+func TestRunLinkAccept_CrossScope(t *testing.T) {
+	ctx := context.Background()
+	db, err := newBackend(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	stub := &stubSuggestEmbedder{}
+	app := &App{
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: stub,
+		Engine:   query.New(db.Entries(), db.Edges(), stub),
+		Printer:  NewPrinter(&bytes.Buffer{}, false, false),
+		Stderr:   &bytes.Buffer{},
+		Config:   &AppConfig{DefaultScope: model.RootScope},
+	}
+
+	src := model.Source{Type: model.SourceManual}
+
+	eSource := model.NewEntry("Renderer architecture decision", src)
+	eSource.Scope = "projectA"
+	eSource = eSource.WithEmbedding([]float32{1, 0, 0, 0}, "stub")
+	storedSource, err := app.Entries.CreateOrUpdate(ctx, &eSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eSource = *storedSource
+
+	// Neighbor in a DIFFERENT scope, closer than any same-scope candidate.
+	eCross := model.NewEntry("Renderer architecture notes", src)
+	eCross.Scope = "projectB"
+	eCross = eCross.WithEmbedding([]float32{0.9, 0.436, 0, 0}, "stub")
+	storedCross, err := app.Entries.CreateOrUpdate(ctx, &eCross)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eCross = *storedCross
+
+	if err := runLinkAccept(ctx, app, []string{eSource.ID.String(), "1"}); err != nil {
+		t.Fatalf("runLinkAccept cross-scope: %v", err)
+	}
+
+	edges, err := app.Edges.EdgesFrom(ctx, eSource.ID, storage.EdgeFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(edges))
+	}
+	if edges[0].ToID != eCross.ID {
+		t.Fatalf("expected edge to cross-scope neighbor %s, got toID=%s", eCross.ID, edges[0].ToID)
+	}
+
+	// Confirm the linked entry is genuinely in a different scope (proves the
+	// accept path did not silently re-filter by scope anywhere).
+	target, err := app.Entries.Get(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Scope == eSource.Scope {
+		t.Fatalf("expected cross-scope target, both entries ended up in scope %q", target.Scope)
+	}
+	if target.Scope != "projectB" {
+		t.Errorf("expected linked entry scope %q, got %q", "projectB", target.Scope)
+	}
+}
