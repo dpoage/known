@@ -45,13 +45,15 @@ No CGo required. The default embedder (hugot) and database (SQLite) are both pur
 
 ## Quick start
 
-```bash
-# Initialize a project — creates .known.yaml and Claude Code skills
-known init
+No setup required. `known add`, `known recall`, and `known search` work in any
+directory — the project root is auto-detected from `.git` or build-system
+markers and the scope is derived from the root directory name. All data goes
+to `~/.known/known.db` by default.
 
-# Store a fact
-known add 'The API uses JWT tokens with RS256 signing' \
-  --source-type conversation --confidence verified
+```bash
+# Store a fact — works immediately, no init needed; no quotes required
+known add The API uses JWT tokens with RS256 signing \
+  --source-type conversation --provenance verified
 
 # Recall knowledge (LLM-optimized plain text output)
 known recall 'authentication'
@@ -64,9 +66,9 @@ known stats
 known scope tree
 ```
 
-### Claude Code integration
+### Claude Code integration (optional)
 
-`known init` scaffolds Claude Code skills and a session-start hook into `.claude/`:
+Run `known init` to install Claude Code skills and a session-start hook into `.claude/`:
 
 | Skill | Purpose |
 |-------|---------|
@@ -77,6 +79,10 @@ known scope tree
 
 The session-start hook injects the scope tree into context, so the agent knows
 what knowledge areas exist without loading content upfront.
+
+`known init` is optional scaffolding — it is never a prerequisite for storing
+or retrieving knowledge.
+
 
 ## Architecture
 
@@ -135,7 +141,7 @@ by specifying the other project's scope: `known recall 'auth' --scope otherproje
 ## Commands
 
 ```
-known init          Initialize a project (.known.yaml + Claude Code skills)
+known init          Optional: install Claude Code skills and write .known.yaml override template
 known add           Store a knowledge entry
 known update        Modify an existing entry
 known delete        Delete an entry
@@ -158,17 +164,28 @@ Global flags: `--dsn`, `--json`, `--quiet` (placed before the subcommand).
 
 ## Configuration
 
-### Project config (`.known.yaml`)
+### Project config (`.known.yaml`) — optional override
 
-Created by `known init`. Defines the DSN and project-level overrides:
+`.known.yaml` is **not required**. Scope is auto-derived from the project root
+marker (`.git`, `go.mod`, etc.) and all commands default to `~/.known/known.db`.
+
+Use `.known.yaml` only when you need to override defaults — custom DSN,
+renamed scope prefix, or adjusted thresholds. Write it by hand or generate a
+template with `known init`:
 
 ```yaml
-dsn: ~/.known/known.db
-max_content_length: 4096
-search_threshold: 0.3
-default_ttl:
-  conversation: 168h
-  manual: 2160h
+# Optional: custom database (default: ~/.known/known.db)
+# dsn: ~/.known/known.db
+
+# Optional: rename the scope prefix (default: root directory name)
+# scope_prefix: myproject
+
+# Optional: tuning overrides
+# max_content_length: 4096
+# search_threshold: 0.3
+# default_ttl:
+#   conversation: 168h
+#   manual: 2160h
 ```
 
 ### Global config (`~/.known/config.yaml`)

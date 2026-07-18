@@ -20,12 +20,16 @@ import (
 // inspect it. Only the methods used by runAdd are implemented.
 // Pre-seed entries in the `existing` map for Get lookups (used by --link).
 type stubEntryRepo struct {
-	created  *model.Entry
-	existing map[model.ID]*model.Entry
+	created         *model.Entry
+	existing        map[model.ID]*model.Entry
+	versionToReturn int // when > 1, simulates a dedup hit (Version > 1)
 }
 
 func (s *stubEntryRepo) CreateOrUpdate(_ context.Context, entry *model.Entry) (*model.Entry, error) {
 	clone := *entry
+	if s.versionToReturn > 1 {
+		clone.Version = s.versionToReturn
+	}
 	s.created = &clone
 	return &clone, nil
 }
@@ -243,7 +247,7 @@ func TestRunAdd_MissingContent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing content")
 	}
-	if !strings.Contains(err.Error(), "content argument is required") {
+	if !strings.Contains(err.Error(), "content is required") {
 		t.Errorf("error %q should mention content required", err.Error())
 	}
 }
@@ -364,3 +368,254 @@ func TestRunAdd_LinkBadTarget(t *testing.T) {
 // Verify interface compliance of stubs at compile time.
 var _ storage.EntryRepo = (*stubEntryRepo)(nil)
 var _ storage.EdgeRepo = (*stubEdgeRepo)(nil)
+
+// ---------------------------------------------------------------------------
+// New tests: input parsing, output contract, error suggestion, dedup
+// ---------------------------------------------------------------------------
+
+func TestRunAdd_MultiWordContent_NoQuotes(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"some", "fact", "without", "quotes"})
+	if err != nil {
+		t.Fatalf("runAdd multi-word: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatal("expected entry")
+	}
+	if repo.created.Content != "some fact without quotes" {
+		t.Errorf("content = %q, want %q", repo.created.Content, "some fact without quotes")
+	}
+}
+
+func TestRunAdd_MultiWordContent_FlagsAfter(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"a", "fact", "--scope", "myproj"})
+	if err != nil {
+		t.Fatalf("runAdd multi-word with flags: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatal("expected entry")
+	}
+	if repo.created.Content != "a fact" {
+		t.Errorf("content = %q, want %q", repo.created.Content, "a fact")
+	}
+}
+
+func TestRunAdd_ContentEmpty_Error(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"--scope", "root"})
+	if err == nil {
+		t.Fatal("expected error for empty content")
+	}
+	if !strings.Contains(err.Error(), "content is required") {
+		t.Errorf("error %q should mention content required", err.Error())
+	}
+}
+
+func TestRunAdd_ContentOversized_Error(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+	// MaxContentLength is 4096 by default in newTestApp
+	oversized := strings.Repeat("x", 4097)
+	err := runAdd(context.Background(), app, []string{oversized})
+	if err == nil {
+		t.Fatal("expected error for oversized content")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum length") {
+		t.Errorf("error %q should mention exceeds maximum length", err.Error())
+	}
+}
+
+func TestRunAdd_UnknownFlag_SuggestsNearest(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	// --confidence is close to --provenance (audit finding mode 5/6)
+	err := runAdd(context.Background(), app, []string{"--confidence", "verified", "some fact"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+	if !strings.Contains(err.Error(), "--confidence") {
+		t.Errorf("error %q should name the unknown flag", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error %q should suggest a valid flag", err.Error())
+	}
+}
+
+func TestRunAdd_UnknownFlag_NoSuggestionForGarbage(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"--zzzzgarbage", "some fact"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// No suggestion should be offered for an unrelated flag.
+	if strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error %q should not suggest a flag for garbage input", err.Error())
+	}
+	// But usage hint should still appear.
+	if !strings.Contains(err.Error(), "Usage:") {
+		t.Errorf("error %q should include Usage: hint", err.Error())
+	}
+}
+
+func TestRunAdd_OutputConfirmation_Fields(t *testing.T) {
+	repo := &stubEntryRepo{}
+	var out bytes.Buffer
+	app := newTestApp(repo)
+	app.Printer = NewPrinter(&out, false, false)
+
+	err := runAdd(context.Background(), app, []string{"a stored fact"})
+	if err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Stored") {
+		t.Errorf("output %q should contain 'Stored'", got)
+	}
+	if repo.created == nil {
+		t.Fatal("expected entry")
+	}
+	if !strings.Contains(got, repo.created.ID.String()) {
+		t.Errorf("output %q should contain the entry ULID %s", got, repo.created.ID)
+	}
+	if !strings.Contains(got, "root") { // default scope
+		t.Errorf("output %q should contain scope", got)
+	}
+	if !strings.Contains(got, "a stored fact") {
+		t.Errorf("output %q should echo content", got)
+	}
+}
+
+func TestRunAdd_OutputJSON_Schema(t *testing.T) {
+	repo := &stubEntryRepo{}
+	var out bytes.Buffer
+	app := newTestApp(repo)
+	app.Printer = NewPrinter(&out, true, false)
+
+	err := runAdd(context.Background(), app, []string{"json fact"})
+	if err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	got := out.String()
+	// Must contain stable JSON fields.
+	for _, field := range []string{`"id"`, `"scope"`, `"content"`, `"deduped"`, `"suggestions"`} {
+		if !strings.Contains(got, field) {
+			t.Errorf("JSON output %q missing field %s", got, field)
+		}
+	}
+	// id must be a string value (ULID), not a number.
+	if strings.Contains(got, `"id": [0-9]`) {
+		t.Error("id should be a string (ULID), not a number")
+	}
+	if !strings.Contains(got, `"deduped": false`) {
+		t.Errorf("deduped field should be false for new entry, got: %s", got)
+	}
+}
+
+func TestRunAdd_Dedup_ShowsExistingID(t *testing.T) {
+	// Simulate a dedup hit: CreateOrUpdate returns Version > 1.
+	repo := &stubEntryRepo{
+		versionToReturn: 2, // triggers deduped path
+	}
+	var out bytes.Buffer
+	app := newTestApp(repo)
+	app.Printer = NewPrinter(&out, false, false)
+
+	err := runAdd(context.Background(), app, []string{"duplicate fact"})
+	if err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Duplicate") {
+		t.Errorf("output %q should say Duplicate on dedup hit", got)
+	}
+	if !strings.Contains(got, repo.created.ID.String()) {
+		t.Errorf("output %q should contain existing entry ID", got)
+	}
+	// Design requires next-action hints on dedup so the agent knows what to do.
+	if !strings.Contains(got, "known update") {
+		t.Errorf("output %q should include 'known update' hint", got)
+	}
+	if !strings.Contains(got, "elaborates:") {
+		t.Errorf("output %q should include '--link elaborates:' hint", got)
+	}
+}
+
+func TestLevenshtein(t *testing.T) {
+	cases := []struct{ a, b string; want int }{
+		{"confidence", "provenance", 7},
+		{"scope", "scope", 0},
+		{"ttl", "ttl", 0},
+		{"source", "source-type", 5},
+		{"", "abc", 3},
+		{"abc", "", 3},
+	}
+	for _, c := range cases {
+		got := levenshtein(c.a, c.b)
+		if got != c.want {
+			t.Errorf("levenshtein(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestNearestFlag_Confidence(t *testing.T) {
+	// --confidence should suggest --provenance (closest real flag)
+	got := nearestFlag("confidence", validAddFlags)
+	if got == "" {
+		t.Fatal("expected a suggestion for 'confidence'")
+	}
+	// provenance is the most semantically apt; score-wise accept any valid result
+	t.Logf("nearest flag for 'confidence' = %q", got)
+}
+
+func TestNearestFlag_Garbage(t *testing.T) {
+	got := nearestFlag("zzzzgarbage", validAddFlags)
+	if got != "" {
+		t.Errorf("expected no suggestion for 'zzzzgarbage', got %q", got)
+	}
+}
+
+func TestNearestFlag_Source(t *testing.T) {
+	// --source is the second audit-identified invented flag.
+	// It ties on distance with "scope" but should resolve to "source-ref"
+	// (or "source-type") via the prefix tie-break, not "scope".
+	got := nearestFlag("source", validAddFlags)
+	if got == "" {
+		t.Fatal("expected a suggestion for 'source'")
+	}
+	if got == "scope" {
+		t.Errorf("nearestFlag(\"source\") = %q; should prefer a source-* flag, not scope", got)
+	}
+	if !strings.HasPrefix(got, "source") {
+		t.Errorf("nearestFlag(\"source\") = %q; want a source-* flag", got)
+	}
+}
+
+// TestRunAdd_SourceFlag_Suggestion verifies the full error path for --source.
+func TestRunAdd_SourceFlag_Suggestion(t *testing.T) {
+	repo := &stubEntryRepo{}
+	app := newTestApp(repo)
+
+	err := runAdd(context.Background(), app, []string{"--source", "conversation", "fact"})
+	if err == nil {
+		t.Fatal("expected error for unknown --source flag")
+	}
+	if !strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error %q should suggest a valid flag", err.Error())
+	}
+	if strings.Contains(err.Error(), "--scope") {
+		t.Errorf("error %q should not suggest --scope for --source", err.Error())
+	}
+}

@@ -1,0 +1,92 @@
+{
+  "bin": "/tmp/known-baseline-bin",
+  "commit": "a59396f",
+  "timestamp": "2026-07-18T00:18:35Z",
+  "corpus_hash": "6e49bfe0da8622aa6c3fecfe1ac820aeca9c9fbe017d839179f578566954ecb5",
+  "pass": 4,
+  "total": 10,
+  "xfail": 6,
+  "capture_rate_pct": 40,
+  "scenarios": [
+    {
+      "id": "M2-compact-confirmation",
+      "name": "add: confirmation block is compact (≤4 non-empty lines, no embedding line)",
+      "pass": false,
+      "exit_code": 0,
+      "output": "ID:         01KXS9CM752F0XP0H56SD62243\nContent:    DeferredRenderer distance field target for engine.graphics\nScope:      root\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:01Z\nUpdated:    2026-07-18T00:18:01Z\nExpires:    2026-10-16T00:18:01Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "contains ULID AND no 'Embedding:' line AND ≤4 non-empty lines (got 11)"
+    },
+    {
+      "id": "M2-tail2-visible-ulid",
+      "name": "remember: ULID on first output line or output ≤3 non-empty lines",
+      "pass": true,
+      "exit_code": 0,
+      "output": "ID:         01KXS9CQ7YSXYQ0E4Y4ES8FYJS\nContent:    Renderer architecture decision 2026-06 SIBLING RendererInterface\nScope:      root\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:04Z\nUpdated:    2026-07-18T00:18:04Z\nExpires:    2026-10-16T00:18:04Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "ULID on first line (true) OR ≤3 non-empty lines (got 11)"
+    },
+    {
+      "id": "M2-stored-label",
+      "name": "add: first output line uses 'Stored'/'Duplicate' label (not 'ID:')",
+      "pass": false,
+      "exit_code": 0,
+      "output": "ID:         01KXS9CTDKM27094B87AC6SD59\nContent:    radiance cascades GI-zero bug DeferredRenderer\nScope:      root\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:07Z\nUpdated:    2026-07-18T00:18:07Z\nExpires:    2026-10-16T00:18:07Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "first stdout line starts with 'Stored'/'Duplicate' and contains a ULID"
+    },
+    {
+      "id": "M2-dedup-explicit",
+      "name": "add (dedup): second identical add prints 'Duplicate \u003cULID\u003e' on first line",
+      "pass": false,
+      "exit_code": 0,
+      "output": "Updated existing entry 01KXS9CYRKAYRCWXT08R6AZ7M7 (v2)\nID:         01KXS9CYRKAYRCWXT08R6AZ7M7\nContent:    Three feature epics opened 2026-06-08 services-runtime\nScope:      root\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    2\nCreated:    2026-07-18T00:18:12Z\nUpdated:    2026-07-18T00:18:12Z\nExpires:    2026-10-16T00:18:12Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "first line of second add starts with 'Duplicate' and contains original ULID"
+    },
+    {
+      "id": "M3-nonempty-with-ulid",
+      "name": "add: stdout is non-empty and contains a ULID on success",
+      "pass": true,
+      "exit_code": 0,
+      "output": "ID:         01KXS9D2EC250W1R3EM8GZCTH3\nContent:    radiance cascades DeferredRenderer GI\nScope:      root\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:16Z\nUpdated:    2026-07-18T00:18:16Z\nExpires:    2026-10-16T00:18:16Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "exit 0 AND stdout contains a ULID"
+    },
+    {
+      "id": "M4-link-by-content",
+      "name": "link: supersedes edge created by exact content query, no ULIDs typed",
+      "pass": false,
+      "exit_code": 1,
+      "output": "Multiple entries match \"CORRECTION to renderer decoupling decision\":\n  1. 01KXS9D7A1CHWRRBE2DQP774RG  CORRECTION to renderer decoupling decision  [root]\n  2. 01KXS9D6YEDCQ2EQ571JX0FBKD  renderer architecture decision original SIBLING RendererI...  [root]\nUse a more specific query or provide the full ID.\nerror: from: ambiguous query \"CORRECTION to renderer decoupling decision\": 2 matches\n",
+      "predicate": "exit 0 AND stdout contains 'Edge created.'"
+    },
+    {
+      "id": "M4-link-accept-subcommand",
+      "name": "link accept: subcommand exists and accepts an entry query",
+      "pass": false,
+      "exit_code": 1,
+      "output": "error: unknown flag: --all\n",
+      "predicate": "link accept subcommand exits 0"
+    },
+    {
+      "id": "M5-unknown-flag-suggests-valid",
+      "name": "unknown flag --confidence: error message names a valid alternative",
+      "pass": false,
+      "exit_code": 1,
+      "output": "error: unknown flag: --confidence\n",
+      "predicate": "exit non-zero AND output names a valid flag / 'Did you mean'"
+    },
+    {
+      "id": "M6-scope-from-marker",
+      "name": "scope derived from .known.yaml scope_prefix in CWD",
+      "pass": true,
+      "exit_code": 0,
+      "output": "ID:         01KXS9DJ3A33MW850YMGB64YAY\nContent:    GI-zero bug in DeferredRenderer radiance cascades\nScope:      myproject\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:32Z\nUpdated:    2026-07-18T00:18:32Z\nExpires:    2026-10-16T00:18:32Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "Scope line contains 'myproject' and is not 'root'"
+    },
+    {
+      "id": "M6-scope-subdir-appended",
+      "name": "scope appends CWD-relative subdir path to prefix",
+      "pass": true,
+      "exit_code": 0,
+      "output": "ID:         01KXS9DN9EDMSF9QM855QZYWS1\nContent:    renderer subdir scope test\nScope:      proj.engine.graphics\nSource:     cli (manual)\nProvenance: inferred\nFreshness:  fresh\nVersion:    1\nCreated:    2026-07-18T00:18:35Z\nUpdated:    2026-07-18T00:18:35Z\nExpires:    2026-10-16T00:18:35Z\nEmbedding:  sentence-transformers/all-MiniLM-L6-v2 (384 dims)\n\n",
+      "predicate": "Scope contains 'proj' prefix"
+    }
+  ]
+}
