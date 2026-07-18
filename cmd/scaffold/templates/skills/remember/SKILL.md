@@ -23,8 +23,8 @@ Example output:
 Stored  01KXSBAZ7HZ71JFM5FGHRHVKMX
 Scope   myproject
         "All new database tables use ULIDs instead of integers"
-Link?   elaborates:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
-        related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
+Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
+Link?   related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
 ```
 
 - `Stored` + ULID confirms success. IDs are ULIDs (26 alphanumeric chars), never integers.
@@ -48,7 +48,7 @@ The fact is already stored. Use the hints to extend or correct it.
 
 ## Optional enrichment flags
 
-All flags are optional. Defaults: `provenance: inferred`, `source-type: manual`.
+All flags are optional. Defaults are applied automatically.
 
 | Flag | Default | When to add it |
 |------|---------|----------------|
@@ -56,7 +56,7 @@ All flags are optional. Defaults: `provenance: inferred`, `source-type: manual`.
 | `--provenance <level>` | `inferred` | Use `verified` when the user stated the fact directly |
 | `--source-type <type>` | `manual` | Use `file` when derived from a source file |
 | `--source-ref <ref>` | `cli` | Path to the source (with `--source-type file`) |
-| `--ttl <duration>` | permanent | Expiry for time-limited facts (e.g. `168h`) |
+| `--ttl <duration>` | 90d (`manual`), 7d (`conversation`) | Pass `--ttl 0` for a fact that must never expire |
 | `--label <tag>` | none | Categorical tag, repeatable |
 | `--link <type:id>` | none | Inline edge using a ULID from prior output |
 
@@ -72,6 +72,21 @@ When deriving a fact from a file:
 known add API routes defined in cmd/api/routes.go --source-type file --source-ref cmd/api/routes.go
 ```
 
+## Accepting link suggestions
+
+After `known add`, the `Link?` output shows suggestions. To accept them:
+
+```bash
+known link accept '<stored content>' --all
+known link accept '<stored content>' 1 2
+```
+
+Or link two entries directly by content:
+
+```bash
+known link "<text a>" "<text b>" --type related-to
+```
+
 ## Batch mode
 
 For many facts at once (single embedding pass, much faster):
@@ -81,4 +96,12 @@ cat <<'JSONL' | known add --batch
 {"content": "fact one about auth", "scope": "myproject.auth"}
 {"content": "fact two about storage"}
 JSONL
+```
+
+Batch output:
+
+```
+Embedding 2 entries...
+Writing 2 entries...
+Batch complete: 2 created, 0 updated, 0 failed.
 ```

@@ -44,7 +44,7 @@ Confirmation block:
 Stored  01KXSBAZ7HZ71JFM5FGHRHVKMX
 Scope   myproject
         "All new database tables use ULIDs instead of integers"
-Link?   elaborates:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
+Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
 ```
 
 IDs are ULIDs (26 alphanumeric chars), never integers.

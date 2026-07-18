@@ -20,8 +20,8 @@ Example output after a successful store:
 Stored  01KXSBAZ7HZ71JFM5FGHRHVKMX
 Scope   myproject
         "All new database tables use ULIDs instead of integers"
-Link?   elaborates:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
-        related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
+Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
+Link?   related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
 ```
 
 - `Stored` + ULID confirms success. IDs are ULIDs (26 alphanumeric chars), never integers.
@@ -45,7 +45,7 @@ This is correct behavior. The fact is already stored. Use the hints to extend or
 
 ## Optional enrichment flags
 
-All flags below are optional. The defaults (`provenance: inferred`, `source-type: manual`) are recorded automatically.
+All flags are optional. Defaults are applied automatically.
 
 | Flag | Default | When to add it |
 |------|---------|----------------|
@@ -53,9 +53,9 @@ All flags below are optional. The defaults (`provenance: inferred`, `source-type
 | `--provenance <level>` | `inferred` | Use `verified` when the user stated the fact directly |
 | `--source-type <type>` | `manual` | Use `file` when derived from a specific source file |
 | `--source-ref <ref>` | `cli` | Path or reference to the source (with `--source-type file`) |
-| `--ttl <duration>` | permanent | Expiry for time-limited facts (e.g. `168h` for one week) |
+| `--ttl <duration>` | 90d (`manual`), 7d (`conversation`) | Pass `--ttl 0` for a fact that must never expire |
 | `--label <tag>` | none | Categorical tag, repeatable |
-| `--link <type:id>` | none | Inline edge: `--link elaborates:01KJ...` (ULID, not integer) |
+| `--link <type:id>` | none | Inline edge: `--link related-to:01KJ...` (ULID, not integer) |
 
 When the user states a decision directly, add `--provenance verified`:
 
@@ -81,7 +81,7 @@ known link accept '<stored content>' 1 2
 Or link two entries directly by content:
 
 ```bash
-known link "<text a>" "<text b>" --type elaborates
+known link "<text a>" "<text b>" --type related-to
 ```
 
 ## Batch mode

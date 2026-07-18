@@ -78,7 +78,7 @@ For each significant directory, follow this process:
 
 3. **Store via `known add`** (no flags required — scope auto-derived):
    ```bash
-   # Single entry:
+   # Single entry — scope auto-derived from cwd:
    known add <atomic fact> --scope <prefix>.<module>
    ```
 
