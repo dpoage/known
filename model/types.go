@@ -168,8 +168,16 @@ type Freshness struct {
 
 // FreshnessLabel returns a display label based on age since last observation:
 // "fresh" (< 7d), "aging Nd" (7-30d), "stale Nd" (> 30d).
-func (f Freshness) FreshnessLabel() string {
-	d := time.Since(f.ObservedAt)
+//
+// createdAt is used as the reference time when ObservedAt is zero (e.g. legacy
+// or imported entries that bypass NewEntry). This mirrors the fallback in
+// freshnessScoreAt so display and ranking are consistent.
+func (f Freshness) FreshnessLabel(createdAt time.Time) string {
+	ref := f.ObservedAt
+	if ref.IsZero() {
+		ref = createdAt
+	}
+	d := time.Since(ref)
 	days := int(d.Hours() / 24)
 	switch {
 	case days < 7:

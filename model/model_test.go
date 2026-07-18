@@ -674,3 +674,40 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// =============================================================================
+// FreshnessLabel tests
+// =============================================================================
+
+// TestFreshnessLabel_ZeroObservedAtFallsBackToCreatedAt verifies that when
+// ObservedAt is zero (legacy/imported rows bypassing NewEntry), FreshnessLabel
+// uses CreatedAt instead of computing time.Since(zero) which would produce
+// 'stale ~739000d'.
+func TestFreshnessLabel_ZeroObservedAtFallsBackToCreatedAt(t *testing.T) {
+	f := Freshness{} // ObservedAt is zero value
+
+	// createdAt = now → should display "fresh"
+	label := f.FreshnessLabel(time.Now())
+	if label != "fresh" {
+		t.Errorf("zero ObservedAt with createdAt=now: got %q, want %q", label, "fresh")
+	}
+
+	// createdAt = 20 days ago → should display "aging Nd"
+	label20 := f.FreshnessLabel(time.Now().Add(-20 * 24 * time.Hour))
+	if label20 == "fresh" || label20 == "" {
+		t.Errorf("zero ObservedAt with createdAt=20d ago: got %q, want 'aging ...'", label20)
+	}
+}
+
+// TestFreshnessLabel_ObservedAtTakesPrecedenceOverCreatedAt verifies that a
+// recently-observed old entry displays "fresh" based on ObservedAt, not stale
+// based on CreatedAt.
+func TestFreshnessLabel_ObservedAtTakesPrecedenceOverCreatedAt(t *testing.T) {
+	f := Freshness{ObservedAt: time.Now()}             // observed today
+	createdAt := time.Now().Add(-365 * 24 * time.Hour) // created one year ago
+
+	label := f.FreshnessLabel(createdAt)
+	if label != "fresh" {
+		t.Errorf("recently-observed old entry: got %q, want %q", label, "fresh")
+	}
+}
