@@ -24,13 +24,16 @@ func newLinkTestApp(t *testing.T) (*App, func()) {
 		db.Close()
 		t.Fatal(err)
 	}
+	stub := &stubSuggestEmbedder{}
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Printer: NewPrinter(&bytes.Buffer{}, false, false),
-		Stderr:  &bytes.Buffer{},
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: stub,
+		Engine:   query.New(db.Entries(), db.Edges(), stub),
+		Printer:  NewPrinter(&bytes.Buffer{}, false, false),
+		Stderr:   &bytes.Buffer{},
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 	return app, func() { db.Close() }
 }
@@ -186,13 +189,14 @@ func newStubAcceptApp(t *testing.T) (*App, model.Entry, []model.Entry) {
 
 	var buf bytes.Buffer
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Engine:  eng,
-		Printer: NewPrinter(&buf, false, false),
-		Stderr:  &bytes.Buffer{},
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: stub,
+		Engine:   eng,
+		Printer:  NewPrinter(&buf, false, false),
+		Stderr:   &bytes.Buffer{},
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 
 	// Create source entry with embedding.
@@ -291,7 +295,7 @@ func TestRunLinkAccept_ContentQuery(t *testing.T) {
 	app, _, _ := newStubAcceptApp(t)
 
 	// Accept by content query instead of ULID.
-	err := runLinkAccept(ctx, app, []string{"Renderer architecture", "1"})
+	err := runLinkAccept(ctx, app, []string{"Renderer architecture decision", "1"})
 	if err != nil {
 		t.Fatalf("runLinkAccept by content: %v", err)
 	}

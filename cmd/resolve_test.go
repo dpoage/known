@@ -3,11 +3,11 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
-	"strings"
-
 	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
 )
 
@@ -49,11 +49,13 @@ func TestResolveEntry_TextSingleMatch(t *testing.T) {
 
 	var buf bytes.Buffer
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Printer: NewPrinter(&buf, false, false),
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: &stubSuggestEmbedder{},
+		Engine:   query.New(db.Entries(), db.Edges(), &stubSuggestEmbedder{}),
+		Printer:  NewPrinter(&buf, false, false),
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 
 	got, err := resolveEntry(ctx, app, "rate limit")
@@ -78,11 +80,13 @@ func TestResolveEntry_TextNoMatch(t *testing.T) {
 
 	var buf bytes.Buffer
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Printer: NewPrinter(&buf, false, false),
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: &stubSuggestEmbedder{},
+		Engine:   query.New(db.Entries(), db.Edges(), &stubSuggestEmbedder{}),
+		Printer:  NewPrinter(&buf, false, false),
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 
 	_, err = resolveEntry(ctx, app, "nonexistent thing")
@@ -118,11 +122,13 @@ func TestResolveEntry_TextAmbiguous(t *testing.T) {
 
 	var buf bytes.Buffer
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Printer: NewPrinter(&buf, false, false),
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: &stubSuggestEmbedder{},
+		Engine:   query.New(db.Entries(), db.Edges(), &stubSuggestEmbedder{}),
+		Printer:  NewPrinter(&buf, false, false),
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 
 	_, err = resolveEntry(ctx, app, "auth")
