@@ -46,7 +46,7 @@ or uninstall and reinstall:
 ```
 This pulls the latest `main` from GitHub, reads `plugin/.claude-plugin/plugin.json`
 for the new version, and creates a fresh cache dir at the new version path.
-The old `0.2.0/` directory is left but no longer referenced.
+The old `0.2.0/` directory is left but no longer referenced (clean it up after verifying 0.2.1 loads).
 
 ### Verification
 
@@ -62,9 +62,13 @@ grep 'known-marketplace' ~/.omp/logs/omp.$(date +%F).log
 
 Confirm active plugin version:
 ```sh
-cat ~/.claude/plugins/cache/known-marketplace/known/*/plugin.json | python3 -c "import sys,json; [print(d['version']) for d in [json.load(open(f.strip()))] for f in sys.stdin]" 2>/dev/null || \
-  ls ~/.claude/plugins/cache/known-marketplace/known/
-# Should show 0.2.1 (or current) only
+ls ~/.claude/plugins/cache/known-marketplace/known/
+# Should show 0.2.1 only
+```
+
+Cleanup old cached version (after verifying 0.2.1 loads):
+```sh
+rm -rf ~/.claude/plugins/cache/known-marketplace/known/0.2.0
 ```
 
 ## How the install works (for reference)
