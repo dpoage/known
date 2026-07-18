@@ -160,6 +160,35 @@ func (f *testFixture) get(t *testing.T, path string, dst any) int {
 	return rec.Code
 }
 
+// assertUniqueGraphIDs fails the test if got.Nodes or got.Edges contains any
+// ID more than once. This defends the round-2 dedup invariant directly: a
+// map[string]bool built from a slice silently collapses duplicates, so
+// membership-only checks (as used throughout this file to assert WHICH
+// nodes/edges are present) cannot catch a regression that emits the same
+// node/edge twice on the wire -- which crashes the frontend's graph canvas
+// (duplicate cytoscape element IDs).
+func assertUniqueGraphIDs(t *testing.T, got Graph) {
+	t.Helper()
+	nodeCount := make(map[string]int, len(got.Nodes))
+	for _, n := range got.Nodes {
+		nodeCount[n.ID]++
+	}
+	for id, count := range nodeCount {
+		if count > 1 {
+			t.Errorf("node %s appears %d times in nodes, want exactly once", id, count)
+		}
+	}
+	edgeCount := make(map[string]int, len(got.Edges))
+	for _, e := range got.Edges {
+		edgeCount[e.ID]++
+	}
+	for id, count := range edgeCount {
+		if count > 1 {
+			t.Errorf("edge %s appears %d times in edges, want exactly once", id, count)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // /api/meta
 // ---------------------------------------------------------------------------
@@ -213,6 +242,7 @@ func TestHandleGraph_ScopeFilter(t *testing.T) {
 	if code := f.get(t, "/api/graph?scope=root.sub", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 
 	if got.Nodes == nil || got.Edges == nil {
 		t.Fatalf("nodes/edges must never be null: %+v", got)
@@ -287,6 +317,7 @@ func TestHandleGraph_BothEndpointsRule(t *testing.T) {
 	if code := f.get(t, "/api/graph", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 
 	edgeIDs := map[string]bool{}
 	for _, e := range got.Edges {
@@ -312,6 +343,7 @@ func TestHandleGraph_NoFilterNoTruncation_ZeroExternals(t *testing.T) {
 	if code := f.get(t, "/api/graph", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 	if got.Truncated {
 		t.Fatalf("truncated = true, want false (default limit 500 comfortably covers the fixture)")
 	}
@@ -329,6 +361,7 @@ func TestHandleGraph_LabelBoundary(t *testing.T) {
 	if code := f.get(t, "/api/graph?label=security", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 
 	primary := map[string]bool{}
 	external := map[string]bool{}
@@ -432,6 +465,7 @@ func TestHandleGraph_TruncationBoundary(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	assertUniqueGraphIDs(t, got)
 
 	if !got.Truncated {
 		t.Fatalf("truncated = false, want true (limit=2 of 3 entries)")
@@ -485,6 +519,7 @@ func TestHandleGraph_ExternalNodeShape(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	assertUniqueGraphIDs(t, got)
 	var schemaNode, oauthNode Node
 	for _, n := range got.Nodes {
 		switch n.ID {
@@ -538,6 +573,7 @@ func TestHandleGraph_Truncated(t *testing.T) {
 	if code := f.get(t, "/api/graph?limit=2", &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 	primaryCount := 0
 	for _, n := range got.Nodes {
 		if !n.External {
