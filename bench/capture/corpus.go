@@ -288,6 +288,50 @@ func corpus() []Scenario {
 				return out, code, "Scope contains 'proj' prefix", pass
 			},
 		},
+		// ---- known-nyo: Default lifetime is permanent (regression guard) ----
+		//
+		// Known-nyo decision: TTL is opt-in. Unflagged `known add` must produce
+		// an entry with no expiry — no "Expires:" line in human output.
+		// This is a regression guard: baseline (a59396f) FAILED this (applied 90d
+		// default TTL) but after known-nyo it must always pass.
+		{
+			ID:                 "Pn6-no-ttl-permanent",
+			Name:               "add without --ttl: output has no Expires line (permanent by default)",
+			AuditMode:          "known-nyo (p1-ttl): TTL opt-in; default lifetime is permanent",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+				out, code := run(bin, env, dir, "add", "permanent fact no TTL set")
+				if code != 0 {
+					return out, code, "exit 0", false
+				}
+				noExpires := !strings.Contains(out, "Expires:")
+				pass := noExpires
+				return out, code, "output must NOT contain 'Expires:' line", pass
+			},
+		},
+
+		// ---- known-nyo: Explicit --ttl sets expiry (regression guard) ----
+		//
+		// When --ttl is provided, the Expires: line must appear.
+		// Baseline already passed this; it is a regression guard.
+		{
+			ID:        "Pn6-explicit-ttl-sets-expiry",
+			Name:      "add with --ttl 24h: output contains Expires line",
+			AuditMode: "known-nyo (p1-ttl): explicit --ttl must set ExpiresAt",
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+				out, code := runArgs(bin, env, dir, []string{"add", "ephemeral fact with ttl set", "--ttl", "24h"})
+				if code != 0 {
+					return out, code, "exit 0", false
+				}
+				hasExpires := strings.Contains(out, "Expires:")
+				pass := hasExpires
+				return out, code, "output must contain 'Expires:' line", pass
+			},
+		},
 	}
 }
 

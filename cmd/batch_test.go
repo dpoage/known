@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dpoage/known/model"
 )
@@ -23,10 +22,6 @@ func newBatchTestApp(repo *stubEntryRepo) *App {
 		Config: &AppConfig{
 			DefaultScope:     "root",
 			MaxContentLength: model.MaxContentLength,
-			DefaultTTL: map[model.SourceType]time.Duration{
-				model.SourceConversation: 7 * 24 * time.Hour,
-				model.SourceManual:       90 * 24 * time.Hour,
-			},
 		},
 	}
 }

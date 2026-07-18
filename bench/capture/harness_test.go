@@ -455,6 +455,54 @@ func TestDiscriminatorOracleFails(t *testing.T) {
 	}
 }
 
+// ---- Pn6-no-ttl-permanent ----
+
+func TestNoTTLPermanent_Pass(t *testing.T) {
+	// Compact output with no Expires: line — permanent entry.
+	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n          \"permanent fact no TTL set\"\n"
+	bin := stubBinary(t, out, 0)
+	sc := scenarioByID("Pn6-no-ttl-permanent")
+	r := runScenario(bin, sc)
+	if !r.Pass {
+		t.Errorf("expected PASS; output=%q predicate=%q", r.Output, r.PredicateDesc)
+	}
+}
+
+func TestNoTTLPermanent_Fail(t *testing.T) {
+	// Output includes Expires: — old auto-TTL behavior should fail.
+	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\nExpires:  2026-10-17T00:00:00Z\n"
+	bin := stubBinary(t, out, 0)
+	sc := scenarioByID("Pn6-no-ttl-permanent")
+	r := runScenario(bin, sc)
+	if r.Pass {
+		t.Errorf("expected FAIL (Expires: present = old auto-TTL behavior); output=%q", r.Output)
+	}
+}
+
+// ---- Pn6-explicit-ttl-sets-expiry ----
+
+func TestExplicitTTLSetsExpiry_Pass(t *testing.T) {
+	// Output includes Expires: line — explicit --ttl worked.
+	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\nExpires:  2026-07-18T00:00:00Z\n"
+	bin := stubBinary(t, out, 0)
+	sc := scenarioByID("Pn6-explicit-ttl-sets-expiry")
+	r := runScenario(bin, sc)
+	if !r.Pass {
+		t.Errorf("expected PASS; output=%q predicate=%q", r.Output, r.PredicateDesc)
+	}
+}
+
+func TestExplicitTTLSetsExpiry_Fail(t *testing.T) {
+	// No Expires: line — --ttl was ignored.
+	out := "Stored    01KXS5B55PBGZM993P6ZN4T3K8\nScope     known\n"
+	bin := stubBinary(t, out, 0)
+	sc := scenarioByID("Pn6-explicit-ttl-sets-expiry")
+	r := runScenario(bin, sc)
+	if r.Pass {
+		t.Errorf("expected FAIL (no Expires: line when --ttl was given); output=%q", r.Output)
+	}
+}
+
 // scenarioByID finds a scenario by ID; panics if not found.
 func scenarioByID(id string) Scenario {
 	for _, sc := range corpus() {
