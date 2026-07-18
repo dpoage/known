@@ -121,7 +121,7 @@ func TestRunAdd_TTLZero_PermanentEntry(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--ttl", "0", "permanent fact"})
+	err := runAdd(context.Background(), app, []string{"--ttl", "0", "permanent fact"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd with --ttl 0: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestRunAdd_TTLZero_ExplicitPermanent(t *testing.T) {
 		"--ttl", "0",
 		"--source-type", "conversation",
 		"explicitly permanent entry",
-	})
+	}, "add")
 	if err != nil {
 		t.Fatalf("runAdd: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestRunAdd_NoTTLFlag_PermanentEntry(t *testing.T) {
 
 	for _, st := range []string{"manual", "conversation", "file", "url"} {
 		repo.created = nil
-		err := runAdd(context.Background(), app, []string{"--source-type", st, "fact without ttl"})
+		err := runAdd(context.Background(), app, []string{"--source-type", st, "fact without ttl"}, "add")
 		if err != nil {
 			t.Fatalf("runAdd (source-type=%s): %v", st, err)
 		}
@@ -193,7 +193,7 @@ func TestRunAdd_InvalidTTL(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--ttl", "notaduration", "bad ttl"})
+	err := runAdd(context.Background(), app, []string{"--ttl", "notaduration", "bad ttl"}, "add")
 	if err == nil {
 		t.Fatal("expected error for invalid TTL")
 	}
@@ -206,7 +206,7 @@ func TestRunAdd_MissingContent(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{})
+	err := runAdd(context.Background(), app, []string{}, "add")
 	if err == nil {
 		t.Fatal("expected error for missing content")
 	}
@@ -232,7 +232,7 @@ func TestRunAdd_LinkCreatesEdge(t *testing.T) {
 	err := runAdd(context.Background(), app, []string{
 		"--link", "elaborates:" + targetID.String(),
 		"detail about the target",
-	})
+	}, "add")
 	if err != nil {
 		t.Fatalf("runAdd with --link: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestRunAdd_LinkMultiple(t *testing.T) {
 		"--link", "elaborates:" + id1.String(),
 		"--link", "depends-on:" + id2.String(),
 		"entry with two links",
-	})
+	}, "add")
 	if err != nil {
 		t.Fatalf("runAdd with multiple --link: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestRunAdd_LinkInvalidFormat(t *testing.T) {
 	err := runAdd(context.Background(), app, []string{
 		"--link", "no-colon-here",
 		"some content",
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error for invalid link format")
 	}
@@ -319,7 +319,7 @@ func TestRunAdd_LinkBadTarget(t *testing.T) {
 	err := runAdd(context.Background(), app, []string{
 		"--link", "elaborates:" + fakeID.String(),
 		"orphan link attempt",
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error for non-existent target")
 	}
@@ -340,7 +340,7 @@ func TestRunAdd_MultiWordContent_NoQuotes(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"some", "fact", "without", "quotes"})
+	err := runAdd(context.Background(), app, []string{"some", "fact", "without", "quotes"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd multi-word: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestRunAdd_MultiWordContent_FlagsAfter(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"a", "fact", "--scope", "myproj"})
+	err := runAdd(context.Background(), app, []string{"a", "fact", "--scope", "myproj"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd multi-word with flags: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestRunAdd_ContentEmpty_Error(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--scope", "root"})
+	err := runAdd(context.Background(), app, []string{"--scope", "root"}, "add")
 	if err == nil {
 		t.Fatal("expected error for empty content")
 	}
@@ -386,7 +386,7 @@ func TestRunAdd_ContentOversized_Error(t *testing.T) {
 	app := newTestApp(repo)
 	// MaxContentLength is 4096 by default in newTestApp
 	oversized := strings.Repeat("x", 4097)
-	err := runAdd(context.Background(), app, []string{oversized})
+	err := runAdd(context.Background(), app, []string{oversized}, "add")
 	if err == nil {
 		t.Fatal("expected error for oversized content")
 	}
@@ -400,7 +400,7 @@ func TestRunAdd_UnknownFlag_SuggestsNearest(t *testing.T) {
 	app := newTestApp(repo)
 
 	// --confidence is close to --provenance (audit finding mode 5/6)
-	err := runAdd(context.Background(), app, []string{"--confidence", "verified", "some fact"})
+	err := runAdd(context.Background(), app, []string{"--confidence", "verified", "some fact"}, "add")
 	if err == nil {
 		t.Fatal("expected error for unknown flag")
 	}
@@ -416,7 +416,7 @@ func TestRunAdd_UnknownFlag_NoSuggestionForGarbage(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--zzzzgarbage", "some fact"})
+	err := runAdd(context.Background(), app, []string{"--zzzzgarbage", "some fact"}, "add")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -436,7 +436,7 @@ func TestRunAdd_OutputConfirmation_Fields(t *testing.T) {
 	app := newTestApp(repo)
 	app.Printer = NewPrinter(&out, false, false)
 
-	err := runAdd(context.Background(), app, []string{"a stored fact"})
+	err := runAdd(context.Background(), app, []string{"a stored fact"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestRunAdd_OutputJSON_Schema(t *testing.T) {
 	app := newTestApp(repo)
 	app.Printer = NewPrinter(&out, true, false)
 
-	err := runAdd(context.Background(), app, []string{"json fact"})
+	err := runAdd(context.Background(), app, []string{"json fact"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestRunAdd_Dedup_ShowsExistingID(t *testing.T) {
 	app := newTestApp(repo)
 	app.Printer = NewPrinter(&out, false, false)
 
-	err := runAdd(context.Background(), app, []string{"duplicate fact"})
+	err := runAdd(context.Background(), app, []string{"duplicate fact"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd: %v", err)
 	}
@@ -574,7 +574,7 @@ func TestRunAdd_SourceFlag_Suggestion(t *testing.T) {
 	repo := &stubEntryRepo{}
 	app := newTestApp(repo)
 
-	err := runAdd(context.Background(), app, []string{"--source", "conversation", "fact"})
+	err := runAdd(context.Background(), app, []string{"--source", "conversation", "fact"}, "add")
 	if err == nil {
 		t.Fatal("expected error for unknown --source flag")
 	}

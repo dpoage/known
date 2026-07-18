@@ -188,7 +188,7 @@ func TestRunAdd_BatchDelegates(t *testing.T) {
 	os.Stdin = r
 	defer func() { os.Stdin = oldStdin }()
 
-	err := runAdd(context.Background(), app, []string{"--batch"})
+	err := runAdd(context.Background(), app, []string{"--batch"}, "add")
 	if err != nil {
 		t.Fatalf("runAdd --batch: %v", err)
 	}

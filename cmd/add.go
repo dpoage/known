@@ -34,7 +34,7 @@ import (
 //	--meta           Metadata key=value pairs (repeatable)
 //	--label          Labels (repeatable, e.g. --label lang:go)
 //	--link           Create edge: type:target-id (repeatable)
-func runAdd(ctx context.Context, app *App, args []string) error {
+func runAdd(ctx context.Context, app *App, args []string, cmdName string) error {
 	// Check for --batch before full flag parsing so we can delegate early.
 	// Known limitation: unquoted content containing the literal token "--batch"
 	// (e.g. `known add ... --batch ...`) will misroute to batch mode because this
@@ -56,7 +56,18 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 		}
 	}
 
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	// Detect --help/-h before pflag so we can print help under the invoked name.
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			printAddHelp(cmdName)
+			return flag.ErrHelp
+		}
+		if a == "--" {
+			break
+		}
+	}
+
+	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // suppress pflag's own error output; we format it ourselves
 	title := fs.String("title", "", "short label for the entry (2-5 words)")
 	scope := fs.String("scope", "", "scope path (default: auto from cwd)")
@@ -223,6 +234,26 @@ func runAdd(ctx context.Context, app *App, args []string) error {
 	}
 
 	return nil
+}
+
+// printAddHelp prints the full help for the add/remember command.
+func printAddHelp(cmdName string) {
+	fmt.Fprintf(os.Stderr, `Usage: known %s <content> [flags]
+       known %s -          # read content from stdin
+       known %s some fact without quotes
+
+Flags:
+  --scope          Scope path (default: auto from cwd)
+  --title          Short label (2-5 words)
+  --source-type    Source type: file, url, conversation, manual (default: "manual")
+  --source-ref     Source reference (default: "cli")
+  --provenance     Provenance level: verified, inferred, uncertain (default: "inferred")
+  --ttl            Time-to-live duration (e.g., "24h", "168h")
+  --meta           Metadata key=value pairs (repeatable)
+  --label          Labels (repeatable, e.g. --label lang:go)
+  --link           Create edge: type:target-id (repeatable)
+  --batch          Read entries as JSONL from stdin
+`, cmdName, cmdName, cmdName)
 }
 
 // resolveContent derives the content string from positional args.

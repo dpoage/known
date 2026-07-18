@@ -139,7 +139,7 @@ Commands:
   remember   Alias for add
   update     Update an existing entry
   delete     Delete an entry
-  show       Show entry details with relationships
+  forget     Alias for delete
   list       Browse entries by scope, source type, or provenance
   search     Search entries by semantic similarity
   recall     Retrieve knowledge optimized for LLM context
@@ -253,11 +253,11 @@ func Run(ctx context.Context, args []string) int {
 
 	switch subcmd {
 	case "add", "remember":
-		err = runAdd(ctx, app, subArgs)
+		err = runAdd(ctx, app, subArgs, subcmd)
 	case "update":
 		err = runUpdate(ctx, app, subArgs)
-	case "delete":
-		err = runDelete(ctx, app, subArgs)
+	case "delete", "forget":
+		err = runDelete(ctx, app, subArgs, subcmd)
 	case "show":
 		err = runShow(ctx, app, subArgs)
 	case "list":
