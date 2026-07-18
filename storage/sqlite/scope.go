@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -183,11 +184,15 @@ func formatTime(t time.Time) string {
 
 func parseTime(s string) time.Time {
 	t, err := time.Parse(timeFormat, s)
-	if err != nil {
-		// Fallback: try RFC3339
-		t, _ = time.Parse(time.RFC3339Nano, s)
+	if err == nil {
+		return t
 	}
-	return t
+	t, err2 := time.Parse(time.RFC3339Nano, s)
+	if err2 == nil {
+		return t
+	}
+	log.Printf("known: parseTime: failed to parse %q (tried %s and RFC3339Nano): %v", s, timeFormat, err)
+	return time.Time{}
 }
 
 func formatNullableTime(t *time.Time) *string {

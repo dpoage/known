@@ -104,16 +104,30 @@ func (m Metadata) GetInt(key string) int {
 	}
 }
 
-// Clone creates a deep copy of the metadata.
+// Clone creates a deep copy of the metadata using a JSON round-trip,
+// which correctly handles arbitrarily nested values.
 func (m Metadata) Clone() Metadata {
 	if m == nil {
 		return nil
 	}
-	clone := make(Metadata, len(m))
-	for k, v := range m {
-		clone[k] = v
+	b, err := json.Marshal(map[string]any(m))
+	if err != nil {
+		// Fallback: shallow copy (better than panic)
+		clone := make(Metadata, len(m))
+		for k, v := range m {
+			clone[k] = v
+		}
+		return clone
 	}
-	return clone
+	var clone map[string]any
+	if err := json.Unmarshal(b, &clone); err != nil {
+		clone2 := make(Metadata, len(m))
+		for k, v := range m {
+			clone2[k] = v
+		}
+		return clone2
+	}
+	return Metadata(clone)
 }
 
 // SourceType identifies the origin category of knowledge.
