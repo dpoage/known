@@ -497,14 +497,27 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, graphFromResults(results))
+	graph, err := s.buildMesh(r.Context(), results)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, graph)
 }
 
-// graphFromResults builds a Graph from traversal results: nodes are the
-// start entry plus every reached entry; edges are the union of every
-// result's EdgePath, deduped by edge ID, restricted to edges whose both
-// endpoints are in the node set.
-func graphFromResults(results []query.Result) Graph {
+// buildMesh builds a Graph from BFS traversal results: nodes are the start
+// entry plus every reached entry (this endpoint never scope-filters, so no
+// node here ever carries external:true). Edges are ALL edges among that
+// node set -- EdgesFrom/EdgesTo per node, deduped by edge ID, kept only when
+// both endpoints are in the set -- NOT just the traversal's EdgePath union,
+// which is a BFS tree and structurally cannot contain a chord edge between
+// two reached nodes discovered via different paths (round 3 amendment). The
+// `types` query param only shapes which nodes Traverse reaches; the mesh
+// rebuild deliberately queries with no EdgeFilter.Type, so it includes every
+// edge type among however Traverse decided the node set should look. Same
+// posture as buildGraph's primary-primary edge collection (round 2).
+func (s *Server) buildMesh(ctx context.Context, results []query.Result) (Graph, error) {
 	nodeSet := make(map[string]bool, len(results))
 	nodes := make([]Node, 0, len(results))
 	for _, res := range results {
@@ -514,19 +527,28 @@ func graphFromResults(results []query.Result) Graph {
 
 	edgeSet := make(map[string]Edge)
 	for _, res := range results {
-		for _, e := range res.EdgePath {
-			if nodeSet[e.FromID.String()] && nodeSet[e.ToID.String()] {
-				edgeSet[e.ID.String()] = newEdge(e)
+		out, err := s.edges.EdgesFrom(ctx, res.Entry.ID, storage.EdgeFilter{})
+		if err != nil {
+			return Graph{}, fmt.Errorf("edges from %s: %w", res.Entry.ID, err)
+		}
+		in, err := s.edges.EdgesTo(ctx, res.Entry.ID, storage.EdgeFilter{})
+		if err != nil {
+			return Graph{}, fmt.Errorf("edges to %s: %w", res.Entry.ID, err)
+		}
+		for _, edge := range append(out, in...) {
+			if nodeSet[edge.FromID.String()] && nodeSet[edge.ToID.String()] {
+				edgeSet[edge.ID.String()] = newEdge(edge)
 			}
 		}
 	}
+
 	edges := make([]Edge, 0, len(edgeSet))
 	for _, e := range edgeSet {
 		edges = append(edges, e)
 	}
 	sortEdges(edges)
 
-	return Graph{Nodes: nodes, Edges: edges}
+	return Graph{Nodes: nodes, Edges: edges}, nil
 }
 
 // handleSearch implements GET /api/search?q=&scope=&limit=.
