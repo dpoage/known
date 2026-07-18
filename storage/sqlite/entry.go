@@ -613,7 +613,7 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		WHERE entries_fts MATCH ?
 		  AND (e.scope = ? OR e.scope LIKE ?)
 		  AND (e.expires_at IS NULL OR e.expires_at > ?)
-		ORDER BY fts.rank
+		ORDER BY fts.rank, e.id
 		LIMIT ?
 	`, query, scope, scope+".%", now, limit)
 	if err != nil {
@@ -674,9 +674,12 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		return nil, fmt.Errorf("iterate text results: %w", err)
 	}
 
-	// Re-sort by rank (IN query doesn't preserve order).
+	// Re-sort by rank then ID (IN query doesn't preserve order; ID tiebreaks ties deterministically).
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].Distance < results[j].Distance
+		if results[i].Distance != results[j].Distance {
+			return results[i].Distance < results[j].Distance
+		}
+		return results[i].Entry.ID.String() < results[j].Entry.ID.String()
 	})
 
 	if err := loadLabelsForResults(ctx, s.conn(ctx), results); err != nil {

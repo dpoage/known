@@ -58,8 +58,10 @@ CREATE TABLE entries (
 );
 
 -- Partial index for active (non-expired) entries
-CREATE INDEX idx_entries_active ON entries (scope, created_at)
-    WHERE expires_at IS NULL OR expires_at > NOW();
+-- Active entries index: cannot use NOW() in predicate (STABLE, not IMMUTABLE).
+-- Use a plain index on (scope, created_at, expires_at) instead; the query planner
+-- filters expired rows via the expires_at column directly.
+CREATE INDEX idx_entries_active ON entries (scope, created_at, expires_at);
 
 -- Index for TTL expiration cleanup
 CREATE INDEX idx_entries_expires_at ON entries (expires_at)
