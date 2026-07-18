@@ -113,11 +113,26 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		return nil
 	}
 
+	// When post-filters (--label/--provenance/--source) are active, fetch more
+	// candidates than the user's limit so that entries ranked below *limit in
+	// the unfiltered set are not silently dropped before filters run.
+	// We use a 10x multiplier as a practical "fetch all likely candidates"
+	// heuristic; TotalLimit is cleared so SearchHybrid doesn't truncate the
+	// expanded set either. The user's limit is enforced after filtering.
+	// Results remain sorted because SearchHybrid always sorts by unified score.
+	postFiltersActive := len(labelFlags) > 0 || *provenance != "" || *source != ""
+	vectorLimit := *limit
+	totalLimit := *limit
+	if postFiltersActive {
+		vectorLimit = *limit * 10
+		totalLimit = 0
+	}
+
 	opts := query.HybridOptions{
 		Vector: query.VectorOptions{
 			Text:            queryText,
 			Scope:           *scope,
-			Limit:           *limit,
+			Limit:           vectorLimit,
 			Threshold:       *threshold,
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
@@ -125,6 +140,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		ExpandDepth:     *expandDepth,
 		ExpandDirection: query.Both,
 		TextSearch:      true,
+		TotalLimit:      totalLimit,
 	}
 
 	results, err := app.Engine.SearchHybrid(ctx, opts)
@@ -135,6 +151,12 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	results = filterResultsByLabels(results, labelFlags)
 	results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
 	results = filterResultsBySource(results, model.SourceType(*source))
+
+	// Apply limit after post-filters when they were active.
+	if postFiltersActive && *limit > 0 && len(results) > *limit {
+		results = results[:*limit]
+	}
+
 	app.Printer.PrintRecallResults(results)
 	return nil
 }
