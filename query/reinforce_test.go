@@ -308,12 +308,13 @@ func TestReinforce_NilWeightBoosted(t *testing.T) {
 	}
 
 	cfg := DefaultReinforceConfig()
-	// nil weight → EffectiveWeight()=1.0; with update action:
-	// newWeight = 1.0 * DecayFactor + UpdateBoost = 1.0*0.90 + 0.05 = 0.95
+	// nil weight → EffectiveWeight() = model.DefaultEdgeWeight = 0.5 (neutral).
+	// With update action at equilibrium: newWeight = 0.5*0.90 + 0.05 = 0.50.
+	// A nil-weight edge at equilibrium stays at equilibrium after one update cycle.
 	got, _ := edgeRepo.Get(ctx, edge.ID)
-	want := 1.0*cfg.DecayFactor + cfg.UpdateBoost
+	want := model.DefaultEdgeWeight*cfg.DecayFactor + cfg.UpdateBoost
 	if math.Abs(*got.Weight-want) > 1e-9 {
-		t.Errorf("edge weight = %f, want %f (decay*1.0 + updateBoost)", *got.Weight, want)
+		t.Errorf("edge weight = %f, want %f (DefaultEdgeWeight*decay + updateBoost)", *got.Weight, want)
 	}
 }
 

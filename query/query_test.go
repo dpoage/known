@@ -1326,10 +1326,10 @@ func TestSearchHybrid_EdgeWeightAffectsScore(t *testing.T) {
 	}
 }
 
-// TestSearchHybrid_NilEdgeWeightTreatedAsOne verifies that a nil edge weight
-// is treated as 1.0 (EffectiveWeight default), and the expansion score is
-// parentScore * 1.0 * expansionDepthDecay (not a literal 1.0).
-func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
+// TestSearchHybrid_NilEdgeWeightTreatedAsNeutral verifies that a nil edge weight
+// uses DefaultEdgeWeight (0.5) in expansion scoring, matching the reinforcement
+// equilibrium so unrated edges score at neutral — not above reinforced ones.
+func TestSearchHybrid_NilEdgeWeightTreatedAsNeutral(t *testing.T) {
 	f := newTestFixture(3)
 	ctx := context.Background()
 
@@ -1365,10 +1365,12 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 
 	for _, r := range results {
 		if r.Entry.ID == e2.ID {
-			// nil weight → EffectiveWeight() == 1.0, so score = parentScore * 1.0 * decay.
-			want := e1Score * 1.0 * expansionDepthDecay
+			// nil weight → EffectiveWeight() == model.DefaultEdgeWeight (0.5)
+			// score = parentScore * 0.5 * expansionDepthDecay
+			want := e1Score * model.DefaultEdgeWeight * expansionDepthDecay
 			if math.Abs(r.Score-want) > 1e-10 {
-				t.Errorf("nil weight expansion score = %f, want %f (parentScore=%f * decay=%f)", r.Score, want, e1Score, expansionDepthDecay)
+				t.Errorf("nil weight expansion score = %f, want %f (parentScore=%f * neutral=%.1f * decay=%f)",
+					r.Score, want, e1Score, model.DefaultEdgeWeight, expansionDepthDecay)
 			}
 			return
 		}
@@ -1378,11 +1380,11 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 
 func TestEdgeWeight_Helper(t *testing.T) {
 	// Test the Edge.EffectiveWeight method.
-	t.Run("nil weight returns 1.0", func(t *testing.T) {
+	t.Run("nil weight returns DefaultEdgeWeight", func(t *testing.T) {
 		edge := model.NewEdge(model.NewID(), model.NewID(), model.EdgeRelatedTo)
 		score := edge.EffectiveWeight()
-		if score != 1.0 {
-			t.Errorf("EffectiveWeight(nil) = %f, want 1.0", score)
+		if score != model.DefaultEdgeWeight {
+			t.Errorf("EffectiveWeight(nil) = %f, want %f (DefaultEdgeWeight)", score, model.DefaultEdgeWeight)
 		}
 	})
 
@@ -2614,5 +2616,64 @@ func TestReinforce_PartialFailureAccounting(t *testing.T) {
 	// only AFTER a successful session — on error, Reinforce returns early.)
 	if result != nil && result.EdgesBoosted > 0 {
 		t.Errorf("EdgesBoosted = %d on error, want 0 (partial failure must not report success)", result.EdgesBoosted)
+	}
+}
+
+// =============================================================================
+// Edge weight semantic invariant: unrated == equilibrium
+// =============================================================================
+
+// TestEdgeWeight_SemanticInvariant pins the three-tier ordering that makes
+// edge weight meaningful as a retrieval signal:
+//
+//	decayed-stale < unrated (DefaultEdgeWeight) == equilibrium < freshly-boosted
+//
+// This prevents the inversion where a nil-weight (never-touched) edge outranks
+// a reinforced edge that has converged to equilibrium.
+func TestEdgeWeight_SemanticInvariant(t *testing.T) {
+	cfg := DefaultReinforceConfig()
+
+	// Equilibrium for update/link: UpdateBoost / (1 - DecayFactor)
+	equilibrium := cfg.UpdateBoost / (1 - cfg.DecayFactor)
+
+	// DefaultEdgeWeight must equal the reinforcement equilibrium exactly.
+	// This is the invariant: an unrated edge scores the same as one that
+	// has been reinforced at steady state.
+	if math.Abs(model.DefaultEdgeWeight-equilibrium) > 1e-9 {
+		t.Errorf("DefaultEdgeWeight (%f) != reinforcement equilibrium (%f = UpdateBoost/( 1-DecayFactor)); "+
+			"update DefaultEdgeWeight or DefaultReinforceConfig constants to re-align",
+			model.DefaultEdgeWeight, equilibrium)
+	}
+	// Simulate a "decayed-stale" edge: start at equilibrium, apply 10 decay-only cycles
+	// (boost=0) so weight drifts below equilibrium.
+	decayedWeight := model.DefaultEdgeWeight
+	for range 10 {
+		decayedWeight = decayedWeight*cfg.DecayFactor + 0 // no boost
+		if decayedWeight < cfg.MinWeight {
+			decayedWeight = cfg.MinWeight
+		}
+	}
+
+	// Simulate a "freshly-boosted" edge: start from 0.8 (above equilibrium, e.g.
+	// a manually-set or transiently-high edge), apply one update boost.
+	// Result: 0.8*0.90 + 0.05 = 0.77 — still above neutral 0.5.
+	// An edge above equilibrium stays above it for several cycles before decaying
+	// back to 0.5; this is the "recently confirmed useful" signal.
+	boostedFromHigh := 0.8*cfg.DecayFactor + cfg.UpdateBoost
+
+	// Assert ordering:
+	//   decayed-stale < unrated (DefaultEdgeWeight == equilibrium) < transiently-boosted
+	if decayedWeight >= model.DefaultEdgeWeight {
+		t.Errorf("decayed-stale weight (%f) >= DefaultEdgeWeight (%f); "+
+			"unused edges should drift below neutral after decay cycles",
+			decayedWeight, model.DefaultEdgeWeight)
+	}
+	if boostedFromHigh <= model.DefaultEdgeWeight {
+		t.Errorf("freshly-boosted-from-high weight (%f) <= DefaultEdgeWeight (%f); "+
+			"an edge above equilibrium with one boost must remain above neutral",
+			boostedFromHigh, model.DefaultEdgeWeight)
+	}
+	if boostedFromHigh > cfg.MaxWeight {
+		t.Errorf("boosted weight (%f) exceeds MaxWeight (%f)", boostedFromHigh, cfg.MaxWeight)
 	}
 }
