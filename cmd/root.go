@@ -140,7 +140,7 @@ Commands:
   update     Update an existing entry
   delete     Delete an entry
   forget     Alias for delete
-  list       Browse entries by scope, source type, or provenance
+  show       Show entry details with relationships
   search     Search entries by semantic similarity
   recall     Retrieve knowledge optimized for LLM context
   related    Find related entries via graph traversal

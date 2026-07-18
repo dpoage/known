@@ -39,6 +39,15 @@ func resolveEntry(ctx context.Context, app *App, arg string) (model.ID, error) {
 // query still resolves to a single entry without requiring the agent to provide
 // a ULID.
 func resolveEntryConfident(ctx context.Context, app *App, arg string) (model.ID, error) {
+	// Reject empty or whitespace-only queries before any resolution attempt.
+	// An empty query would match every entry (strings.Contains(s, "") is always true),
+	// which could silently delete the wrong entry. This is caught here at the shared
+	// level so every command using resolveEntryConfident (delete, forget, link, etc.)
+	// is protected automatically.
+	if strings.TrimSpace(arg) == "" {
+		return model.ID{}, fmt.Errorf("query must not be empty; provide exact content or a ULID")
+	}
+
 	// Fast path: valid ULID.
 	if id, err := model.ParseID(arg); err == nil {
 		return id, nil
@@ -59,7 +68,7 @@ func resolveEntryConfident(ctx context.Context, app *App, arg string) (model.ID,
 
 		// Top-1 dominance: score ≥ threshold AND margin over #2.
 		const (
-			minScore = 0.80
+			minScore  = 0.80
 			minMargin = 0.10
 		)
 		top := semanticResults[0]

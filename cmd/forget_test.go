@@ -190,3 +190,60 @@ func captureStderr(t *testing.T, fn func()) string {
 	}
 	return buf.String()
 }
+
+// TestForgetEmptyQueryRefuses verifies that an empty query is rejected before any resolution.
+func TestForgetEmptyQueryRefuses(t *testing.T) {
+	app, cleanup := newForgetTestApp(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	entry := addForgetTestEntry(t, app, "The only entry in the store")
+
+	for _, q := range []string{"", "   ", "\t"} {
+		err := runDelete(ctx, app, []string{q, "--force"}, "forget")
+		if err == nil {
+			t.Errorf("runDelete(%q): expected error for empty query, got nil", q)
+		}
+		// Entry must still exist.
+		if _, err2 := app.Entries.Get(ctx, entry.ID); err2 != nil {
+			t.Errorf("entry should still exist after empty-query rejection: %v", err2)
+		}
+	}
+}
+
+// TestForgetEmptyQueryQuietRefuses verifies empty query is rejected even with --quiet --force.
+func TestForgetEmptyQueryQuietRefuses(t *testing.T) {
+	app, cleanup := newForgetTestApp(t)
+	defer cleanup()
+	app.Config.Quiet = true
+	ctx := context.Background()
+
+	entry := addForgetTestEntry(t, app, "The only entry in the quiet store")
+
+	err := runDelete(ctx, app, []string{"", "--force"}, "forget")
+	if err == nil {
+		t.Fatal("expected error for empty query in quiet+force mode, got nil")
+	}
+	if _, err2 := app.Entries.Get(ctx, entry.ID); err2 != nil {
+		t.Errorf("entry should still exist after empty-query rejection: %v", err2)
+	}
+}
+
+// TestForgetMultiWordUnquoted verifies that unquoted multi-word queries are joined and resolved.
+func TestForgetMultiWordUnquoted(t *testing.T) {
+	app, cleanup := newForgetTestApp(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	content := "The canary deploy threshold is 5 percent"
+	entry := addForgetTestEntry(t, app, content)
+
+	// Pass as multiple args (simulating unquoted shell words).
+	err := runDelete(ctx, app, []string{"The", "canary", "deploy", "threshold", "is", "5", "percent", "--force"}, "forget")
+	if err != nil {
+		t.Fatalf("runDelete multi-word unquoted: %v", err)
+	}
+	if _, err2 := app.Entries.Get(ctx, entry.ID); err2 == nil {
+		t.Fatal("expected entry to be deleted after multi-word unquoted forget")
+	}
+}

@@ -32,7 +32,12 @@ func runDelete(ctx context.Context, app *App, args []string, cmdName string) err
 		return fmt.Errorf("entry ID or query is required\nUsage: known %s <id|query> [--force]", cmdName)
 	}
 
-	id, err := resolveEntry(ctx, app, fs.Arg(0))
+	// Join all positional args with spaces so unquoted multi-word queries work
+	// symmetrically with how add/remember joins words: `known forget the mars rover`
+	// resolves the full phrase, not just "the".
+	query := strings.Join(fs.Args(), " ")
+
+	id, err := resolveEntry(ctx, app, query)
 	if err != nil {
 		return err
 	}
