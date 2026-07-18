@@ -225,7 +225,7 @@ func TestNoULIDDemo(t *testing.T) {
 		origContent,
 		corrContent,
 		corrContent, origContent, "--type", "supersedes", // link args
-		origContent, "1",                                 // accept args
+		origContent, "1", // accept args
 	}
 	for _, cmd := range agentCommands {
 		if looksLikeULID(cmd) {
@@ -252,6 +252,7 @@ func looksLikeULID(s string) bool {
 	}
 	return true
 }
+
 // demoEmbedder is a map-backed embedder used in TestNoULIDDemo.
 // It returns the exact stored vector for known content strings (cosine = 1.0
 // when the query text equals the stored text) and a fixed fallback vector for

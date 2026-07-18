@@ -19,10 +19,10 @@ import (
 // recallEntryRepo extends stubEntryRepo with List and SearchSimilar support.
 type recallEntryRepo struct {
 	stubEntryRepo
-	listEntries      []model.Entry
-	listFilter       storage.EntryFilter // captured for inspection
-	searchSimilarFn  func(query []float32, scope string, limit int) ([]storage.SimilarityResult, error)
-	storedEntries    map[string]*model.Entry // for Get() lookups during expansion
+	listEntries     []model.Entry
+	listFilter      storage.EntryFilter // captured for inspection
+	searchSimilarFn func(query []float32, scope string, limit int) ([]storage.SimilarityResult, error)
+	storedEntries   map[string]*model.Entry // for Get() lookups during expansion
 }
 
 func (r *recallEntryRepo) List(_ context.Context, filter storage.EntryFilter) ([]model.Entry, error) {
@@ -382,9 +382,9 @@ func TestRunRecall_LabelFilterNotDroppedByLimit(t *testing.T) {
 	u3 := model.NewID()
 
 	entries := map[string]*model.Entry{
-		u1.String():        makeE(u1, "unlabelled 1", 0, nil),
-		u2.String():        makeE(u2, "unlabelled 2", 0, nil),
-		u3.String():        makeE(u3, "unlabelled 3", 0, nil),
+		u1.String():         makeE(u1, "unlabelled 1", 0, nil),
+		u2.String():         makeE(u2, "unlabelled 2", 0, nil),
+		u3.String():         makeE(u3, "unlabelled 3", 0, nil),
 		labelledID.String(): makeE(labelledID, "labelled entry", 0, []string{"target"}),
 	}
 

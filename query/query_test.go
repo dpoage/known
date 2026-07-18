@@ -191,6 +191,9 @@ type mockEdgeRepo struct {
 	edges map[string]*model.Edge
 	// entryRepo is needed for FindConflicts to return entries.
 	entryRepo *mockEntryRepo
+	// updateErr, when non-nil, causes Update to return the mapped error for
+	// the given edge ID string. Used by TestReinforce_PartialFailureAccounting.
+	updateErr map[string]error
 }
 
 func newMockEdgeRepo(entryRepo *mockEntryRepo) *mockEdgeRepo {
@@ -221,6 +224,11 @@ func (m *mockEdgeRepo) Get(_ context.Context, id model.ID) (*model.Edge, error) 
 func (m *mockEdgeRepo) Update(_ context.Context, edge *model.Edge) error {
 	if _, ok := m.edges[edge.ID.String()]; !ok {
 		return storage.ErrNotFound
+	}
+	if m.updateErr != nil {
+		if err, bad := m.updateErr[edge.ID.String()]; bad {
+			return err
+		}
 	}
 	clone := *edge
 	m.edges[edge.ID.String()] = &clone
@@ -401,6 +409,10 @@ func makeEntry(content, scope string, embedding []float32) model.Entry {
 func makeEntryAt(content, scope string, embedding []float32, createdAt time.Time) model.Entry {
 	entry := makeEntry(content, scope, embedding)
 	entry.CreatedAt = createdAt
+	// Also backdate ObservedAt so freshness scoring (which prefers ObservedAt)
+	// reflects the intended age. Without this, ObservedAt stays as time.Now()
+	// and both entries look equally fresh regardless of CreatedAt.
+	entry.Freshness.ObservedAt = createdAt
 	return entry
 }
 
@@ -1314,10 +1326,10 @@ func TestSearchHybrid_EdgeWeightAffectsScore(t *testing.T) {
 	}
 }
 
-// TestSearchHybrid_NilEdgeWeightTreatedAsOne verifies that a nil edge weight
-// is treated as 1.0 (EffectiveWeight default), and the expansion score is
-// parentScore * 1.0 * expansionDepthDecay (not a literal 1.0).
-func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
+// TestSearchHybrid_NilEdgeWeightTreatedAsNeutral verifies that a nil edge weight
+// uses DefaultEdgeWeight (0.5) in expansion scoring, matching the reinforcement
+// equilibrium so unrated edges score at neutral — not above reinforced ones.
+func TestSearchHybrid_NilEdgeWeightTreatedAsNeutral(t *testing.T) {
 	f := newTestFixture(3)
 	ctx := context.Background()
 
@@ -1353,10 +1365,12 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 
 	for _, r := range results {
 		if r.Entry.ID == e2.ID {
-			// nil weight → EffectiveWeight() == 1.0, so score = parentScore * 1.0 * decay.
-			want := e1Score * 1.0 * expansionDepthDecay
+			// nil weight → EffectiveWeight() == model.DefaultEdgeWeight (0.5)
+			// score = parentScore * 0.5 * expansionDepthDecay
+			want := e1Score * model.DefaultEdgeWeight * expansionDepthDecay
 			if math.Abs(r.Score-want) > 1e-10 {
-				t.Errorf("nil weight expansion score = %f, want %f (parentScore=%f * decay=%f)", r.Score, want, e1Score, expansionDepthDecay)
+				t.Errorf("nil weight expansion score = %f, want %f (parentScore=%f * neutral=%.1f * decay=%f)",
+					r.Score, want, e1Score, model.DefaultEdgeWeight, expansionDepthDecay)
 			}
 			return
 		}
@@ -1366,11 +1380,11 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 
 func TestEdgeWeight_Helper(t *testing.T) {
 	// Test the Edge.EffectiveWeight method.
-	t.Run("nil weight returns 1.0", func(t *testing.T) {
+	t.Run("nil weight returns DefaultEdgeWeight", func(t *testing.T) {
 		edge := model.NewEdge(model.NewID(), model.NewID(), model.EdgeRelatedTo)
 		score := edge.EffectiveWeight()
-		if score != 1.0 {
-			t.Errorf("EffectiveWeight(nil) = %f, want 1.0", score)
+		if score != model.DefaultEdgeWeight {
+			t.Errorf("EffectiveWeight(nil) = %f, want %f (DefaultEdgeWeight)", score, model.DefaultEdgeWeight)
 		}
 	})
 
@@ -1938,6 +1952,7 @@ func TestSearchHybrid_TextFusion(t *testing.T) {
 		t.Logf("e1 score=%f, e2 score=%f (expected equal with symmetric ranking)", scoreE1, scoreE2)
 	}
 }
+
 // =============================================================================
 // known-mrc: Nil embedder sentinel error tests
 // =============================================================================
@@ -2144,5 +2159,521 @@ func TestSearchHybrid_TotalLimitZeroMeansUnlimited(t *testing.T) {
 	// 1 seed + 4 neighbors = 5 total.
 	if len(results) < 5 {
 		t.Errorf("TotalLimit=0 should not truncate: got %d results, want >= 5", len(results))
+	}
+}
+
+// =============================================================================
+// known-2s3: FTS identifier rescue
+// =============================================================================
+
+// TestSearchHybrid_IdentifierRescuedByFTS verifies that exact-match queries on
+// identifiers (IPs, version strings, OIDC tokens, ULID fragments) surface the
+// correct entry even when the vector embedder returns LOW similarity for it.
+// This is the core acceptance criterion for known-2s3: FTS must rescue the
+// right entry via RRF fusion when vector similarity alone is insufficient.
+func TestSearchHybrid_IdentifierRescuedByFTS(t *testing.T) {
+	identifiers := []struct {
+		name    string
+		content string
+		query   string
+	}{
+		{"IP address", "gateway is at 10.0.1.5", "10.0.1.5"},
+		{"version string", "pgvector 0.7.4 installed", "pgvector 0.7.4"},
+		{"OIDC", "auth uses OIDC provider", "OIDC"},
+	}
+
+	for _, tc := range identifiers {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(3)
+			ctx := context.Background()
+
+			// Embedder always returns the first basis vector; the identifier
+			// entry is orthogonal to it and will rank last in vector search.
+			f.embedder.embedFn = func(text string) []float32 {
+				return []float32{1.0, 0.0, 0.0}
+			}
+
+			// Add 5 high-similarity decoys that will fill the vector result window.
+			for j := range 5 {
+				mustCreateEntry(t, f.entryRepo, makeEntry(
+					fmt.Sprintf("decoy semantic match %d", j),
+					"root",
+					[]float32{float32(0.98 - float64(j)*0.01), float32(float64(j) * 0.01), 0.0},
+				))
+			}
+			// Target: orthogonal embedding → vector rank last (outside limit=5 window).
+			target := mustCreateEntry(t, f.entryRepo, makeEntry(tc.content, "root", []float32{0.0, 0.0, 1.0}))
+
+			// Mutation probe: removing this FTS mock would leave target out of
+			// vector results (6th entry with worst similarity) and the test fails.
+			f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+				return []storage.SimilarityResult{
+					{Entry: target, Distance: -10.0}, // top FTS hit
+				}, nil
+			}
+
+			results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+				Vector: VectorOptions{
+					Text:  tc.query,
+					Scope: "root",
+					Limit: 5, // exactly fills window with decoys; target excluded by vector
+				},
+				ExpandDepth:     0,
+				ExpandDirection: Outgoing,
+				TextSearch:      true,
+			})
+			if err != nil {
+				t.Fatalf("SearchHybrid: %v", err)
+			}
+
+			found := false
+			for _, r := range results {
+				if r.Entry.ID == target.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("identifier entry %q not rescued by FTS for query %q; FTS fusion failed", tc.content, tc.query)
+			}
+		})
+	}
+}
+
+// TestSearchHybrid_IdentifierTopRankedWhenFTSExclusive verifies that when the
+// identifier entry does NOT appear in vector results at all (completely missed),
+// FTS alone can surface it via RRF with a positive score.
+func TestSearchHybrid_IdentifierTopRankedWhenFTSExclusive(t *testing.T) {
+	f := newTestFixture(1) // 1-dimensional embeddings
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(_ string) []float32 { return []float32{1.0} }
+
+	// The identifier entry has no embedding (won't appear in vector results).
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	target := model.NewEntry("OIDC provider endpoint https://auth.example.com/.well-known/openid-configuration", src).WithScope("root")
+	f.entryRepo.Create(ctx, &target)
+
+	// Decoy with good vector similarity.
+	mustCreateEntry(t, f.entryRepo, makeEntry("some other config entry", "root", []float32{0.99}))
+
+	f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+		return []storage.SimilarityResult{
+			{Entry: target, Distance: -8.0},
+		}, nil
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector:     VectorOptions{Text: "OIDC", Scope: "root", Limit: 5},
+		TextSearch: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Entry.ID == target.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("FTS-exclusive entry should appear in hybrid results via RRF")
+	}
+}
+
+// =============================================================================
+// known-oj3: ObservedAt freshness
+// =============================================================================
+
+// TestFreshnessScore_ObservedAtPreferredOverCreatedAt verifies the core fix:
+// an entry re-observed recently scores higher than a same-age entry that was
+// never re-observed, even when both were created at the same time.
+func TestFreshnessScore_ObservedAtPreferredOverCreatedAt(t *testing.T) {
+	halfLife := 7 * 24 * time.Hour
+	now := time.Now()
+	longAgo := now.Add(-30 * 24 * time.Hour)
+
+	// Both created 30 days ago.
+	// staleEntry: ObservedAt also 30 days ago (never re-verified).
+	staleScore := freshnessScoreAt(longAgo, longAgo, halfLife)
+	// freshEntry: ObservedAt is now (re-verified today).
+	freshScore := freshnessScoreAt(longAgo, now, halfLife)
+
+	if freshScore <= staleScore {
+		t.Errorf("re-observed entry (freshScore=%f) should outscore stale entry (staleScore=%f)", freshScore, staleScore)
+	}
+	// Fresh entry should be nearly 1.0 (observed just now).
+	if freshScore < 0.99 {
+		t.Errorf("freshScore=%f, want ~1.0 for just-observed entry", freshScore)
+	}
+	// Stale entry at 30 days with 7-day half-life: exp(-ln2*30/7) ≈ 0.049.
+	if staleScore > 0.1 {
+		t.Errorf("staleScore=%f, want < 0.1 for 30-day-old unobserved entry", staleScore)
+	}
+}
+
+// TestFreshnessScore_ZeroObservedAtFallsBackToCreatedAt verifies backwards
+// compatibility: when ObservedAt is zero (not set), CreatedAt is used.
+func TestFreshnessScore_ZeroObservedAtFallsBackToCreatedAt(t *testing.T) {
+	halfLife := 7 * 24 * time.Hour
+	now := time.Now()
+	longAgo := now.Add(-14 * 24 * time.Hour) // 2 half-lives
+
+	scoreWithZeroObs := freshnessScoreAt(longAgo, time.Time{}, halfLife)
+	scoreFromCreatedAt := freshnessScore(longAgo, halfLife)
+
+	if math.Abs(scoreWithZeroObs-scoreFromCreatedAt) > 1e-10 {
+		t.Errorf("zero ObservedAt should give same result as CreatedAt: got %f vs %f", scoreWithZeroObs, scoreFromCreatedAt)
+	}
+	// At 2 half-lives, score ≈ 0.25.
+	if scoreWithZeroObs < 0.2 || scoreWithZeroObs > 0.3 {
+		t.Errorf("score at 2 half-lives = %f, want ~0.25", scoreWithZeroObs)
+	}
+}
+
+// TestSearchVector_ObservedAtFreshnessRescuesOldEntry verifies that an old
+// entry recently re-observed beats a newer-created entry that was never
+// re-observed when recency weighting is enabled.
+func TestSearchVector_ObservedAtFreshnessRescuesOldEntry(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(_ string) []float32 { return []float32{1.0, 0.0, 0.0} }
+
+	now := time.Now()
+	oneYearAgo := now.Add(-365 * 24 * time.Hour)
+	oneWeekAgo := now.Add(-7 * 24 * time.Hour)
+
+	// Old entry created 1 year ago but re-observed today.
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	reobservedEntry := model.NewEntry("old but re-verified config", src).WithScope("root")
+	reobservedEntry.CreatedAt = oneYearAgo
+	reobservedEntry.Freshness.ObservedAt = now // re-observed today!
+	reobservedEntry = reobservedEntry.WithEmbedding([]float32{0.9, 0.1, 0.0}, "mock")
+	f.entryRepo.Create(ctx, &reobservedEntry)
+
+	// Newer entry created 1 week ago but never re-observed.
+	neverObservedEntry := model.NewEntry("newer but stale config", src).WithScope("root")
+	neverObservedEntry.CreatedAt = oneWeekAgo
+	neverObservedEntry.Freshness.ObservedAt = oneWeekAgo
+	neverObservedEntry = neverObservedEntry.WithEmbedding([]float32{0.85, 0.15, 0.0}, "mock")
+	f.entryRepo.Create(ctx, &neverObservedEntry)
+
+	results, err := f.engine.SearchVector(ctx, VectorOptions{
+		Text:            "config",
+		Scope:           "root",
+		Limit:           5,
+		RecencyWeight:   0.8,
+		RecencyHalfLife: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("SearchVector: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Entry.ID != reobservedEntry.ID {
+		t.Errorf("re-observed old entry should rank first (freshness=~1.0 beats week-old unobserved); got %q first", results[0].Entry.Content)
+	}
+}
+
+// =============================================================================
+// known-906: decay, differentiated boosts, saturation, accounting
+// =============================================================================
+
+// TestReinforce_UnusedEdgesDecayBelowInitial verifies that an edge that is
+// never reinforced (but adjacent to acted-on nodes) decays on each cycle.
+// After N cycles its weight must be below the initial value.
+func TestReinforce_UnusedEdgesDecayBelowInitial(t *testing.T) {
+	ctx := context.Background()
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	// Edge between e1 and e2 at initial weight 0.5.
+	initial := 0.5
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(initial)
+	edgeRepo.Create(ctx, &edge)
+
+	cfg := ReinforceConfig{
+		ShowBoost:   0.0, // no boost — pure decay
+		UpdateBoost: 0.0,
+		LinkBoost:   0.0,
+		DecayFactor: 0.95, // 5% decay per cycle
+		MinWeight:   0.01,
+		MaxWeight:   1.0,
+	}
+
+	// Run 5 sessions each with a recall→show pattern on e1.
+	// Since ShowBoost=0, the edge only decays.
+	for i := range 5 {
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: fmt.Sprintf("q%d", i), CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+
+		_, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+		if err != nil {
+			t.Fatalf("Reinforce cycle %d: %v", i, err)
+		}
+	}
+
+	got, _ := edgeRepo.Get(ctx, edge.ID)
+	if got.Weight == nil {
+		t.Fatal("edge weight should be set")
+	}
+	if *got.Weight >= initial {
+		t.Errorf("unused edge weight %f should be below initial %f after 5 decay cycles", *got.Weight, initial)
+	}
+	// After 5 cycles at 0.95 decay: 0.5 * 0.95^5 ≈ 0.387
+	want := initial * math.Pow(0.95, 5)
+	if math.Abs(*got.Weight-want) > 1e-6 {
+		t.Errorf("edge weight = %f, want %f (5 cycles of 0.95 decay)", *got.Weight, want)
+	}
+}
+
+// TestReinforce_SaturationPreventedByDecay verifies that under DefaultReinforceConfig
+// a frequently-boosted edge converges to a stable equilibrium STRICTLY below
+// MaxWeight (1.0). The equilibrium for the update/link boost is
+// UpdateBoost / (1 - DecayFactor) = 0.05 / 0.10 = 0.5 < 1.0.
+// This is the core fix for known-906: weight stays meaningful as a signal.
+func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
+	ctx := context.Background()
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.1)
+	edgeRepo.Create(ctx, &edge)
+
+	cfg := DefaultReinforceConfig()
+	// Theoretical equilibrium for update action: b/(1-d) = 0.05/0.10 = 0.50.
+	equilibrium := cfg.UpdateBoost / (1 - cfg.DecayFactor)
+	if equilibrium >= cfg.MaxWeight {
+		t.Fatalf("DefaultReinforceConfig equilibrium %f >= MaxWeight %f — config violates saturation-prevention invariant", equilibrium, cfg.MaxWeight)
+	}
+
+	// Drive 60 update-action cycles. The weight should converge to equilibrium
+	// and stay there, never touching MaxWeight.
+	for i := range 60 {
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: fmt.Sprintf("q%d", i), CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventUpdate,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+		_, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+		if err != nil {
+			t.Fatalf("Reinforce cycle %d: %v", i, err)
+		}
+
+		got, _ := edgeRepo.Get(ctx, edge.ID)
+		if *got.Weight >= cfg.MaxWeight {
+			t.Errorf("cycle %d: edge weight %f reached MaxWeight %f — saturation not prevented", i, *got.Weight, cfg.MaxWeight)
+		}
+	}
+
+	// After 60 cycles, weight should be within 1% of the theoretical equilibrium.
+	got, _ := edgeRepo.Get(ctx, edge.ID)
+	if math.Abs(*got.Weight-equilibrium) > 0.01 {
+		t.Errorf("after 60 cycles: weight %f, want ~%f (equilibrium = UpdateBoost/(1-DecayFactor))", *got.Weight, equilibrium)
+	}
+}
+
+// TestReinforce_DifferentiatedBoostsByActionType verifies that show events
+// produce smaller boosts than update/link events.
+func TestReinforce_DifferentiatedBoostsByActionType(t *testing.T) {
+	ctx := context.Background()
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+
+	cfg := DefaultReinforceConfig()
+
+	runSession := func(actionType model.EventType) float64 {
+		entryRepo := newMockEntryRepo()
+		edgeRepo := newMockEdgeRepo(entryRepo)
+		engine := New(entryRepo, edgeRepo, nil)
+		sessions := newMockSessionRepo()
+
+		e1 := model.NewEntry("e1", src).WithScope("test")
+		e2 := model.NewEntry("e2", src).WithScope("test")
+		entryRepo.Create(ctx, &e1)
+		entryRepo.Create(ctx, &e2)
+
+		edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+		edgeRepo.Create(ctx, &edge)
+
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: "q", CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: actionType,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+
+		engine.Reinforce(ctx, sessions, noopTx, cfg)
+		got, _ := edgeRepo.Get(ctx, edge.ID)
+		return *got.Weight
+	}
+
+	showWeight := runSession(model.EventShow)
+	updateWeight := runSession(model.EventUpdate)
+	linkWeight := runSession(model.EventLink)
+
+	if showWeight >= updateWeight {
+		t.Errorf("show boost (%f) should be < update boost (%f)", showWeight, updateWeight)
+	}
+	if showWeight >= linkWeight {
+		t.Errorf("show boost (%f) should be < link boost (%f)", showWeight, linkWeight)
+	}
+	// update and link should be equal.
+	if math.Abs(updateWeight-linkWeight) > 1e-9 {
+		t.Errorf("update boost (%f) should equal link boost (%f)", updateWeight, linkWeight)
+	}
+}
+
+// TestReinforce_PartialFailureAccounting verifies the error contract:
+// when an edge Update fails mid-loop, processSession returns the count of
+// edges successfully updated BEFORE the failure plus the error. Reinforce
+// wraps this in a transaction (rolled back on error) so the net EdgesBoosted
+// for a failed session is zero.
+func TestReinforce_PartialFailureAccounting(t *testing.T) {
+	ctx := context.Background()
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+	edgeRepo.Create(ctx, &edge)
+
+	// Inject a failing Update for this edge.
+	edgeRepo.updateErr = map[string]error{
+		edge.ID.String(): fmt.Errorf("simulated write failure"),
+	}
+
+	sessID := model.NewID()
+	now := time.Now()
+	ended := now.Add(time.Minute)
+	sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+		Query: "q", CreatedAt: now,
+	})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+	})
+
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
+
+	// Reinforce must return an error when a session fails.
+	if err == nil {
+		t.Fatal("expected error from Reinforce on Update failure, got nil")
+	}
+	// EdgesBoosted should be zero: the transaction rolled back.
+	// (noopTx doesn't actually roll back in tests, but EdgesBoosted accumulates
+	// only AFTER a successful session — on error, Reinforce returns early.)
+	if result != nil && result.EdgesBoosted > 0 {
+		t.Errorf("EdgesBoosted = %d on error, want 0 (partial failure must not report success)", result.EdgesBoosted)
+	}
+}
+
+// =============================================================================
+// Edge weight semantic invariant: unrated == equilibrium
+// =============================================================================
+
+// TestEdgeWeight_SemanticInvariant pins the three-tier ordering that makes
+// edge weight meaningful as a retrieval signal:
+//
+//	decayed-stale < unrated (DefaultEdgeWeight) == equilibrium < freshly-boosted
+//
+// This prevents the inversion where a nil-weight (never-touched) edge outranks
+// a reinforced edge that has converged to equilibrium.
+func TestEdgeWeight_SemanticInvariant(t *testing.T) {
+	cfg := DefaultReinforceConfig()
+
+	// Equilibrium for update/link: UpdateBoost / (1 - DecayFactor)
+	equilibrium := cfg.UpdateBoost / (1 - cfg.DecayFactor)
+
+	// DefaultEdgeWeight must equal the reinforcement equilibrium exactly.
+	// This is the invariant: an unrated edge scores the same as one that
+	// has been reinforced at steady state.
+	if math.Abs(model.DefaultEdgeWeight-equilibrium) > 1e-9 {
+		t.Errorf("DefaultEdgeWeight (%f) != reinforcement equilibrium (%f = UpdateBoost/( 1-DecayFactor)); "+
+			"update DefaultEdgeWeight or DefaultReinforceConfig constants to re-align",
+			model.DefaultEdgeWeight, equilibrium)
+	}
+	// Simulate a "decayed-stale" edge: start at equilibrium, apply 10 decay-only cycles
+	// (boost=0) so weight drifts below equilibrium.
+	decayedWeight := model.DefaultEdgeWeight
+	for range 10 {
+		decayedWeight = decayedWeight*cfg.DecayFactor + 0 // no boost
+		if decayedWeight < cfg.MinWeight {
+			decayedWeight = cfg.MinWeight
+		}
+	}
+
+	// Simulate a "freshly-boosted" edge: start from 0.8 (above equilibrium, e.g.
+	// a manually-set or transiently-high edge), apply one update boost.
+	// Result: 0.8*0.90 + 0.05 = 0.77 — still above neutral 0.5.
+	// An edge above equilibrium stays above it for several cycles before decaying
+	// back to 0.5; this is the "recently confirmed useful" signal.
+	boostedFromHigh := 0.8*cfg.DecayFactor + cfg.UpdateBoost
+
+	// Assert ordering:
+	//   decayed-stale < unrated (DefaultEdgeWeight == equilibrium) < transiently-boosted
+	if decayedWeight >= model.DefaultEdgeWeight {
+		t.Errorf("decayed-stale weight (%f) >= DefaultEdgeWeight (%f); "+
+			"unused edges should drift below neutral after decay cycles",
+			decayedWeight, model.DefaultEdgeWeight)
+	}
+	if boostedFromHigh <= model.DefaultEdgeWeight {
+		t.Errorf("freshly-boosted-from-high weight (%f) <= DefaultEdgeWeight (%f); "+
+			"an edge above equilibrium with one boost must remain above neutral",
+			boostedFromHigh, model.DefaultEdgeWeight)
+	}
+	if boostedFromHigh > cfg.MaxWeight {
+		t.Errorf("boosted weight (%f) exceeds MaxWeight (%f)", boostedFromHigh, cfg.MaxWeight)
 	}
 }

@@ -213,9 +213,9 @@ func newStubAcceptApp(t *testing.T) (*App, model.Entry, []model.Entry) {
 	// Create neighbor entries with embeddings close to source.
 	neighbors := make([]model.Entry, 3)
 	vecs := [][]float32{
-		{0.9, 0.436, 0, 0},  // close
-		{0.8, 0.6, 0, 0},    // medium
-		{0, 0, 1, 0},        // far
+		{0.9, 0.436, 0, 0}, // close
+		{0.8, 0.6, 0, 0},   // medium
+		{0, 0, 1, 0},       // far
 	}
 	for i, v := range vecs {
 		e := model.NewEntry("Neighbor entry "+string(rune('A'+i)), src)
@@ -247,7 +247,7 @@ func (s *stubSuggestEmbedder) EmbedBatch(_ context.Context, texts []string) ([][
 	}
 	return out, nil
 }
-func (s *stubSuggestEmbedder) Dimensions() int  { return 4 }
+func (s *stubSuggestEmbedder) Dimensions() int   { return 4 }
 func (s *stubSuggestEmbedder) ModelName() string { return "stub" }
 
 func TestRunLinkAccept_ByIndex(t *testing.T) {

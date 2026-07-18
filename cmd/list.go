@@ -85,7 +85,7 @@ func runList(ctx context.Context, app *App, args []string) error {
 		}
 		fmt.Fprintf(app.Printer.w, "Scope:      %s\n", e.Scope)
 		fmt.Fprintf(app.Printer.w, "Provenance: %s\n", e.Provenance.Level)
-		fmt.Fprintf(app.Printer.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
+		fmt.Fprintf(app.Printer.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel(e.CreatedAt))
 		fmt.Fprintf(app.Printer.w, "Source:     %s\n", e.Source.Type)
 		if len(e.Labels) > 0 {
 			fmt.Fprintf(app.Printer.w, "Labels:     %s\n", strings.Join(e.Labels, ", "))
