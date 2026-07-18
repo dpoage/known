@@ -431,12 +431,12 @@ func corpus() []Scenario {
 
 		// ---- Mode 7: Superseded entry outranks correction (known-5oq) ----
 		//
-		// Without score demotion, a recalled entry that has been superseded may rank
-		// above the correcting entry. The contract: after `known add --supersedes`,
-		// recalling with a text search must show entry B (correction) NOT BELOW entry A
-		// (original/superseded). We use --text to avoid needing a real embedder.
-		// Predicate: in recall output, the correction line appears before (or instead
-		// of) the superseded marker, OR the superseded marker "[superseded by:" appears.
+		// Contract: after `known add --supersedes`, recalling with text search must show
+		// the "[superseded by: <id>]" marker on the original entry. This works in --text
+		// mode because SearchText now calls enrichSuperseded (same as hybrid path), so
+		// the marker appears without needing a real embedder.
+		// Score demotion (Score*0.1) is covered by unit tests (query/supersede_test.go).
+		// Baseline fails: lacks --supersedes flag → add exits non-zero (stage 1 fails).
 		{
 			ID:                 "M7-supersede-recall-ordering",
 			Name:               "recall: correction ranks above superseded original after --supersedes",
@@ -487,17 +487,20 @@ func corpus() []Scenario {
 
 		// ---- Mode 8: No low-relevance signal for zero-hit recall (known-bqo) ----
 		//
-		// When a recall query finds no relevant entries (all scores below threshold),
-		// the output must emit a "below relevance threshold" note. Text search is used
-		// to avoid needing a real embedder. An entry about "database indexing" is added,
-		// then we recall "weather forecast" — completely unrelated, so FTS5 finds nothing
-		// or irrelevant results. The low-relevance signal must appear OR "No matching
-		// knowledge found." must be printed (both are acceptable UX signals).
+		// known-bqo signal: when the top recall result score is below LowRelevanceThreshold
+		// (0.3), the output emits "below relevance threshold". In text mode, FTS5 returns
+		// empty results for unrelated queries (no BM25 match), so "No matching knowledge
+		// found." fires — that has always been present and is an acceptable UX signal.
+		// The true new behavior (below-threshold note for low-scoring vector results) is
+		// covered by unit tests (cmd/recall_test.go). This scenario is a regression guard
+		// only: verify some explicit zero-hit signal exists in the text path.
+		// ExpectFailBaseline=false: baseline a59396f already prints "No matching knowledge
+		// found." for empty FTS results, so this is a regression guard, not a new feature.
 		{
 			ID:                 "M8-zero-hit-signal",
-			Name:               "recall: low-relevance signal when querying unrelated topic",
+			Name:               "recall: explicit signal emitted for unrelated topic (regression guard)",
 			AuditMode:          "Mode 8 — known-bqo: no signal for zero-hit recall",
-			ExpectFailBaseline: true,
+			ExpectFailBaseline: false,
 			Run: func(bin string) (string, int, string, bool) {
 				env, dir, cleanup := isolatedEnv()
 				defer cleanup()
@@ -509,13 +512,15 @@ func corpus() []Scenario {
 				}
 
 				// Recall with a completely unrelated query using text search.
+				// FTS5 finds nothing; output must contain an explicit signal.
 				recallOut, recallCode := runArgs(bin, env, dir, []string{
 					"recall", "--text", "weather forecast precipitation temperature",
 				})
 
+				// Accept either the new below-threshold note or the pre-existing
+				// "No matching knowledge found." — both are valid zero-hit signals.
 				hasSignal := strings.Contains(recallOut, "below relevance threshold") ||
 					strings.Contains(recallOut, "No matching knowledge found")
-				// Exit 0 is acceptable even when signalling low relevance.
 				pass := (recallCode == 0 || recallCode == 1) && hasSignal
 				pred := "output contains 'below relevance threshold' or 'No matching knowledge found'"
 				return recallOut, recallCode, pred, pass

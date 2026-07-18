@@ -110,7 +110,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		results = filterResultsByLabels(results, labelFlags)
 		results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
 		results = filterResultsBySource(results, model.SourceType(*source))
-		app.Printer.PrintRecallResults(results, false)
+		lowRelevance := len(results) > 0 && results[0].Score < query.LowRelevanceThreshold
+		app.Printer.PrintRecallResults(results, lowRelevance)
 		return nil
 	}
 
