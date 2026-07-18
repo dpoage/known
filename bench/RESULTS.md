@@ -8,18 +8,92 @@ add a table here, add its provenance line with it.
 
 ## Agent Effectiveness
 
-> **Provenance: 2026-03-18, commit `df7bb04`-era binary (pre-#36), model
-> MiniMax-M2.5.**
-> **STALE — CLI surface has since changed (PRs #36-#41: agent-first output,
-> memory-verb triad, recall changes). These numbers are the historical
-> baseline only; they are not valid for the current CLI and a rerun is
-> required before citing them as current state.** See "Reproducing" below
-> for the exact rerun command (gated on `BENCH_API_KEY`/`ANTHROPIC_API_KEY`
-> — no key is available in CI/agent sandboxes, so this table has not been
-> refreshed as part of the 2026-07 bench-suite round).
+> **Current provenance: 2026-07-18, commit `7b94e7d` (`feat/bench-suite`),
+> model `MiniMax-M3` via Anthropic-compat (`BENCH_BASE_URL=
+> https://api.minimax.io/anthropic`), `BENCH_CONCURRENCY=5`, full 50
+> questions × 3 conditions. `TestEffectivenessRun` PASS, 74.2s.**
+
+Rerun command:
+
+```bash
+ANTHROPIC_API_KEY=<key> \
+BENCH_MODEL=MiniMax-M3 \
+BENCH_BASE_URL=https://api.minimax.io/anthropic \
+BENCH_CONCURRENCY=5 \
+  go test -tags bench ./bench/ -run '^TestEffectivenessRun$' -v -timeout 30m
+```
 
 Does giving an LLM access to `known` (stored knowledge from codebase discovery)
 improve its ability to answer questions about a codebase?
+
+| Session | No Memory | With Memory | Full Dump | Delta |
+|---------|-----------|-------------|-----------|-------|
+| 1: Onboarding | 0.40 | 0.60 | 0.80 | **+0.20** |
+| 2: Feature Work | 0.00 | 0.80 | 0.90 | **+0.80** |
+| 3: Bug Investigation | 0.30 | 0.90 | 0.90 | **+0.60** |
+| 4: Refactoring | 0.10 | 1.00 | 1.00 | **+0.90** |
+| 5: Code Review | 0.00 | 0.50 | 0.50 | **+0.50** |
+| **Overall** | **0.16** | **0.76** | **0.82** | **+0.60** |
+
+### Conditions
+
+- **No Memory**: LLM receives only a file listing (filenames, no content)
+- **With Memory**: LLM receives `known recall` output per question, against
+  the regenerated `pipeliner_memory.db` fixture (49 facts, literal
+  `/pipeliner` scope — see "2026-07 plumbing verification" below for why
+  the literal-scope regeneration was required)
+- **Full Dump**: LLM receives all source files concatenated (~1800 LOC)
+
+### Key Findings (current run vs. March, informal — see confounds note)
+
+1. **Memory now more than quadruples no-memory performance** (0.76 vs
+   0.16), a wider gap than March's roughly-doubles (0.54 vs 0.24). The
+   memory delta widened from +0.30 to +0.60.
+
+2. **With-memory now reaches 93% of full-dump performance** (0.76/0.82),
+   up from 67% in March (0.54/0.80) — memory closes almost all of the gap
+   to a full source dump.
+
+3. **The no-memory floor dropped from 0.24 to 0.16.** The current
+   model+CLI combination scores worse cold, which mechanically widens the
+   memory lift even before accounting for any retrieval-quality change.
+
+4. **Session 4 (refactoring) with-memory now matches the full-dump ceiling
+   exactly** (1.00/1.00), for the first time across either measurement.
+
+5. **Session 5 (code review) is no longer flat.** March showed +0.00
+   memory lift here; this run shows +0.50 — with-memory now clearly beats
+   no-memory even on the hardest cross-session questions.
+
+### ⚠️ Not a controlled comparison to March
+
+This run is **not a controlled A/B against the March baseline below.**
+Three variables changed simultaneously between the two tables:
+
+1. **Model**: MiniMax-M2.5 (March) → MiniMax-M3 (this run).
+2. **Binary**: pre-#36 CLI surface (March) → post-#41 (agent-first output,
+   memory-verb triad, recall changes).
+3. **Fixture**: `pipeliner_memory.db` was regenerated after the known-syk
+   scope-shadowing fix (see "2026-07 plumbing verification" below).
+   Without that fix, the `with_memory` condition's recall returned **zero
+   results** from any working directory other than the one it was
+   originally seeded from in March — running the current harness against
+   the *un*-regenerated March fixture would have collapsed with_memory
+   toward the no_memory floor, not produced the numbers above.
+
+Any of the three could account for part or all of the +0.30 → +0.60 delta
+widening. **Attributing the improvement to the CLI/retrieval work alone is
+not supported by this data.** A controlled comparison would hold the model
+fixed — e.g. rerun this same 50-question set against MiniMax-M2.5 with the
+current binary and fixture, or replay the March binary+fixture against
+MiniMax-M3 — neither of which has been done.
+
+## Historical baseline (March 2026 — superseded by the July run above)
+
+> **Provenance: 2026-03-18, commit `df7bb04`-era binary (pre-#36), model
+> MiniMax-M2.5.** Kept for trend comparison only — see the confounds note
+> above before treating any current-vs-March delta as attributable to a
+> single cause.
 
 | Session | No Memory | With Memory | Full Dump | Delta |
 |---------|-----------|-------------|-----------|-------|
@@ -30,38 +104,33 @@ improve its ability to answer questions about a codebase?
 | 5: Code Review | 0.20 | 0.20 | 0.60 | +0.00 |
 | **Overall** | **0.24** | **0.54** | **0.80** | **+0.30** |
 
-### Conditions
-
 - **No Memory**: LLM receives only a file listing (filenames, no content)
 - **With Memory**: LLM receives `known recall` output per question (from 35
-  discovered facts stored by walking the codebase, March seed)
+  discovered facts stored by walking the codebase, March seed — this
+  original fixture had the scope-shadowing bug described below)
 - **Full Dump**: LLM receives all source files concatenated (~1800 LOC)
 
-### Key Findings (as measured pre-#36 — subject to change on rerun)
-
-1. **Memory more than doubles no-memory performance** (0.54 vs 0.24).
-
-2. **The delta increases with session depth.** Sessions 3-4 (bug investigation,
+1. Memory more than doubles no-memory performance (0.54 vs 0.24).
+2. The delta increases with session depth. Sessions 3-4 (bug investigation,
    refactoring) show +0.50 lift — these require cross-file reasoning where
    accumulated knowledge matters most.
-
-3. **Memory achieves 67% of full-dump performance** (0.54 vs 0.80) without
-   needing the entire codebase in context. For agents operating under context
-   limits, this is the core value proposition.
-
-4. **Session 5 (code review) shows no memory lift.** These questions combine
-   knowledge from all prior sessions and are genuinely hard across all conditions.
-
-5. **Full dump is the ceiling at 0.80**, not 1.00 — some questions require
+3. Memory achieves 67% of full-dump performance (0.54 vs 0.80) without
+   needing the entire codebase in context.
+4. Session 5 (code review) shows no memory lift — these questions combine
+   knowledge from all prior sessions and were genuinely hard across all
+   conditions in March.
+5. Full dump is the ceiling at 0.80, not 1.00 — some questions require
    reasoning the model cannot do in a single prompt regardless of context.
 
-### 2026-07 plumbing verification (no rerun — recall path only)
+### 2026-07 plumbing verification (pre-dates the live rerun above)
 
 The with_memory condition's plumbing (`bench/runner.go` prompt assembly +
-`known recall` invocation, `bench/testdata/pipeliner_memory.db`) was verified
-against the **current** binary built from commit `bac1839` (`feat/bench-suite`,
-2026-07-17) without an API key — this checks that the recall command still
-runs and returns real results, not that the LLM scores above changed:
+`known recall` invocation, `bench/testdata/pipeliner_memory.db`) was first
+verified against the binary built from commit `bac1839` (`feat/bench-suite`,
+2026-07-17) without an API key — this checked that the recall command ran
+and returned real results, not that LLM scores would change. The fixture
+fix below is what made the with_memory condition of the live MiniMax-M3
+rerun above possible at all (see the confounds note):
 
 ```
 $ KNOWN_DSN=bench/testdata/pipeliner_memory.db known recall \
@@ -228,13 +297,14 @@ KNOWN_BENCH_FULL=1 go test -tags bench ./bench/... -run TestBench -v
 
 ### Effectiveness benchmark — live LLM rerun (requires API key)
 
-**This is the command to run to refresh the stale March table above against
-the current CLI surface.** Not run as part of this round (no API key
-available in this environment):
+**This is the exact command run to produce the current (July 2026, MiniMax-M3)
+table above.** Repeat it (with any `BENCH_MODEL`) for a future rerun; note
+the "not a controlled comparison" caveat above before treating a new run's
+delta against either existing table as attributable to a single cause:
 
 ```bash
 ANTHROPIC_API_KEY=<key> \
-BENCH_MODEL=MiniMax-M2.5 \
+BENCH_MODEL=MiniMax-M3 \
 BENCH_BASE_URL=https://api.minimax.io/anthropic \
 BENCH_CONCURRENCY=5 \
   go test -tags bench ./bench/ -run '^TestEffectivenessRun$' -v -timeout 30m
