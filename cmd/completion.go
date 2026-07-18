@@ -108,6 +108,12 @@ var commands = []cmdDef{
 	{name: "stats", desc: "Show knowledge graph statistics", flags: []flagDef{
 		{name: "scope", dynamic: "scopes"},
 	}},
+	{name: "explore", desc: "Launch the web-based graph explorer", flags: []flagDef{
+		{name: "host"},
+		{name: "port"},
+		{name: "scope", dynamic: "scopes"},
+		{name: "no-browser"},
+	}},
 	{name: "export", desc: "Export entries as JSON or JSONL", flags: []flagDef{
 		{name: "format", values: []string{"json", "jsonl"}},
 		{name: "scope", dynamic: "scopes"},
