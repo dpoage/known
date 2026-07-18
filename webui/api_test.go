@@ -1006,32 +1006,93 @@ func TestHandleSearch_EmptyQuery(t *testing.T) {
 // /api/path
 // ---------------------------------------------------------------------------
 
+// connectsChain reports whether edges (treated as undirected, since
+// Engine.FindPath walks edges in both directions) form a single connected
+// chain reaching end starting from start. Combined with an exact edge-count
+// assertion, BFS-reachability across the full edge set is sufficient to
+// prove a genuine, unbroken hop-by-hop path rather than e.g. disconnected
+// or dangling edges bundled into the same payload.
+func connectsChain(edges []Edge, start, end string) bool {
+	adj := make(map[string][]string, len(edges)*2)
+	for _, e := range edges {
+		adj[e.From] = append(adj[e.From], e.To)
+		adj[e.To] = append(adj[e.To], e.From)
+	}
+	visited := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur == end {
+			return true
+		}
+		for _, next := range adj[cur] {
+			if !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
+}
+
+// TestHandlePath_Found asserts PATH PROPERTIES rather than a specific
+// node/edge identity. The fixture has two equal-length (2-hop) paths
+// between oauth and ulids:
+//
+//	oauth -[elaborates]-> schema -[depends-on]-> ulids
+//	oauth -[supersedes]-> refresh -[related-to]-> ulids
+//
+// Engine.FindPath's tie-break among equal-length paths is arbitrary (the
+// contract does not promise a specific one), so asserting one exact path
+// over-specifies incidental behavior and flakes under -race/-count. What
+// the contract DOES promise -- both endpoints present, a genuine
+// hop-by-hop chain connecting them, at the true shortest distance, no
+// duplicate IDs -- holds regardless of which tie is broken.
 func TestHandlePath_Found(t *testing.T) {
 	f := newTestFixture(t)
 
-	// oauth -[elaborates]-> schema -[depends-on]-> ulids
 	var got Graph
 	path := "/api/path?" + url.Values{"from": {f.oauth.ID.String()}, "to": {f.ulids.ID.String()}}.Encode()
 	if code := f.get(t, path, &got); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
+
 	nodeIDs := map[string]bool{}
 	for _, n := range got.Nodes {
 		nodeIDs[n.ID] = true
 	}
-	for _, want := range []model.Entry{f.oauth, f.schema, f.ulids} {
-		if !nodeIDs[want.ID.String()] {
-			t.Errorf("path missing expected node %s", want.ID)
-		}
+	if !nodeIDs[f.oauth.ID.String()] {
+		t.Errorf("path missing from-endpoint node %s", f.oauth.ID)
 	}
-	edgeIDs := map[string]bool{}
+	if !nodeIDs[f.ulids.ID.String()] {
+		t.Errorf("path missing to-endpoint node %s", f.ulids.ID)
+	}
+
+	// oauth and ulids share no direct edge; 2 is the true shortest distance
+	// (both known paths above are exactly 2 hops, and no shorter one exists
+	// in the fixture).
+	const wantHops = 2
+	if len(got.Edges) != wantHops {
+		t.Fatalf("edges = %d, want %d (shortest oauth->ulids distance)", len(got.Edges), wantHops)
+	}
+
+	// Every edge's endpoints must themselves be present among the payload
+	// nodes (Graph's own invariant, re-asserted here for the path case).
 	for _, e := range got.Edges {
-		edgeIDs[e.ID] = true
-	}
-	for _, want := range []model.Edge{f.elaborates, f.dependsOn} {
-		if !edgeIDs[want.ID.String()] {
-			t.Errorf("path missing expected edge %s", want.ID)
+		if !nodeIDs[e.From] {
+			t.Errorf("edge %s: from %s not in payload nodes", e.ID, e.From)
 		}
+		if !nodeIDs[e.To] {
+			t.Errorf("edge %s: to %s not in payload nodes", e.ID, e.To)
+		}
+	}
+
+	// The edges must form a single contiguous, direction-agnostic chain
+	// connecting oauth to ulids -- not just be individually valid.
+	if !connectsChain(got.Edges, f.oauth.ID.String(), f.ulids.ID.String()) {
+		t.Errorf("edges %+v do not form a chain from %s to %s", got.Edges, f.oauth.ID, f.ulids.ID)
 	}
 }
 
