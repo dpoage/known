@@ -502,8 +502,11 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 	}
 
 	distFn := cosineDistance
-	if metric == storage.L2 {
+	switch metric {
+	case storage.L2:
 		distFn = l2Distance
+	case storage.InnerProduct:
+		distFn = innerProductDistance
 	}
 
 	type candidate struct {
@@ -933,37 +936,55 @@ func loadLabelsForResults(ctx context.Context, conn DBTX, results []storage.Simi
 	return nil
 }
 
+const labelBatchSize = 500
+
 // loadLabelsForEntries batch-loads labels for a slice of entries to avoid N+1 queries.
+// Entries are processed in batches of labelBatchSize to stay within SQLite's 999-parameter limit.
 func loadLabelsForEntries(ctx context.Context, conn DBTX, entries []model.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	placeholders := make([]string, len(entries))
-	args := make([]any, len(entries))
 	idxMap := make(map[string]int, len(entries))
 	for i, e := range entries {
-		placeholders[i] = "?"
-		idStr := e.ID.String()
-		args[i] = idStr
-		idxMap[idStr] = i
+		idxMap[e.ID.String()] = i
 	}
-	rows, err := conn.QueryContext(ctx,
-		`SELECT entry_id, label FROM entry_labels WHERE entry_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY entry_id, label`,
-		args...)
-	if err != nil {
-		return fmt.Errorf("batch load labels: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var entryID, label string
-		if err := rows.Scan(&entryID, &label); err != nil {
+
+	for start := 0; start < len(entries); start += labelBatchSize {
+		end := start + labelBatchSize
+		if end > len(entries) {
+			end = len(entries)
+		}
+		batch := entries[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, e := range batch {
+			placeholders[i] = "?"
+			args[i] = e.ID.String()
+		}
+		rows, err := conn.QueryContext(ctx,
+			`SELECT entry_id, label FROM entry_labels WHERE entry_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY entry_id, label`,
+			args...)
+		if err != nil {
+			return fmt.Errorf("batch load labels: %w", err)
+		}
+		for rows.Next() {
+			var entryID, label string
+			if err := rows.Scan(&entryID, &label); err != nil {
+				rows.Close()
+				return err
+			}
+			if idx, ok := idxMap[entryID]; ok {
+				entries[idx].Labels = append(entries[idx].Labels, label)
+			}
+		}
+		if err := rows.Close(); err != nil {
 			return err
 		}
-		if idx, ok := idxMap[entryID]; ok {
-			entries[idx].Labels = append(entries[idx].Labels, label)
+		if err := rows.Err(); err != nil {
+			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // sanitizeFTS5Query quotes tokens that contain FTS5 special characters

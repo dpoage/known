@@ -119,6 +119,9 @@ func (a *App) Close() {
 	if a.DB != nil {
 		_ = a.DB.Close()
 	}
+	if c, ok := a.Embedder.(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 // usage prints the top-level help message.

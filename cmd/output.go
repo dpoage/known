@@ -160,10 +160,25 @@ func (p *Printer) PrintMessage(format string, args ...any) {
 // Output contains scope, title, provenance, source, freshness, entry ID, and content.
 // No scores, timestamps, or JSON structure. IDs are always included in curly
 // braces so agents can act on results (link, update, delete, show).
-func (p *Printer) PrintRecallResults(results []query.Result) {
+func (p *Printer) PrintRecallResults(results []query.Result, lowRelevance bool) {
+	if p.json {
+		type recallJSON struct {
+			LowRelevance bool         `json:"low_relevance,omitempty"`
+			Results      []query.Result `json:"results"`
+		}
+		out := recallJSON{LowRelevance: lowRelevance, Results: results}
+		if results == nil {
+			out.Results = []query.Result{}
+		}
+		p.printJSON(out)
+		return
+	}
 	if len(results) == 0 {
 		fmt.Fprintln(p.w, "No matching knowledge found.")
 		return
+	}
+	if lowRelevance {
+		fmt.Fprintln(p.w, "note: best match score is below relevance threshold — no strongly relevant entries found")
 	}
 	for i, r := range results {
 		if i > 0 {
@@ -185,6 +200,13 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		}
 		fmt.Fprintln(p.w, meta)
 		fmt.Fprintln(p.w, r.Entry.Content)
+		if r.IsSuperseded && len(r.SupersededBy) > 0 {
+			ids := make([]string, len(r.SupersededBy))
+			for j, id := range r.SupersededBy {
+				ids[j] = id.String()
+			}
+			fmt.Fprintf(p.w, "  [superseded by: %s]\n", strings.Join(ids, ", "))
+		}
 	}
 }
 

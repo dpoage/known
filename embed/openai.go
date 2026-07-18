@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // OpenAICompatibleEmbedder produces embeddings via any OpenAI-compatible
@@ -37,7 +38,7 @@ func NewOpenAICompatibleEmbedder(cfg Config) (*OpenAICompatibleEmbedder, error) 
 		baseURL:    strings.TrimRight(cfg.URL, "/"),
 		model:      cfg.Model,
 		apiKey:     cfg.APIKey,
-		client:     &http.Client{},
+		client:     &http.Client{Timeout: 30 * time.Second},
 		dimensions: cfg.Dimensions,
 	}, nil
 }
@@ -82,7 +83,20 @@ func (o *OpenAICompatibleEmbedder) EmbedBatch(ctx context.Context, texts []strin
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	return o.doEmbed(ctx, texts)
+	const maxBatchSize = 256
+	var all [][]float32
+	for i := 0; i < len(texts); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		chunk, err := o.doEmbed(ctx, texts[i:end])
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, chunk...)
+	}
+	return all, nil
 }
 
 // Dimensions returns the vector dimensionality. Like OllamaEmbedder, this
@@ -123,7 +137,7 @@ func (o *OpenAICompatibleEmbedder) doEmbed(ctx context.Context, texts []string) 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("openai-compatible: read response: %w", err)
 	}

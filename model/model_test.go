@@ -137,6 +137,21 @@ func TestMetadata_Clone_Nil(t *testing.T) {
 	}
 }
 
+func TestMetadata_Clone_DeepCopy(t *testing.T) {
+	original := Metadata{"nested": map[string]any{"inner": "value"}}
+	clone := original.Clone()
+
+	// Mutate the nested map in the clone
+	nested := clone["nested"].(map[string]any)
+	nested["inner"] = "modified"
+
+	// Original must be unchanged
+	origNested := original["nested"].(map[string]any)
+	if origNested["inner"] != "value" {
+		t.Errorf("Clone() did not deep-copy nested map: original mutated to %q", origNested["inner"])
+	}
+}
+
 // =============================================================================
 // Source Tests
 // =============================================================================

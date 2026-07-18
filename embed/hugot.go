@@ -132,6 +132,12 @@ func (h *HugotEmbedder) Destroy() {
 	}
 }
 
+// Close implements io.Closer and releases the hugot session resources.
+func (h *HugotEmbedder) Close() error {
+	h.Destroy()
+	return nil
+}
+
 // detectDims auto-detects dimensions from the first non-empty embedding.
 func (h *HugotEmbedder) detectDims(vec []float32) {
 	h.mu.Lock()

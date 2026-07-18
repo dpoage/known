@@ -50,6 +50,7 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	provenance := fs.String("provenance", "", "filter by provenance level (verified, inferred, uncertain)")
 	source := fs.String("source", "", "filter by source type (file, url, conversation, manual)")
 	textOnly := fs.Bool("text", false, "use full-text search (FTS5) instead of vector search")
+	includeSuperseded := fs.Bool("include-superseded", false, "include superseded entries at full score (skip demotion)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -109,7 +110,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		results = filterResultsByLabels(results, labelFlags)
 		results = filterResultsByProvenance(results, model.ProvenanceLevel(*provenance))
 		results = filterResultsBySource(results, model.SourceType(*source))
-		app.Printer.PrintRecallResults(results)
+		lowRelevance := len(results) > 0 && results[0].Score < query.LowRelevanceThreshold
+		app.Printer.PrintRecallResults(results, lowRelevance)
 		return nil
 	}
 
@@ -137,10 +139,11 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 			RecencyWeight:   *recency,
 			RecencyHalfLife: 7 * 24 * time.Hour,
 		},
-		ExpandDepth:     *expandDepth,
-		ExpandDirection: query.Both,
-		TextSearch:      true,
-		TotalLimit:      totalLimit,
+		ExpandDepth:       *expandDepth,
+		ExpandDirection:   query.Both,
+		TextSearch:        true,
+		TotalLimit:        totalLimit,
+		IncludeSuperseded: *includeSuperseded,
 	}
 
 	results, err := app.Engine.SearchHybrid(ctx, opts)
@@ -157,7 +160,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 		results = results[:*limit]
 	}
 
-	app.Printer.PrintRecallResults(results)
+	lowRelevance := len(results) > 0 && results[0].Score < query.LowRelevanceThreshold
+	app.Printer.PrintRecallResults(results, lowRelevance)
 	return nil
 }
 

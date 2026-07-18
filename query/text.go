@@ -86,5 +86,11 @@ func (e *Engine) SearchText(ctx context.Context, opts VectorOptions) ([]Result, 
 		return nil, fmt.Errorf("enrich conflicts: %w", err)
 	}
 
+	// Enrich with superseded status so the [superseded by:] marker appears
+	// consistently in both text and hybrid recall paths (known-5oq).
+	if err := e.enrichSuperseded(ctx, results); err != nil {
+		return nil, fmt.Errorf("enrich superseded: %w", err)
+	}
+
 	return results, nil
 }
