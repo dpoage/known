@@ -34,6 +34,7 @@ import (
 //	--meta           Metadata key=value pairs (repeatable)
 //	--label          Labels (repeatable, e.g. --label lang:go)
 //	--link           Create edge: type:target-id (repeatable)
+//	--supersedes     Content query for the entry this new entry supersedes (one-shot correction)
 func runAdd(ctx context.Context, app *App, args []string, cmdName string) error {
 	// Check for --batch before full flag parsing so we can delegate early.
 	// Known limitation: unquoted content containing the literal token "--batch"
@@ -83,6 +84,7 @@ func runAdd(ctx context.Context, app *App, args []string, cmdName string) error 
 	fs.Var(&labelFlags, "label", "label (repeatable, e.g. --label lang:go --label topic:concurrency)")
 	var linkFlags multiFlag
 	fs.Var(&linkFlags, "link", "create edge: type:target-id (repeatable, e.g. --link elaborates:01KJ...)")
+	supersedes := fs.String("supersedes", "", "content query for the entry this new entry supersedes")
 
 	if err := fs.Parse(args); err != nil {
 		return formatFlagError(err, fs)
@@ -183,10 +185,75 @@ func runAdd(ctx context.Context, app *App, args []string, cmdName string) error 
 		return fmt.Errorf("invalid entry: %w", err)
 	}
 
-	// Persist with upsert semantics (dedup by content hash + scope).
-	result, err := app.Entries.CreateOrUpdate(ctx, &entry)
-	if err != nil {
-		return fmt.Errorf("create entry: %w", err)
+	// Resolve --supersedes target BEFORE opening any transaction.
+	// Resolution uses search (may read existing entries) and must not run inside a write tx.
+	// Any failure here aborts before anything is written.
+	var supersedesID model.ID
+	var hasSupersedesID bool
+	if *supersedes != "" {
+		id, err := resolveEntryConfident(ctx, app, *supersedes)
+		if err != nil {
+			return fmt.Errorf("--supersedes: %w", err)
+		}
+		supersedesID = id
+		hasSupersedesID = true
+	}
+
+	// Resolve --link targets BEFORE opening any transaction.
+	// Resolution validates format, parses IDs, and checks target existence.
+	// Any failure here aborts before anything is written.
+	type resolvedLink struct {
+		spec     string
+		edgeType model.EdgeType
+		targetID model.ID
+	}
+	var resolvedLinks []resolvedLink
+	for _, linkSpec := range linkFlags {
+		edgeType, targetIDStr, ok := strings.Cut(linkSpec, ":")
+		if !ok {
+			return fmt.Errorf("invalid --link format %q: expected type:target-id (e.g. elaborates:01KJ...)", linkSpec)
+		}
+		et := model.EdgeType(edgeType)
+		if err := et.Validate(); err != nil {
+			return fmt.Errorf("--link %q: invalid edge type: %w", linkSpec, err)
+		}
+		targetID, err := model.ParseID(targetIDStr)
+		if err != nil {
+			return fmt.Errorf("--link %q: invalid target ID: %w", linkSpec, err)
+		}
+		if _, err := app.Entries.Get(ctx, targetID); err != nil {
+			return fmt.Errorf("--link %q: target entry %s: %w", linkSpec, targetID, err)
+		}
+		resolvedLinks = append(resolvedLinks, resolvedLink{spec: linkSpec, edgeType: et, targetID: targetID})
+	}
+
+	// Persist entry + all edges atomically.
+	// If the tx fails, no entry and no edges are written.
+	var result *model.Entry
+	if err := app.DB.WithTx(ctx, func(txCtx context.Context) error {
+		var txErr error
+		result, txErr = app.Entries.CreateOrUpdate(txCtx, &entry)
+		if txErr != nil {
+			return fmt.Errorf("create entry: %w", txErr)
+		}
+		for _, rl := range resolvedLinks {
+			edge := model.NewEdge(result.ID, rl.targetID, rl.edgeType)
+			if txErr := app.Edges.Create(txCtx, &edge); txErr != nil {
+				return fmt.Errorf("--link %q: create edge: %w", rl.spec, txErr)
+			}
+		}
+		if hasSupersedesID {
+			if result.ID == supersedesID {
+				return fmt.Errorf("--supersedes: entry cannot supersede itself (%s)", result.ID)
+			}
+			edge := model.NewEdge(result.ID, supersedesID, model.EdgeSupersedes)
+			if txErr := app.Edges.Create(txCtx, &edge); txErr != nil {
+				return fmt.Errorf("--supersedes: create edge: %w", txErr)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	deduped := result.Version > 1
@@ -205,32 +272,12 @@ func runAdd(ctx context.Context, app *App, args []string, cmdName string) error 
 	// Print confirmation — always, on stdout.
 	app.Printer.PrintAddResult(*result, deduped, suggestions)
 
-	// Create edges if --link flags were provided.
-	for _, linkSpec := range linkFlags {
-		edgeType, targetIDStr, ok := strings.Cut(linkSpec, ":")
-		if !ok {
-			return fmt.Errorf("invalid --link format %q: expected type:target-id (e.g. elaborates:01KJ...)", linkSpec)
-		}
-
-		et := model.EdgeType(edgeType)
-		if err := et.Validate(); err != nil {
-			return fmt.Errorf("--link %q: invalid edge type: %w", linkSpec, err)
-		}
-
-		targetID, err := model.ParseID(targetIDStr)
-		if err != nil {
-			return fmt.Errorf("--link %q: invalid target ID: %w", linkSpec, err)
-		}
-
-		if _, err := app.Entries.Get(ctx, targetID); err != nil {
-			return fmt.Errorf("--link %q: target entry %s: %w", linkSpec, targetID, err)
-		}
-
-		edge := model.NewEdge(result.ID, targetID, et)
-		if err := app.Edges.Create(ctx, &edge); err != nil {
-			return fmt.Errorf("--link %q: create edge: %w", linkSpec, err)
-		}
-		app.Printer.PrintMessage("Linked %s -[%s]-> %s", result.ID, et, targetID)
+	// Report edges created.
+	for _, rl := range resolvedLinks {
+		app.Printer.PrintMessage("Linked %s -[%s]-> %s", result.ID, rl.edgeType, rl.targetID)
+	}
+	if hasSupersedesID {
+		app.Printer.PrintMessage("Supersedes %s -[supersedes]-> %s", result.ID, supersedesID)
 	}
 
 	return nil
@@ -275,7 +322,7 @@ func resolveContent(args []string) (string, error) {
 // Used for error suggestion.
 var validAddFlags = []string{
 	"title", "scope", "source-type", "source-ref", "provenance",
-	"observed-by", "source-hash", "ttl", "meta", "label", "link", "batch",
+	"observed-by", "source-hash", "ttl", "meta", "label", "link", "batch", "supersedes",
 }
 
 // formatFlagError wraps a pflag parse error with a nearest-valid-flag suggestion.
