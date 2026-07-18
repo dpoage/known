@@ -203,6 +203,9 @@ func TestReinforce_NoRecallNoBoost(t *testing.T) {
 	}
 }
 
+// TestReinforce_WeightCappedAtMax verifies the MaxWeight ceiling is enforced
+// even when the boost/decay equilibrium exceeds it. Uses a custom config
+// where equilibrium = 0.5/0.1 = 5.0 >> 1.0 to confirm the clamp fires.
 func TestReinforce_WeightCappedAtMax(t *testing.T) {
 	ctx := context.Background()
 
@@ -217,9 +220,7 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 	entryRepo.Create(ctx, &e1)
 	entryRepo.Create(ctx, &e2)
 
-	// Edge at MaxWeight — after decay+boost it would be 1.0*0.99+0.02=1.01,
-	// which must be clamped to MaxWeight (1.0).
-	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(1.0)
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.9)
 	edgeRepo.Create(ctx, &edge)
 
 	sessID := model.NewID()
@@ -239,7 +240,15 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 	})
 
-	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
+	// Config with equilibrium 0.5/0.1 = 5.0; even from w=0.9 the next step
+	// 0.9*0.9+0.5 = 1.31 must be clamped to MaxWeight 1.0.
+	cfg := ReinforceConfig{
+		ShowBoost:   0.5,
+		DecayFactor: 0.9,
+		MinWeight:   0.01,
+		MaxWeight:   1.0,
+	}
+	result, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
 	if err != nil {
 		t.Fatalf("Reinforce: %v", err)
 	}
@@ -249,8 +258,8 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 	}
 
 	got, _ := edgeRepo.Get(ctx, edge.ID)
-	if *got.Weight != 1.0 {
-		t.Errorf("edge weight = %f, want 1.0 (capped)", *got.Weight)
+	if *got.Weight != cfg.MaxWeight {
+		t.Errorf("edge weight = %f, want %f (capped at MaxWeight)", *got.Weight, cfg.MaxWeight)
 	}
 }
 
@@ -298,10 +307,13 @@ func TestReinforce_NilWeightBoosted(t *testing.T) {
 		t.Fatal("expected edges to be boosted")
 	}
 
-	// nil weight (1.0) + 0.05 = capped at 1.0.
+	cfg := DefaultReinforceConfig()
+	// nil weight → EffectiveWeight()=1.0; with update action:
+	// newWeight = 1.0 * DecayFactor + UpdateBoost = 1.0*0.90 + 0.05 = 0.95
 	got, _ := edgeRepo.Get(ctx, edge.ID)
-	if *got.Weight != 1.0 {
-		t.Errorf("edge weight = %f, want 1.0", *got.Weight)
+	want := 1.0*cfg.DecayFactor + cfg.UpdateBoost
+	if math.Abs(*got.Weight-want) > 1e-9 {
+		t.Errorf("edge weight = %f, want %f (decay*1.0 + updateBoost)", *got.Weight, want)
 	}
 }
 
@@ -497,14 +509,18 @@ func TestReinforce_MultipleSessions(t *testing.T) {
 		t.Errorf("EdgesBoosted = %d, want >= 2", result.EdgesBoosted)
 	}
 
-	// Both edges should have been boosted.
+	// With default config (decay=0.90): weights above equilibrium decay toward
+	// it. edge12 (show, eq=0.20): 0.5*0.90+0.02=0.47. edge23 (update, eq=0.50):
+	// 0.7*0.90+0.05=0.68. Both moved; both were touched (EdgesBoosted>=2).
 	got12, _ := edgeRepo.Get(ctx, edge12.ID)
-	if *got12.Weight <= 0.5 {
-		t.Errorf("edge12 weight = %f, want > 0.5", *got12.Weight)
+	want12 := 0.5*cfg.DecayFactor + cfg.ShowBoost
+	if math.Abs(*got12.Weight-want12) > 1e-9 {
+		t.Errorf("edge12 weight = %f, want %f (one show cycle)", *got12.Weight, want12)
 	}
 	got23, _ := edgeRepo.Get(ctx, edge23.ID)
-	if *got23.Weight <= 0.7 {
-		t.Errorf("edge23 weight = %f, want > 0.7", *got23.Weight)
+	want23 := 0.7*cfg.DecayFactor + cfg.UpdateBoost
+	if math.Abs(*got23.Weight-want23) > 1e-9 {
+		t.Errorf("edge23 weight = %f, want %f (one update cycle)", *got23.Weight, want23)
 	}
 }
 

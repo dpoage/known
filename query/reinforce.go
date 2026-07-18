@@ -30,18 +30,21 @@ type ReinforceConfig struct {
 	LinkBoost float64
 
 	// DecayFactor is multiplied against each edge's weight during every
-	// reinforcement cycle (i.e. once per session processed). A value of 0.99
-	// reduces an unreinforced edge by 1% per cycle. Must be in (0, 1].
-	// Zero disables decay (treated as 1.0).
+	// reinforcement cycle: newWeight = weight*DecayFactor + boost.
+	// Must be in (0, 1]. Zero disables decay (treated as 1.0).
 	//
-	// Decay is applied to ALL edges touching acted-on entries in the same pass
-	// as boosting, but ONLY edges that were NOT boosted in this cycle receive
-	// the decay — boosted edges get the net of (weight * decay + boost), so the
-	// floor cannot be negative and unused edges drift down gradually.
+	// Both decay and boost are applied together to every edge adjacent to an
+	// acted-on entry in a cycle. Edges whose endpoints are never acted on are
+	// NOT visited and do NOT decay under this model (write-time decay only).
+	// This is intentional: a full-graph scan each cycle would be O(E) with no
+	// benefit since unvisited edges never appear in retrieval results anyway.
 	//
-	// Floor: decayed weight is clamped to MinWeight so edges are never zeroed
-	// out or inverted. This prevents "zombie-zero" edges that could otherwise
-	// suppress expansion via zero EffectiveWeight multiplier.
+	// Equilibrium: the recurrence w(t+1) = d*w(t) + b converges to b/(1-d).
+	// To keep saturated edges BELOW MaxWeight, choose constants so that
+	// b/(1-d) < MaxWeight. The default config satisfies this: with the largest
+	// boost b=0.05 and d=0.90, the equilibrium is 0.05/0.10 = 0.5 < 1.0.
+	//
+	// Floor: decayed weight is clamped to MinWeight so edges never reach zero.
 	DecayFactor float64
 
 	// MinWeight is the lower bound for any edge weight after decay.
@@ -53,12 +56,22 @@ type ReinforceConfig struct {
 }
 
 // DefaultReinforceConfig returns the default reinforcement configuration.
+//
+// Constants are chosen so that the decay equilibrium b/(1-d) is STRICTLY
+// below MaxWeight (1.0) for every action type:
+//   - show:        0.02 / (1 - 0.90) = 0.20
+//   - update/link: 0.05 / (1 - 0.90) = 0.50
+//
+// This means a frequently-boosted edge converges to a stable value (0.2 or
+// 0.5) rather than pinning to the 1.0 cap, keeping weight meaningful as a
+// signal. MaxWeight is still enforced as a hard ceiling (e.g. for manually
+// set weights or legacy data), but the default cycle will not saturate it.
 func DefaultReinforceConfig() ReinforceConfig {
 	return ReinforceConfig{
 		ShowBoost:   0.02,
 		UpdateBoost: 0.05,
 		LinkBoost:   0.05,
-		DecayFactor: 0.99,
+		DecayFactor: 0.90,
 		MinWeight:   0.01,
 		MaxWeight:   1.0,
 	}

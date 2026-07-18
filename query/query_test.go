@@ -2185,19 +2185,25 @@ func TestSearchHybrid_IdentifierRescuedByFTS(t *testing.T) {
 			f := newTestFixture(3)
 			ctx := context.Background()
 
-			// Embedder returns a fixed vector; the identifier entry will have
-			// LOW cosine similarity (orthogonal vector) so vector alone won't
-			// surface it.
+			// Embedder always returns the first basis vector; the identifier
+			// entry is orthogonal to it and will rank last in vector search.
 			f.embedder.embedFn = func(text string) []float32 {
 				return []float32{1.0, 0.0, 0.0}
 			}
 
-			// Decoy: high vector similarity but no text match.
-			mustCreateEntry(t, f.entryRepo, makeEntry("unrelated semantic match", "root", []float32{0.99, 0.1, 0.0}))
-			// Target: the identifier entry with low vector similarity.
+			// Add 5 high-similarity decoys that will fill the vector result window.
+			for j := range 5 {
+				mustCreateEntry(t, f.entryRepo, makeEntry(
+					fmt.Sprintf("decoy semantic match %d", j),
+					"root",
+					[]float32{float32(0.98 - float64(j)*0.01), float32(float64(j) * 0.01), 0.0},
+				))
+			}
+			// Target: orthogonal embedding → vector rank last (outside limit=5 window).
 			target := mustCreateEntry(t, f.entryRepo, makeEntry(tc.content, "root", []float32{0.0, 0.0, 1.0}))
 
-			// FTS returns the target as #1 result (strong exact match).
+			// Mutation probe: removing this FTS mock would leave target out of
+			// vector results (6th entry with worst similarity) and the test fails.
 			f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
 				return []storage.SimilarityResult{
 					{Entry: target, Distance: -10.0}, // top FTS hit
@@ -2208,7 +2214,7 @@ func TestSearchHybrid_IdentifierRescuedByFTS(t *testing.T) {
 				Vector: VectorOptions{
 					Text:  tc.query,
 					Scope: "root",
-					Limit: 5,
+					Limit: 5, // exactly fills window with decoys; target excluded by vector
 				},
 				ExpandDepth:     0,
 				ExpandDirection: Outgoing,
@@ -2226,7 +2232,7 @@ func TestSearchHybrid_IdentifierRescuedByFTS(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Errorf("identifier entry %q not found in results for query %q; FTS rescue failed", tc.content, tc.query)
+				t.Errorf("identifier entry %q not rescued by FTS for query %q; FTS fusion failed", tc.content, tc.query)
 			}
 		})
 	}
@@ -2440,10 +2446,11 @@ func TestReinforce_UnusedEdgesDecayBelowInitial(t *testing.T) {
 	}
 }
 
-// TestReinforce_SaturationPreventedByDecay verifies that even when an edge is
-// boosted every session, decay prevents it from immediately reaching MaxWeight
-// and holding there forever. After enough cycles it converges to an equilibrium
-// (boost / (1 - decay)) rather than a hard cap.
+// TestReinforce_SaturationPreventedByDecay verifies that under DefaultReinforceConfig
+// a frequently-boosted edge converges to a stable equilibrium STRICTLY below
+// MaxWeight (1.0). The equilibrium for the update/link boost is
+// UpdateBoost / (1 - DecayFactor) = 0.05 / 0.10 = 0.5 < 1.0.
+// This is the core fix for known-906: weight stays meaningful as a signal.
 func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
 	ctx := context.Background()
 	entryRepo := newMockEntryRepo()
@@ -2457,25 +2464,19 @@ func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
 	entryRepo.Create(ctx, &e1)
 	entryRepo.Create(ctx, &e2)
 
-	// Edge starting at 0.0 (nil weight → EffectiveWeight=1.0, so use explicit low weight).
-	initialW := 0.1
-	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(initialW)
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.1)
 	edgeRepo.Create(ctx, &edge)
 
-	cfg := ReinforceConfig{
-		// Use show event for predictability.
-		ShowBoost:   0.1,
-		UpdateBoost: 0.1,
-		LinkBoost:   0.1,
-		DecayFactor: 0.9,
-		MinWeight:   0.01,
-		MaxWeight:   1.0,
+	cfg := DefaultReinforceConfig()
+	// Theoretical equilibrium for update action: b/(1-d) = 0.05/0.10 = 0.50.
+	equilibrium := cfg.UpdateBoost / (1 - cfg.DecayFactor)
+	if equilibrium >= cfg.MaxWeight {
+		t.Fatalf("DefaultReinforceConfig equilibrium %f >= MaxWeight %f — config violates saturation-prevention invariant", equilibrium, cfg.MaxWeight)
 	}
 
-	// Equilibrium = boost / (1 - decay) = 0.1 / 0.1 = 1.0 → would hit MaxWeight.
-	// After many cycles it should converge to MaxWeight (1.0), not some intermediate
-	// unlimitable value. What we verify is that it does NOT OVERSHOOT MaxWeight.
-	for i := range 50 {
+	// Drive 60 update-action cycles. The weight should converge to equilibrium
+	// and stay there, never touching MaxWeight.
+	for i := range 60 {
 		sessID := model.NewID()
 		now := time.Now()
 		ended := now.Add(time.Minute)
@@ -2485,7 +2486,7 @@ func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
 			Query: fmt.Sprintf("q%d", i), CreatedAt: now,
 		})
 		sessions.LogEvent(ctx, &model.SessionEvent{
-			ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventUpdate,
 			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
 		})
 		_, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
@@ -2494,9 +2495,15 @@ func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
 		}
 
 		got, _ := edgeRepo.Get(ctx, edge.ID)
-		if *got.Weight > cfg.MaxWeight+1e-9 {
-			t.Errorf("cycle %d: edge weight %f exceeds MaxWeight %f", i, *got.Weight, cfg.MaxWeight)
+		if *got.Weight >= cfg.MaxWeight {
+			t.Errorf("cycle %d: edge weight %f reached MaxWeight %f — saturation not prevented", i, *got.Weight, cfg.MaxWeight)
 		}
+	}
+
+	// After 60 cycles, weight should be within 1% of the theoretical equilibrium.
+	got, _ := edgeRepo.Get(ctx, edge.ID)
+	if math.Abs(*got.Weight-equilibrium) > 0.01 {
+		t.Errorf("after 60 cycles: weight %f, want ~%f (equilibrium = UpdateBoost/(1-DecayFactor))", *got.Weight, equilibrium)
 	}
 }
 

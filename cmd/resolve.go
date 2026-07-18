@@ -59,7 +59,7 @@ func resolveEntryConfident(ctx context.Context, app *App, arg string) (model.ID,
 
 		// Top-1 dominance: score ≥ threshold AND margin over #2.
 		const (
-			minScore = 0.80
+			minScore  = 0.80
 			minMargin = 0.10
 		)
 		top := semanticResults[0]
