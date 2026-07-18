@@ -37,18 +37,19 @@ func TestNoULIDDemo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stub := &demoEmbedder{}
+	stub := newDemoEmbedder()
 	eng := query.New(db.Entries(), db.Edges(), stub)
 
 	var buf bytes.Buffer
 	app := &App{
-		DB:      db,
-		Entries: db.Entries(),
-		Edges:   db.Edges(),
-		Engine:  eng,
-		Printer: NewPrinter(&buf, false, false),
-		Stderr:  &bytes.Buffer{},
-		Config:  &AppConfig{DefaultScope: model.RootScope},
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: stub,
+		Engine:   eng,
+		Printer:  NewPrinter(&buf, false, false),
+		Stderr:   &bytes.Buffer{},
+		Config:   &AppConfig{DefaultScope: model.RootScope},
 	}
 
 	// --- populate 10 noise entries with orthogonal embeddings ----------------
@@ -73,6 +74,7 @@ func TestNoULIDDemo(t *testing.T) {
 
 	src := model.Source{Type: model.SourceManual}
 	for _, n := range noiseTopics {
+		stub.register(n.content, n.vec)
 		e := model.NewEntry(n.content, src)
 		e.Scope = model.RootScope
 		e = e.WithEmbedding(n.vec, "demo")
@@ -86,6 +88,7 @@ func TestNoULIDDemo(t *testing.T) {
 	// Command (no ULID): known add 'Renderer architecture decision: ...'
 	const origContent = "Renderer architecture decision: 3D will be a sibling renderer under RendererInterface"
 	origVec := []float32{1, 0, 0, 0}
+	stub.register(origContent, origVec)
 
 	eOrig := model.NewEntry(origContent, src)
 	eOrig.Scope = model.RootScope
@@ -101,6 +104,7 @@ func TestNoULIDDemo(t *testing.T) {
 	// Command (no ULID): known add 'CORRECTION: renderer will be a plugin...'
 	const corrContent = "CORRECTION: renderer will be a plugin, not a sibling renderer under RendererInterface"
 	corrVec := []float32{0.95, 0.31, 0, 0}
+	stub.register(corrContent, corrVec)
 
 	eCorr := model.NewEntry(corrContent, src)
 	eCorr.Scope = model.RootScope
@@ -156,6 +160,7 @@ func TestNoULIDDemo(t *testing.T) {
 	// Add one more related entry as a candidate target.
 	relContent := "Graphics pipeline initialization: deferred vs forward shading"
 	relVec := []float32{0.85, 0.52, 0, 0}
+	stub.register(relContent, relVec)
 	eRel := model.NewEntry(relContent, src)
 	eRel.Scope = model.RootScope
 	eRel = eRel.WithEmbedding(relVec, "demo")
@@ -247,23 +252,34 @@ func looksLikeULID(s string) bool {
 	}
 	return true
 }
+// demoEmbedder is a map-backed embedder used in TestNoULIDDemo.
+// It returns the exact stored vector for known content strings (cosine = 1.0
+// when the query text equals the stored text) and a fixed fallback vector for
+// unknown texts. This avoids the real hugot embedder and its upstream gomlx
+// race while preserving the full resolution + SuggestLinks semantics of the test.
+type demoEmbedder struct {
+	known map[string][]float32
+}
 
-// demoEmbedder returns a zero vector. SuggestLinks uses stored embedding
-// vectors directly (SearchSimilar on the repo), so this embedder is only
-// consulted when the engine needs to embed a text query (content-addressable
-// resolution fallback). Zero vectors sort equally, which exercises the exact-
-// match path rather than vector dominance.
-type demoEmbedder struct{}
+func newDemoEmbedder() *demoEmbedder { return &demoEmbedder{known: make(map[string][]float32)} }
 
-func (d *demoEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
-	return []float32{0, 0, 0, 0}, nil
+func (d *demoEmbedder) register(content string, vec []float32) {
+	d.known[strings.ToLower(content)] = vec
+}
+
+func (d *demoEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
+	if v, ok := d.known[strings.ToLower(text)]; ok {
+		return v, nil
+	}
+	return []float32{0.5, 0.5, 0.5, 0.5}, nil
 }
 func (d *demoEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
-	for i := range out {
-		out[i] = []float32{0, 0, 0, 0}
+	for i, t := range texts {
+		v, _ := d.Embed(context.Background(), t)
+		out[i] = v
 	}
 	return out, nil
 }
-func (d *demoEmbedder) Dimensions() int  { return 4 }
+func (d *demoEmbedder) Dimensions() int   { return 4 }
 func (d *demoEmbedder) ModelName() string { return "demo" }

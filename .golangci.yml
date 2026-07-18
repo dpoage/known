@@ -1,0 +1,27 @@
+# golangci-lint v2 configuration for known.
+#
+# Disabled linters — tracked for tightening in known-vvd (P3):
+#   errcheck   - 50 unchecked error returns across bench/, cmd/, embed/,
+#                query/; all idiomatic (defer Close, fmt.Fprintf in non-error
+#                paths, test helpers). No real bugs.
+#   ineffassign - 2 dead argIdx++ increments after last use in
+#                 storage/postgres/edge.go:190 and entry.go:448. Harmless.
+#   staticcheck - 16 style findings: QF1012/S1039 in cmd/completion.go (6x),
+#                 ST1005 error strings in cmd/conflicts.go, cmd/import.go,
+#                 cmd/path.go, QF1001 De Morgan in cmd/project.go (3x),
+#                 QF1008 embedded selectors in model/types.go and
+#                 storage/postgres/entry.go (3x). No bugs.
+#   unused      - 4 unexported symbols left from refactors: reULIDJSON
+#                 (bench/capture/main.go), isValidScopeSegmentForTest
+#                 (cmd/project_test.go), searchEntries and
+#                 isEmbedderUnavailable (cmd/resolve.go).
+#
+# All other default linters run. Re-enable the above in known-vvd.
+version: "2"
+
+linters:
+  disable:
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
