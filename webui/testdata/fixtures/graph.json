@@ -140,6 +140,28 @@
       "labels": [
         "convention"
       ]
+    },
+    {
+      "id": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "title": "Deprecated auth flow",
+      "content": "Legacy token-based auth, superseded by the session-cookie flow; kept for historical cross-reference.",
+      "scope": "legacy.archive",
+      "source_type": "manual",
+      "created_at": "2025-01-10T08:00:00Z",
+      "updated_at": "2025-01-10T08:00:00Z",
+      "observed_at": "2025-01-10T08:00:00Z",
+      "external": true
+    },
+    {
+      "id": "013VESBWW0J7BGS3K3YX967QZB",
+      "title": "Legacy migration notes",
+      "content": "Notes from the pre-ULID id migration; referenced by current schema-convention entries for context.",
+      "scope": "legacy.archive",
+      "source_type": "file",
+      "created_at": "2025-02-14T08:00:00Z",
+      "updated_at": "2025-02-14T08:00:00Z",
+      "observed_at": "2025-02-14T08:00:00Z",
+      "external": true
     }
   ],
   "edges": [
@@ -313,6 +335,24 @@
       "weight": 0.4,
       "explicit": true,
       "created_at": "2026-06-02T10:18:00Z"
+    },
+    {
+      "id": "0100C67K7KXTE1F3DBCQTKAD0C",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "type": "depends-on",
+      "weight": 0.4,
+      "explicit": false,
+      "created_at": "2026-06-02T11:00:00Z"
+    },
+    {
+      "id": "01NN2GM65815WEJX32EWQ27MPQ",
+      "from": "013VESBWW0J7BGS3K3YX967QZB",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "related-to",
+      "weight": 0.3,
+      "explicit": false,
+      "created_at": "2026-06-02T11:05:00Z"
     }
   ],
   "truncated": false
