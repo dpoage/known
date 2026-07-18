@@ -299,6 +299,7 @@ Flags:
   --meta           Metadata key=value pairs (repeatable)
   --label          Labels (repeatable, e.g. --label lang:go)
   --link           Create edge: type:target-id (repeatable)
+  --supersedes     Content query for the entry this new entry supersedes (one-shot correction)
   --batch          Read entries as JSONL from stdin
 `, cmdName, cmdName, cmdName)
 }
