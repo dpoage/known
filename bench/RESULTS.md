@@ -104,15 +104,18 @@ Findings (full root-cause analysis recorded on bead `known-syk`):
 
 ## Retrieval Quality
 
-> **Provenance: commit `bac1839` (`feat/bench-suite` merge, 2026-07-17),
-> hermetic — no model/API key required (`go test -tags bench ./bench/... -run
-> TestBench`).**
-> **Known limitation: every scenario currently scores a saturated 1.000.** A
-> saturated metric has no headroom and cannot detect regressions or prove
-> discriminating power. Scaling the workload and adding graded (non-binary)
-> metrics to restore headroom is tracked separately in this round (see epic
-> `known-oqa`); the table below reflects the suite as of `bac1839` and will
-> be superseded once that work lands.
+> **TODO (bead `known-58u`, owner: retrieval-scoring slice): the table below
+> is a PLACEHOLDER, not final data.** It reflects the pre-round suite as
+> committed at `bac1839` (`feat/bench-suite` merge, 2026-07-17), hermetic —
+> no model/API key required (`go test -tags bench ./bench/... -run
+> TestBench`). Every scenario is saturated at 1.000 — a saturated metric has
+> no headroom and cannot detect regressions or prove discriminating power.
+> known-58u is expanding the seed corpus with distractors and adding new
+> scenarios (supersede chains, weighted-expansion ranking, FTS near-miss
+> distractors) specifically to restore headroom. **Do not cite this table as
+> current results** — replace it (scenario table, ablation lifts, and commit
+> hash) with known-58u's final numbers before this document is treated as
+> authoritative.
 
 How well does the search pipeline find the right facts?
 
@@ -132,8 +135,8 @@ OVERALL: 1.000
 
 ### Feature Ablation
 
-> **Provenance: commit `bac1839` (`feat/bench-suite` merge, 2026-07-17),
-> hermetic.**
+> **TODO (bead `known-58u`): placeholder, see note above — pre-round numbers
+> as committed at `bac1839` (`feat/bench-suite` merge, 2026-07-17), hermetic.**
 
 What happens when individual features are disabled?
 
