@@ -167,6 +167,41 @@ meaningfully larger and non-zero, restoring headroom that the original
 - **Freshness**: recency weighting now measurably helps (+0.020, up from
   +0.000) on the expanded corpus's contradiction-resolution distractors.
 
+## IR Retrieval Quality (Labeled Workload)
+
+> **Provenance: commit `2e01d2c9` (`slice/bench-ci`, independently reproducing
+> bead `known-5qr`'s original measurement), `KNOWN_BENCH_FULL=1 go test -tags
+> bench ./bench/ -run TestQualityEval -v` — real hugot/MiniLM embedder
+> requires live network for the model-revision check even with a populated
+> `~/.known/models` cache; the hermetic FakeEmbedder row needs no network.
+> 2026-07-18. 1,000-document synthetic corpus (`workload.go`), 36 labeled
+> queries, graded 0-3 relevance (`bench/testdata/labeled_queries.json`).**
+
+Distinct from the 10-scenario suite above: `runQualityEval` (`scale_test.go`)
+scores the search pipeline against a much larger (1,000-doc) labeled workload
+using standard IR metrics (P@5, MRR, NDCG@10) rather than hand-authored
+pass/fail expectations.
+
+| Embedder | P@5 | MRR | NDCG@10 |
+|---|---|---|---|
+| `fake-hashing-v1` (hermetic, `TestQualityEvalFake`) | 0.544 | 0.575 | 0.464 |
+| `sentence-transformers/all-MiniLM-L6-v2` (`TestQualityEvalReal`, `KNOWN_BENCH_FULL=1`) | 0.956 | 1.000 | 0.918 |
+
+Neither run saturates NDCG@10 — the metric `runQualityEval` gates on,
+failing the build at mean NDCG@10 >= 0.999. P@5/MRR read ~1.0 against the
+real embedder because every query is an unambiguous paraphrase of one fact,
+which is correct retrieval behavior, not benchmark saturation; see the
+`runQualityEval` doc comment in `scale_test.go` and bead `known-5qr`'s
+design notes for the full reasoning, including the original saturated
+"same topic = relevant" grading pass that was hardened away.
+
+Reproduce:
+
+```bash
+go test -tags bench ./bench/ -run TestQualityEvalFake -v                # hermetic
+KNOWN_BENCH_FULL=1 go test -tags bench ./bench/ -run TestQualityEval -v # both rows
+```
+
 ## Reproducing
 
 ### Hermetic effectiveness self-tests (no API key, no network, no model)

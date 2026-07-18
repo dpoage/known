@@ -44,7 +44,7 @@ tests, and the full `bench/capture` self-test suite. This is the tier
 intended for CI once the suite has proven itself; skips everything gated by
 `KNOWN_BENCH_FULL` or an API key.
 
-### 2. Full local (real embedder — requires live network, ~100s)
+### 2. Full local (real embedder — requires live network, ~1.5-2 min)
 
 ```sh
 go run bench/cmd/seedgen/main.go
@@ -59,20 +59,21 @@ falsification tests, and `TestQualityEvalReal`.
 **Live HF network is required even with a fully populated `~/.known/models`
 cache** — hugot performs a model-revision check against Hugging Face on
 every run regardless of local cache state, so this tier is never fully
-offline. Measured here: `go run bench/cmd/seedgen/main.go` took ~4s,
-`KNOWN_BENCH_FULL=1 go test -tags bench ./bench/...` took ~99s (dominated by
-`TestQualityEvalReal` at ~93s, which embeds 1,000 documents + 36 queries
-with the real model).
+offline. Measured here: `go run bench/cmd/seedgen/main.go` took ~4s;
+`KNOWN_BENCH_FULL=1 go test -tags bench ./bench/...` took roughly 1.5-2
+minutes, dominated by `TestQualityEvalReal` (which embeds 1,000 documents +
+36 queries with the real model). Exact wall time varies with HF network
+latency — treat these as order-of-magnitude, not a strict budget.
 
 Observed this run (commit `2e01d2c9`, `sentence-transformers/all-MiniLM-L6-v2`,
 2026-07-18): `TestBench` scenarios A-J all scored 1.000 (OVERALL: 1.000);
 `TestQualityEvalReal` mean **P@5=0.956, MRR=1.000, NDCG@10=0.918**; all 3
-ablations and all 3 falsification tests passed. These numbers match the
-merged-tree provenance already recorded on `RESULTS.md` / bead `known-5qr`
-(same P@5/MRR/NDCG figures, `sentence-transformers/all-MiniLM-L6-v2`) —
-reproduced independently here rather than merely cited. For canonical,
-change-tracked numbers see `RESULTS.md`, not this file (see "Results
-provenance" below).
+ablations and all 3 falsification tests passed. These numbers are recorded
+with full provenance in `RESULTS.md` → "IR Retrieval Quality (Labeled
+Workload)" and → "Retrieval Quality" — this run reproduced them
+independently rather than merely citing them. For canonical, change-tracked
+numbers always go to `RESULTS.md`, not this file (see "Results provenance"
+below).
 
 ### 3. Live LLM (agent effectiveness — requires API key)
 
@@ -136,6 +137,23 @@ commands exited 0 and produced a populated SQLite file. See `RESULTS.md`
 /pipeliner...`) form is required (cwd-dependent scope auto-prefixing broke
 the original DB — see bead `known-syk`).
 
+## Baselines & regression detection
+
+`baseline.go` persists a JSON snapshot (`Baseline`: retrieval scenario
+scores, ablation lifts, effectiveness overalls) and `CompareBaseline` diffs
+two snapshots for regressions past a threshold. This machinery is currently
+**only exercised by its own unit tests** (`baseline_test.go`) — no test or
+command in this suite calls `CompareBaseline` against a prior run to gate
+anything; wiring it into a tier is future work.
+
+**Warning:** the live-LLM tier's `TestEffectivenessRun` unconditionally
+calls `SaveBaseline` on every run, overwriting the checked-in (not
+gitignored) `bench/testdata/effectiveness_baseline.json` with that run's
+report — there is no flag to opt out. Running `TestEffectivenessRun`
+locally will dirty that file; check `git status` and revert it before
+committing anything else unless you specifically intend to update the
+checked-in baseline.
+
 ## Results provenance
 
 Numbers belong in `bench/RESULTS.md`, never only in a commit message or
@@ -177,9 +195,10 @@ a competing source of truth.
   can't fail isn't measuring anything.
 - **Scenario IDs cite their beads.** Each scenario's doc comment in
   `scenarios.go` names the bead(s) whose behavior it locks in — e.g.
-  scenario B / H cite `known-5oq` (supersede demotion) and `known-qam`
-  (CLI `--supersedes` flag), scenario I cites `known-1so` (weighted
-  expansion ranking formula), scenario J cites `known-oj3`
-  (`ObservedAt`-based freshness). Read the comment before changing a
-  scenario's queries or expectations — it explains which regression the
-  scenario exists to catch, not just what it currently asserts.
+  scenario B cites `known-5oq` (supersede demotion), scenario H cites both
+  `known-5oq` and `known-qam` (CLI `--supersedes` flag that produces these
+  edges in practice), scenario I cites `known-1so` (weighted expansion
+  ranking formula), scenario J cites `known-oj3` (`ObservedAt`-based
+  freshness). Read the comment before changing a scenario's queries or
+  expectations — it explains which regression the scenario exists to
+  catch, not just what it currently asserts.
