@@ -11,7 +11,7 @@ focus on facts that save future sessions from re-exploration.
 
 - `path` (optional): Project root to analyze. Defaults to current working directory.
 - `--scope <prefix>` (optional): Scope prefix for entries. Defaults to auto-derived
-  from `.known.yaml` or directory name.
+  from directory name. No `.known.yaml` required.
 - `--depth <shallow|standard|deep>` (optional): How deep to analyze. Default: `standard`.
   - `shallow`: Top-level structure only (README, config, entry points)
   - `standard`: Key directories to 2-3 levels deep
@@ -21,12 +21,12 @@ focus on facts that save future sessions from re-exploration.
 
 ### Phase 1: Orientation
 
-1. Read project root docs (README, CLAUDE.md, build config, `.known.yaml`).
+1. Read project root docs (README, CLAUDE.md, build config).
 
 2. Determine the scope prefix:
-   - If `.known.yaml` has `scope_prefix`, use that
-   - If `--scope` was provided, use that
-   - Otherwise derive from directory name
+   - Derive from directory name (default — no config needed)
+   - Use `--scope` if provided
+   - Check `.known.yaml` `scope_prefix` if present (optional override)
 
 3. Check what knowledge already exists:
    ```bash
@@ -73,24 +73,23 @@ For each significant directory, follow this process:
    - Important architectural decisions visible in the code
    - Non-obvious conventions
 
-3. **Store via `known add`** (one at a time or in batch):
+3. **Store via `known add`** (no flags required — scope auto-derived):
    ```bash
-   # Single entry:
-   known add '<atomic fact>' \
-     --title '<2-5 word label>' \
-     --scope <prefix>.<module> \
-     --source-type file \
-     --source-ref '<primary file analyzed>' \
-     --provenance inferred
+   # Single entry — scope auto-derived from cwd:
+   known add <atomic fact> --scope <prefix>.<module>
    ```
 
    For many entries at once, use `known add --batch` (much faster):
    ```bash
    cat <<'JSONL' | known add --batch
-   {"content": "fact one", "title": "Label", "scope": "prefix.mod", "source_type": "file", "source_ref": "main.go"}
-   {"content": "fact two", "title": "Other", "scope": "prefix.mod", "source_type": "file", "source_ref": "lib.go"}
+   {"content": "fact one", "scope": "prefix.mod"}
+   {"content": "fact two", "scope": "prefix.mod"}
    JSONL
    ```
+
+   Optional enrichment: `--source-type file --source-ref <path>` records provenance.
+   `--provenance inferred` is the default when reading code — omit it unless
+   the user stated the fact directly (`--provenance verified`).
 
 4. **Skip generated/vendored directories:**
    `vendor/`, `node_modules/`, `dist/`, `build/`, `target/`, `__pycache__/`,
@@ -124,11 +123,13 @@ Store project-wide facts informed by your synthesis:
 3. **Conventions** — naming patterns, error handling approach, test patterns,
    anything a new contributor would need to know.
 
-4. **Key relationships** — use `--link` on `add` to create edges inline, or link
-   after the fact with `known link`. Prefer inline linking when you have the target ID:
+4. **Key relationships** — link after storing via `known link` or accept suggestions:
    ```bash
-   known add '<detail>' --scope <prefix>.<module> --link elaborates:<overview-id> ...
+   known link accept '<entry content>' --all
+   known link "<detail content>" "<overview content>" --type elaborates
    ```
+   IDs in `Link?` output are ULIDs (26 alphanumeric chars). Use them with
+   `--link elaborates:<ULID>` on `known add` when you have the ID in hand.
 
 ### Quality Standards
 
@@ -139,8 +140,6 @@ Store project-wide facts informed by your synthesis:
   conventions. Store what requires reading code to learn.
 - **Actionable**: A future session should be able to use this fact to make decisions
   or skip exploration.
-- **Sourced**: `--source-ref` must point to the actual file(s) analyzed, not a
-  generic directory.
 
 **Target density:**
 - `shallow`: 3-5 entries total
