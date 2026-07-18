@@ -198,6 +198,40 @@ func TestScopeHierarchy(t *testing.T) {
 	}
 }
 
+func TestEnsureHierarchy(t *testing.T) {
+	ctx := context.Background()
+	scopes := testDB.Scopes()
+
+	if err := scopes.EnsureHierarchy(ctx, "a.b.c"); err != nil {
+		t.Fatalf("EnsureHierarchy: %v", err)
+	}
+
+	for _, want := range []string{"a", "a.b", "a.b.c"} {
+		s, err := scopes.Get(ctx, want)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", want, err)
+		}
+		if s.Path != want {
+			t.Errorf("Get(%q).Path = %q, want %q", want, s.Path, want)
+		}
+	}
+
+	// Verify hierarchy by checking parent paths are derivable via List
+	all, err := scopes.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	paths := make(map[string]bool, len(all))
+	for _, s := range all {
+		paths[s.Path] = true
+	}
+	for _, want := range []string{"a", "a.b", "a.b.c"} {
+		if !paths[want] {
+			t.Errorf("List missing %q after EnsureHierarchy(a.b.c)", want)
+		}
+	}
+}
+
 // =============================================================================
 // Entry Tests
 // =============================================================================
