@@ -948,6 +948,13 @@ func TestHandleNeighbors_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandleNeighbors_BadULID(t *testing.T) {
+	f := newTestFixture(t)
+	if code := f.get(t, "/api/neighbors/not-a-ulid", nil); code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", code)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // /api/search
 // ---------------------------------------------------------------------------
