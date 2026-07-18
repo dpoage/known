@@ -373,6 +373,31 @@ function renderLegend() {
     item.appendChild(text);
     el.legend.appendChild(item);
   }
+  addNodeLegendItem("scope color", (swatch) => {
+    swatch.style.background = "hsl(210, 55%, 55%)";
+  });
+  addNodeLegendItem("conflict border", (swatch) => {
+    swatch.style.background = "#454b58";
+    swatch.style.borderColor = "#e0473e";
+    swatch.style.borderWidth = "2px";
+  });
+  addNodeLegendItem("superseded (faded)", (swatch) => {
+    swatch.style.background = "#454b58";
+    swatch.style.opacity = "0.45";
+  });
+}
+
+function addNodeLegendItem(label, styleSwatch) {
+  const item = document.createElement("div");
+  item.className = "legend-item";
+  const swatch = document.createElement("span");
+  swatch.className = "legend-node-swatch";
+  styleSwatch(swatch);
+  const text = document.createElement("span");
+  text.textContent = label;
+  item.appendChild(swatch);
+  item.appendChild(text);
+  el.legend.appendChild(item);
 }
 
 async function loadMeta() {
@@ -715,6 +740,12 @@ function setPathMode(on) {
   el.pathModeBtn.classList.toggle("active", on);
   el.pathModeBtn.setAttribute("aria-pressed", String(on));
   clearPathHighlight();
+  cy.elements().unselect();
+  // Cytoscape's built-in tap-to-select applies before our own tap handler
+  // runs, so an after-the-fact unselect() inside the handler can't reliably
+  // suppress the default yellow selection ring on the tapped node; disable
+  // selection outright for the duration of path mode instead.
+  cy.autounselectify(on);
   el.pathNotice.classList.add("hidden");
   closePanel();
 }
@@ -768,11 +799,21 @@ async function handlePathClick(node) {
 
 function showEdgePopover(edge, renderedPosition) {
   const d = edge.data();
-  el.edgePopover.innerHTML =
-    "<div><strong>" + d.type + "</strong></div>" +
-    "<div>weight: " + Number(d.weight).toFixed(2) + "</div>" +
-    "<div>explicit: " + (d.explicit ? "yes" : "no") + "</div>" +
-    "<div>created: " + (d.created_at || "\u2014") + "</div>";
+  el.edgePopover.innerHTML = "";
+  const typeRow = document.createElement("div");
+  const typeStrong = document.createElement("strong");
+  typeStrong.textContent = d.type;
+  typeRow.appendChild(typeStrong);
+  const weightRow = document.createElement("div");
+  weightRow.textContent = "weight: " + Number(d.weight).toFixed(2);
+  const explicitRow = document.createElement("div");
+  explicitRow.textContent = "explicit: " + (d.explicit ? "yes" : "no");
+  const createdRow = document.createElement("div");
+  createdRow.textContent = "created: " + (d.created_at || "\u2014");
+  el.edgePopover.appendChild(typeRow);
+  el.edgePopover.appendChild(weightRow);
+  el.edgePopover.appendChild(explicitRow);
+  el.edgePopover.appendChild(createdRow);
   const containerRect = el.cyContainer.getBoundingClientRect();
   el.edgePopover.style.left = containerRect.left + renderedPosition.x + 12 + "px";
   el.edgePopover.style.top = containerRect.top + renderedPosition.y + 12 + "px";
