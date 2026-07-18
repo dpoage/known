@@ -110,11 +110,18 @@ type EntryRepo interface {
 	// SearchSimilar finds entries with embeddings similar to the query vector.
 	// Results are ordered by ascending distance (most similar first).
 	// The dimension parameter must match the embedding dimension of stored entries.
+	// An empty scope means unfiltered: candidates are drawn from every scope,
+	// not just the caller's tree (matching EntryFilter.List's "empty = unfiltered"
+	// convention for Scope). Non-empty scope is inclusive of descendants
+	// (scope itself plus any "scope.*" child).
 	SearchSimilar(ctx context.Context, query []float32, scope string, metric SimilarityMetric, limit int) ([]SimilarityResult, error)
 
 	// SearchText finds entries matching a full-text query within the given scope.
 	// Results are ordered by BM25 relevance (most relevant first).
 	// The Distance field holds the raw BM25 rank (negative; more negative = more relevant).
+	// An empty scope means unfiltered: matches are drawn from every scope.
+	// Non-empty scope is inclusive of descendants (scope itself plus any
+	// "scope.*" child).
 	SearchText(ctx context.Context, query string, scope string, limit int) ([]SimilarityResult, error)
 
 	// DeleteExpired removes entries whose ExpiresAt is in the past.

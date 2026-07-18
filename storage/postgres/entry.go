@@ -496,6 +496,20 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		distExpr = "embedding <=> $1::vector"
 	}
 
+	// An empty scope means unfiltered (global search across all scopes),
+	// matching EntryFilter.List's "empty = unfiltered" convention. vec is
+	// always $1 and embedding_dim is always $2 (referenced by distExpr and
+	// the WHERE clause below); the scope clause and LIMIT are renumbered
+	// since the scope clause is optional.
+	args := []any{vec, len(query)}
+	scopeClause := ""
+	if scope != "" {
+		scopeClause = fmt.Sprintf(" AND (scope = $%d OR scope LIKE $%d)", len(args)+1, len(args)+2)
+		args = append(args, scope, scope+".%")
+	}
+	limitIdx := len(args) + 1
+	args = append(args, limit)
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			id, title, content, content_hash, embedding, embedding_dim, embedding_model,
@@ -508,13 +522,13 @@ func (s *EntryStore) SearchSimilar(ctx context.Context, query []float32, scope s
 		FROM entries
 		WHERE embedding IS NOT NULL
 		  AND embedding_dim = $2
-		  AND (scope = $3 OR scope LIKE $4)
 		  AND (expires_at IS NULL OR expires_at > NOW())
+		  %s
 		ORDER BY %s
-		LIMIT $5
-	`, distExpr, distExpr)
+		LIMIT $%d
+	`, distExpr, scopeClause, distExpr, limitIdx)
 
-	rows, err := s.conn(ctx).Query(ctx, sqlQuery, vec, len(query), scope, scope+".%", limit)
+	rows, err := s.conn(ctx).Query(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search similar: %w", err)
 	}
@@ -640,15 +654,27 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 	// plainto_tsquery turns the free-form query string into a tsquery safely
 	// (no special syntax needed from callers, matching SQLite's FTS5 sanitization intent).
 	// ts_rank returns a float between 0 and 1; higher is more relevant.
-	rows, err := conn.Query(ctx, `
+	// An empty scope means unfiltered (global search across all scopes).
+	textArgs := []any{query, now}
+	scopeClause := ""
+	if scope != "" {
+		scopeClause = fmt.Sprintf(" AND (scope = $%d OR scope LIKE $%d)", len(textArgs)+1, len(textArgs)+2)
+		textArgs = append(textArgs, scope, scope+".%")
+	}
+	limitIdx := len(textArgs) + 1
+	textArgs = append(textArgs, limit)
+
+	textQuery := fmt.Sprintf(`
 		SELECT id, ts_rank(search_vec, plainto_tsquery('english', $1)) AS rank
 		FROM entries
 		WHERE search_vec @@ plainto_tsquery('english', $1)
-		  AND (scope = $2 OR scope LIKE $3)
-		  AND (expires_at IS NULL OR expires_at > $4)
+		  AND (expires_at IS NULL OR expires_at > $2)
+		  %s
 		ORDER BY rank DESC, id
-		LIMIT $5
-	`, query, scope, scope+".%", now, limit)
+		LIMIT $%d
+	`, scopeClause, limitIdx)
+
+	rows, err := conn.Query(ctx, textQuery, textArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("search text (scan): %w", err)
 	}

@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"sort"
 
 	"github.com/dpoage/known/model"
 	"github.com/dpoage/known/storage"
@@ -18,6 +19,12 @@ type LinkSuggestion struct {
 // as candidate link targets. The entry must have an embedding; without one
 // only text-based fallback is attempted (which may return fewer results).
 //
+// The search is global: candidates are drawn from every scope, not just the
+// source entry's own scope tree, so cross-project relations can be proposed.
+// Suggestions whose scope differs from the source entry's are still ranked
+// purely by similarity — callers that want to surface the scope should read
+// LinkSuggestion.Entry.Scope.
+//
 // Edge type defaults to related-to for all suggestions. A more specific type
 // (contradicts, supersedes, elaborates, depends-on) would require either
 // human judgment or expensive NLI inference — neither belongs in a one-shot
@@ -28,17 +35,17 @@ type LinkSuggestion struct {
 // are excluded. This makes repeat calls idempotent: already-linked entries
 // never re-appear as suggestions.
 //
+// Ordering is deterministic: score descending, then entries sharing the
+// source entry's scope before entries from other scopes on a score tie,
+// then entry ID ascending as a final tiebreaker. This holds across repeat
+// calls and across storage backends even when scores are numerically equal.
+//
 // SuggestLinks is intentionally non-fatal: callers should surface the error
 // as a warning and continue. An empty slice with no error means no similar
 // entries were found.
 func (e *Engine) SuggestLinks(ctx context.Context, entry model.Entry, k int) ([]LinkSuggestion, error) {
 	if k <= 0 {
 		k = 3
-	}
-
-	scope := entry.Scope
-	if scope == "" {
-		scope = model.RootScope
 	}
 
 	// Build the set of IDs already linked to/from this entry so we can skip them.
@@ -52,10 +59,12 @@ func (e *Engine) SuggestLinks(ctx context.Context, entry model.Entry, k int) ([]
 
 	var simResults []storage.SimilarityResult
 
+	// Scope "" searches globally (storage.EntryRepo contract: empty scope is
+	// unfiltered), so candidates from every scope are considered.
 	if entry.HasEmbedding() {
 		// Vector path: search using the entry's own stored embedding vector,
 		// bypassing a redundant embed call.
-		simResults, err = e.entries.SearchSimilar(ctx, entry.Embedding, scope, storage.Cosine, fetchLimit)
+		simResults, err = e.entries.SearchSimilar(ctx, entry.Embedding, "", storage.Cosine, fetchLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -64,13 +73,13 @@ func (e *Engine) SuggestLinks(ctx context.Context, entry model.Entry, k int) ([]
 		if entry.Content == "" {
 			return nil, nil
 		}
-		simResults, err = e.entries.SearchText(ctx, entry.Content, scope, fetchLimit)
+		simResults, err = e.entries.SearchText(ctx, entry.Content, "", fetchLimit)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	suggestions := make([]LinkSuggestion, 0, k)
+	suggestions := make([]LinkSuggestion, 0, len(simResults))
 	for _, sr := range simResults {
 		if sr.Entry.ID == entry.ID {
 			continue // exclude self
@@ -92,9 +101,27 @@ func (e *Engine) SuggestLinks(ctx context.Context, entry model.Entry, k int) ([]
 			Score:    score,
 			EdgeType: model.EdgeRelatedTo,
 		})
-		if len(suggestions) == k {
-			break
+	}
+
+	// Deterministic ordering: score descending; on a tie, same-scope-as-source
+	// first; on a further tie, entry ID ascending. Storage-layer ordering
+	// (distance/rank) already approximates this, but exact ties (e.g. duplicate
+	// content living in two scopes, or clamped 0/1 scores) must resolve the
+	// same way on every call and on every backend.
+	sort.SliceStable(suggestions, func(i, j int) bool {
+		if suggestions[i].Score != suggestions[j].Score {
+			return suggestions[i].Score > suggestions[j].Score
 		}
+		iSameScope := suggestions[i].Entry.Scope == entry.Scope
+		jSameScope := suggestions[j].Entry.Scope == entry.Scope
+		if iSameScope != jSameScope {
+			return iSameScope
+		}
+		return suggestions[i].Entry.ID.String() < suggestions[j].Entry.ID.String()
+	})
+
+	if len(suggestions) > k {
+		suggestions = suggestions[:k]
 	}
 
 	return suggestions, nil
