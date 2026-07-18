@@ -53,3 +53,13 @@ func l2Distance(a, b []float32) float64 {
 	}
 	return math.Sqrt(sum)
 }
+
+// innerProductDistance returns the negative inner product (so lower = more similar,
+// consistent with distance semantics). Follows pgvector convention: -dot(a,b).
+func innerProductDistance(a, b []float32) float64 {
+	var dot float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+	}
+	return -dot
+}

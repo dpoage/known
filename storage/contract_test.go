@@ -154,6 +154,7 @@ func TestContract(t *testing.T) {
 
 			t.Run("SearchText", func(t *testing.T) { contractSearchText(t, ctx, be) })
 			t.Run("SearchTextDivergent", func(t *testing.T) { contractSearchTextDivergent(t, ctx, be) })
+			t.Run("SearchSimilarInnerProduct", func(t *testing.T) { contractSearchSimilarInnerProduct(t, ctx, be) })
 		})
 	}
 }
@@ -825,4 +826,54 @@ func contractSearchTextDivergent(t *testing.T, ctx context.Context, be storage.B
 			}
 		}
 	})
+}
+
+// contractSearchSimilarInnerProduct verifies that both backends handle InnerProduct
+// metric in SearchSimilar and return consistent ranking for a known corpus.
+func contractSearchSimilarInnerProduct(t *testing.T, ctx context.Context, be storage.Backend) {
+	t.Helper()
+	mustEnsureScope(t, ctx, be, "contract.vec.ip")
+
+	// Three entries with known vectors; query [1,0,0] should rank e1 first.
+	e1 := newTestEntry("contract ip a", "contract.vec.ip")
+	e1.Embedding = []float32{1.0, 0.0, 0.0}
+	e1.EmbeddingModel = "test-model"
+	e1.EmbeddingDim = 3
+
+	e2 := newTestEntry("contract ip b", "contract.vec.ip")
+	e2.Embedding = []float32{0.5, 0.5, 0.0}
+	e2.EmbeddingModel = "test-model"
+	e2.EmbeddingDim = 3
+
+	e3 := newTestEntry("contract ip c", "contract.vec.ip")
+	e3.Embedding = []float32{0.0, 0.0, 1.0}
+	e3.EmbeddingModel = "test-model"
+	e3.EmbeddingDim = 3
+
+	for _, e := range []*model.Entry{&e1, &e2, &e3} {
+		if err := be.Entries().Create(ctx, e); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	query := []float32{1.0, 0.0, 0.0}
+	results, err := be.Entries().SearchSimilar(ctx, query, "contract.vec.ip", storage.InnerProduct, 3)
+	if err != nil {
+		t.Fatalf("SearchSimilar(InnerProduct): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("SearchSimilar(InnerProduct): no results")
+	}
+	// e1 has inner product 1.0 with query; distance = -1.0 (smallest = most similar).
+	if results[0].Entry.ID != e1.ID {
+		t.Errorf("SearchSimilar(InnerProduct): top result = %q, want %q",
+			results[0].Entry.Content, e1.Content)
+	}
+	// Distances must be non-decreasing (most similar = most negative first).
+	for i := 1; i < len(results); i++ {
+		if results[i].Distance < results[i-1].Distance {
+			t.Errorf("results not sorted: [%d].Distance=%f < [%d].Distance=%f",
+				i, results[i].Distance, i-1, results[i-1].Distance)
+		}
+	}
 }
