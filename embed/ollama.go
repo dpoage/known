@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // OllamaEmbedder produces embeddings via the Ollama REST API.
@@ -33,7 +34,7 @@ func NewOllamaEmbedder(cfg Config) (*OllamaEmbedder, error) {
 	return &OllamaEmbedder{
 		baseURL:    strings.TrimRight(cfg.URL, "/"),
 		model:      cfg.Model,
-		client:     &http.Client{},
+		client:     &http.Client{Timeout: 30 * time.Second},
 		dimensions: cfg.Dimensions,
 	}, nil
 }
@@ -106,7 +107,7 @@ func (o *OllamaEmbedder) doEmbed(ctx context.Context, input any) ([][]float32, e
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("ollama: read response: %w", err)
 	}
