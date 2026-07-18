@@ -613,6 +613,55 @@ func TestHandlePath_UnknownEndpoint(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// API routing edge cases: /api/* must never fall through to the static/SPA
+// handler, whether the path is unknown or the method is wrong.
+// ---------------------------------------------------------------------------
+
+func TestHandleAPI_UnknownPath(t *testing.T) {
+	f := newTestFixture(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/doesnotexist", nil)
+	rec := httptest.NewRecorder()
+	f.server.ServeHTTP(rec, req)
+
+	if rec.Code < 400 {
+		t.Fatalf("GET /api/doesnotexist: status = %d, want a non-2xx error", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("GET /api/doesnotexist: Content-Type = %q, want application/json", ct)
+	}
+	var got errorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+	}
+	if got.Error == "" {
+		t.Errorf("expected non-empty error message")
+	}
+}
+
+func TestHandleAPI_WrongMethod(t *testing.T) {
+	f := newTestFixture(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/meta", nil)
+	rec := httptest.NewRecorder()
+	f.server.ServeHTTP(rec, req)
+
+	if rec.Code < 400 {
+		t.Fatalf("POST /api/meta: status = %d, want a non-2xx error", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("POST /api/meta: Content-Type = %q, want application/json", ct)
+	}
+	var got errorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+	}
+	if got.Error == "" {
+		t.Errorf("expected non-empty error message")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // static serving
 // ---------------------------------------------------------------------------
 

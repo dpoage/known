@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
@@ -63,8 +64,11 @@ func New(entries storage.EntryRepo, edges storage.EdgeRepo, scopes storage.Scope
 }
 
 // routes builds the request-routing table. Go 1.22+ ServeMux method and
-// wildcard patterns are used throughout; "/" is a catch-all that only fires
-// for paths no more specific pattern claims, so it never shadows /api/*.
+// wildcard patterns are used throughout. "/" is a catch-all that fires for
+// every request no more specific pattern claims — including /api/* requests
+// with an unregistered method or an unknown sub-path, since ServeMux falls
+// through to "/" rather than synthesizing a 405/404 on its own. handleRoot
+// intercepts exactly that case so /api/* never leaks a static/HTML response.
 func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
@@ -73,13 +77,30 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/neighbors/{id}", s.handleNeighbors)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/path", s.handlePath)
-	mux.HandleFunc("/", s.handleStatic)
+	mux.HandleFunc("/", s.handleRoot)
 	return mux
 }
 
 // ServeHTTP implements http.Handler by delegating to the routing table.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+// apiPrefix is the path prefix reserved for the JSON API. Every response
+// under it MUST be application/json per contract, even for paths/methods no
+// handler above recognizes.
+const apiPrefix = "/api/"
+
+// handleRoot is the catch-all registered on "/". It first rejects anything
+// under apiPrefix that fell through (unknown /api/* path, or a
+// registered /api/* path hit with the wrong HTTP method) with a JSON 404,
+// then serves static frontend assets for genuine non-API paths.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, apiPrefix) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.handleStatic(w, r)
 }
 
 // handleStatic serves the embedded frontend assets. Paths that exist in the

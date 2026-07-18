@@ -156,7 +156,7 @@ known unlink        Remove an edge
 known scope         Manage scopes (list, create, tree)
 known gc            Delete expired entries
 known stats         Knowledge graph statistics
-known explore       Launch the interactive web graph explorer
+known explore       Launch the web-based graph explorer
 known export        Export entries as JSON/JSONL
 known import        Import entries from JSON/JSONL
 ```
