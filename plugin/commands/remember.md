@@ -1,74 +1,104 @@
 ---
 description: Store a fact in the knowledge graph
-argument-hint: <fact or context to store>
+argument-hint: <fact to store>
 ---
 
-Extract a single atomic fact and store it in the knowledge graph.
-You don't need to ask permission — just store it and tell the user what you remembered.
+Extract a single atomic fact and store it immediately — no flags required.
+Do not ask permission. Store it and tell the user what you remembered.
 
-## Instructions
-
-1. Extract the core fact. Rewrite as a single, clear sentence if needed.
-   For multiple facts, make separate calls.
-
-2. Run the command:
+## Primary form
 
 ```bash
-known add '<atomic fact>' --title '<2-5 word label>' --source-type conversation --source-ref claude-code --provenance <level>
+known add <fact as plain words>
 ```
 
-3. Report the stored entry ID back to the user.
+No quotes needed. Multi-word content is captured exactly as typed.
 
-## Flags
+Example output after a successful store:
 
-| Flag | Required | Purpose |
-|------|----------|---------|
-| `--title` | Yes | Short label (2-5 words) for browsing |
-| `--source-type` | Yes | `conversation` (from chat) or `file` (from exploration) |
-| `--source-ref` | Yes | Origin reference (use `claude-code` for session facts) |
-| `--provenance` | Yes | `verified` (user stated), `inferred` (derived), or `uncertain` |
-| `--scope` | No | Target scope (auto-derived if omitted) |
-| `--ttl` | No | Expiry duration (e.g., `168h` for 1 week). Omit for permanent. |
-| `--link` | No | Link to existing entry: `--link type:target-id`. Repeatable. Types: `elaborates`, `depends-on`, `related-to`, `contradicts`, `supersedes` |
+```
+Stored  01KXSBAZ7HZ71JFM5FGHRHVKMX
+Scope   myproject
+        "All new database tables use ULIDs instead of integers"
+Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
+Link?   related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
+```
 
-## Scope Qualification
+- `Stored` + ULID confirms success. IDs are ULIDs (26 alphanumeric chars), never integers.
+- `Scope` is auto-derived from your working directory — no setup required.
+- `Link?` lines are suggestions from the existing graph. Use `known link accept` to accept them (see Linking section).
 
-`--scope` values are relative to the project's `scope_prefix` (from `.known.yaml`).
-Do NOT include the prefix yourself — it is added automatically.
+## Dedup is success, not failure
 
-Example: if `scope_prefix` is `myproject`, then `--scope cmd` stores to `myproject.cmd`.
+If the content already exists, you'll see:
 
-To store in another project's scope, prefix with `/` to bypass qualification:
-`--scope /otherproject.api`.
+```
+Duplicate 01KXSBAZ7HZ71JFM5FGHRHVKMX
+Scope     myproject
+          "All new database tables use ULIDs instead of integers"
+Hint      known update 01KXSBAZ7HZ71JFM5FGHRHVKMX --content '...'
+          known add '<new fact>' --link elaborates:01KXSBAZ7HZ71JFM5FGHRHVKMX
+Link?     related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
+```
 
-## Examples
+This is correct behavior. The fact is already stored. Use the hints to extend or correct it.
 
-User states a decision:
+## Optional enrichment flags
+
+All flags are optional. Defaults are applied automatically.
+
+| Flag | Default | When to add it |
+|------|---------|----------------|
+| `--scope <path>` | auto from cwd | Storing to a specific module scope |
+| `--provenance <level>` | `inferred` | Use `verified` when the user stated the fact directly |
+| `--source-type <type>` | `manual` | Use `file` when derived from a specific source file |
+| `--source-ref <ref>` | `cli` | Path or reference to the source (with `--source-type file`) |
+| `--ttl <duration>` | 90d (`manual`), 7d (`conversation`) | Pass `--ttl 0` for a fact that must never expire |
+| `--label <tag>` | none | Categorical tag, repeatable |
+| `--link <type:id>` | none | Inline edge: `--link related-to:01KJ...` (ULID, not integer) |
+
+When the user states a decision directly, add `--provenance verified`:
+
 ```bash
-known add 'All new database tables use ULIDs instead of UUIDs' --title 'ULID over UUID' --source-type conversation --source-ref claude-code --provenance verified
+known add All new database tables use ULIDs --provenance verified
 ```
 
-Uncertain fact with TTL:
+When deriving a fact from a file you read:
+
 ```bash
-known add 'Staging API endpoint may be api.staging.example.com' --title 'Staging API endpoint' --source-type conversation --source-ref claude-code --provenance uncertain --ttl 168h
+known add API route definitions live in cmd/api/routes.go --source-type file --source-ref cmd/api/routes.go
 ```
 
-Finding from codebase exploration:
+## Accepting link suggestions
+
+After `known add`, the `Link?` output shows suggestions. To accept them:
+
 ```bash
-known add 'All API route definitions live in cmd/api/routes.go using a central router' --title 'API route location' --source-type file --source-ref cmd/api/routes.go --provenance inferred --scope backend.api
+known link accept '<stored content>' --all
+known link accept '<stored content>' 1 2
 ```
 
-Linking to an existing entry (ID from recall output):
+Or link two entries directly by content:
+
 ```bash
-known add 'The central router uses chi with middleware for auth, logging, and rate limiting' --title 'Router middleware stack' --source-type file --source-ref cmd/api/routes.go --provenance inferred --scope backend.api --link elaborates:01ABC123DEF456GHJ789KLMNOP
+known link "<text a>" "<text b>" --type related-to
 ```
 
-## Batch Mode
+## Batch mode
 
-For many entries at once, use `known add --batch` (much faster):
+For many facts at once (much faster — single embedding pass):
+
 ```bash
 cat <<'JSONL' | known add --batch
-{"content": "fact one", "title": "Label", "scope": "prefix.mod", "source_type": "file", "source_ref": "main.go"}
-{"content": "fact two", "title": "Other", "scope": "prefix.mod", "source_type": "file", "source_ref": "lib.go"}
+{"content": "fact one about auth", "scope": "myproject.auth"}
+{"content": "fact two about storage"}
 JSONL
+```
+
+Batch output:
+
+```
+Embedding 2 entries...
+Writing 2 entries...
+Batch complete: 2 created, 0 updated, 0 failed.
 ```
