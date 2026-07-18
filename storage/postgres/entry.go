@@ -646,7 +646,7 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		WHERE search_vec @@ plainto_tsquery('english', $1)
 		  AND (scope = $2 OR scope LIKE $3)
 		  AND (expires_at IS NULL OR expires_at > $4)
-		ORDER BY rank DESC
+		ORDER BY rank DESC, id
 		LIMIT $5
 	`, query, scope, scope+".%", now, limit)
 	if err != nil {
@@ -704,9 +704,13 @@ func (s *EntryStore) SearchText(ctx context.Context, query string, scope string,
 		return nil, fmt.Errorf("iterate text results: %w", err)
 	}
 
-	// Re-sort by rank descending (ANY query doesn't preserve order).
+	// Re-sort by rank descending then ID ascending (ANY query doesn't preserve order;
+	// ID tiebreaks equal-scoring results deterministically).
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].Distance > results[j].Distance
+		if results[i].Distance != results[j].Distance {
+			return results[i].Distance > results[j].Distance
+		}
+		return results[i].Entry.ID.String() < results[j].Entry.ID.String()
 	})
 
 	if len(results) > 0 {
