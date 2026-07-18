@@ -239,7 +239,17 @@ func TestCheckAnswer_Adversarial(t *testing.T) {
 	t.Run("exact_set blank expected never matches", func(t *testing.T) {
 		q := EffectivenessQuestion{Answer: Answer{Type: "exact_set", Value: []any{}}}
 		if CheckAnswer(q, "anything, at, all") {
-			t.Error("exact_set with an empty expected set should never match")
+			t.Error("exact_set with an empty expected set should never match a non-empty given set")
+		}
+		// Critical case: given must ALSO tokenize to an empty set (not just a
+		// differently-sized one) so the assertion actually exercises the
+		// len(expectedSet)==0 guard rather than passing "by accident" via the
+		// unrelated length-mismatch check (0 given tokens vs 3 above).
+		// Without the guard, an empty given set trivially equals an empty
+		// expected set (both length 0), incorrectly scoring "correct".
+		if CheckAnswer(q, ",,, , ,") {
+			t.Error("exact_set with an empty expected set should never match an empty given set " +
+				"(given tokenizes to zero elements too — must not pass via accidental length equality)")
 		}
 	})
 

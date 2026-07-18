@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -53,12 +54,12 @@ func resolveAnswerer(t *testing.T) Answerer {
 // OpenAI-compatible provider (Minimax, Together, Groq, etc.):
 //
 //	BENCH_API_KEY=... BENCH_MODEL=MiniMax-M2.7 BENCH_BASE_URL=https://api.minimaxi.chat/v1 \
-//	  go test -tags bench ./bench/ -run TestEffectivenessRun -v -timeout 10m
+//	  go test -tags bench ./bench/ -run '^TestEffectivenessRun$' -v -timeout 10m
 //
 // Anthropic (or Anthropic-compatible like MiniMax):
 //
 //	ANTHROPIC_API_KEY=... BENCH_MODEL=MiniMax-M2.7 BENCH_BASE_URL=https://api.minimax.io/anthropic \
-//	  go test -tags bench ./bench/ -run TestEffectivenessRun -v -timeout 10m
+//	  go test -tags bench ./bench/ -run '^TestEffectivenessRun$' -v -timeout 10m
 func TestEffectivenessRun(t *testing.T) {
 	ctx := context.Background()
 	answerer := resolveAnswerer(t)
@@ -394,5 +395,151 @@ func TestEffectivenessRun_StubAnswerer_PartialCredit(t *testing.T) {
 	}
 	if res.OverallScore != want {
 		t.Errorf("overall score = %v, want %v", res.OverallScore, want)
+	}
+}
+
+// promptRecordingAnswerer wraps stubAnswerer's canned-answer behavior while
+// also recording every prompt it was asked, keyed by question ID. Scoring
+// alone (as in the tests above) cannot detect a buildPrompt regression that
+// swaps prompt bodies between conditions, or lets with_memory silently drop
+// runRecall's real output for a static placeholder — a stub Answerer keyed
+// only on the question text inside the prompt would still answer correctly
+// either way. Only inspecting prompt CONTENT catches that class of bug.
+type promptRecordingAnswerer struct {
+	*stubAnswerer
+	mu      sync.Mutex
+	prompts map[string]string // question ID -> full prompt text
+}
+
+func newPromptRecordingAnswerer(name string, qs *QuestionSet, byID map[string]string, fallback string) *promptRecordingAnswerer {
+	return &promptRecordingAnswerer{
+		stubAnswerer: newStubAnswerer(name, qs, byID, fallback),
+		prompts:      make(map[string]string),
+	}
+}
+
+func (p *promptRecordingAnswerer) Answer(ctx context.Context, prompt string) (string, error) {
+	if id, ok := p.textToID[extractQuestionText(prompt)]; ok {
+		p.mu.Lock()
+		p.prompts[id] = prompt
+		p.mu.Unlock()
+	}
+	return p.stubAnswerer.Answer(ctx, prompt)
+}
+
+// TestBuildPrompt_ConditionContentDiscrimination proves buildPrompt actually
+// puts condition-specific, mutually exclusive content into the prompt — not
+// just that RunEffectiveness "runs" for all three conditions. It runs each
+// condition in isolation with a RecallCommand that echoes a unique marker,
+// then asserts, for every single question:
+//
+//   - no_memory:   contains its own wrapper phrase + the file listing (a
+//     bare filename with no "=== " framing); contains neither the other two
+//     conditions' wrapper phrases, the recall marker, nor real source dump
+//     markers.
+//   - with_memory: contains its own wrapper phrase + the exact recall marker
+//     produced by actually shelling out to RecallCommand (proving runRecall's
+//     real output reached the prompt, not a canned/static substitute);
+//     contains neither of the other two conditions' wrapper phrases nor the
+//     real source dump markers.
+//   - full_dump:   contains its own wrapper phrase + the real "=== file ==="
+//     dump markers and actual source content; contains neither of the other
+//     two conditions' wrapper phrases nor the recall marker.
+func TestBuildPrompt_ConditionContentDiscrimination(t *testing.T) {
+	dir := benchDir()
+	questionsPath := filepath.Join(dir, "testdata", "questions.yaml")
+	qs, err := LoadQuestions(questionsPath)
+	if err != nil {
+		t.Fatalf("LoadQuestions: %v", err)
+	}
+
+	byID := make(map[string]string)
+	for _, sess := range qs.Sessions {
+		for _, q := range sess.Questions {
+			byID[q.ID] = canonicalAnswer(q)
+		}
+	}
+
+	const (
+		recallMarker         = "UNIQUE_RECALL_MARKER_9f3a1c"
+		noMemoryWrapper       = "no other context about this project"
+		withMemoryWrapper     = "knowledge memory tool"
+		fullDumpWrapper       = "complete source code of the project"
+		sourceHeaderMarker    = "=== main.go ==="
+		sourceBodyMarker      = "func main()"
+	)
+
+	for _, cond := range []Condition{ConditionNoMemory, ConditionWithMemory, ConditionFullDump} {
+		t.Run(string(cond), func(t *testing.T) {
+			recorder := newPromptRecordingAnswerer("recorder/"+string(cond), qs, byID, "")
+			cfg := RunnerConfig{
+				Answerer:      recorder,
+				QuestionsPath: questionsPath,
+				CodebasePath:  filepath.Join(dir, "testdata", "codebase"),
+				RecallCommand: "echo '" + recallMarker + "'",
+				Conditions:    []Condition{cond},
+			}
+			if _, err := RunEffectiveness(context.Background(), cfg); err != nil {
+				t.Fatalf("RunEffectiveness(%s): %v", cond, err)
+			}
+
+			if len(recorder.prompts) == 0 {
+				t.Fatalf("condition %s: no prompts recorded", cond)
+			}
+
+			for id, prompt := range recorder.prompts {
+				hasNoMemory := strings.Contains(prompt, noMemoryWrapper)
+				hasWithMemory := strings.Contains(prompt, withMemoryWrapper)
+				hasFullDump := strings.Contains(prompt, fullDumpWrapper)
+				hasRecallMarker := strings.Contains(prompt, recallMarker)
+				hasSourceDump := strings.Contains(prompt, sourceHeaderMarker) && strings.Contains(prompt, sourceBodyMarker)
+
+				switch cond {
+				case ConditionNoMemory:
+					if !hasNoMemory {
+						t.Errorf("%s: prompt missing no_memory wrapper phrase %q", id, noMemoryWrapper)
+					}
+					if hasWithMemory || hasFullDump {
+						t.Errorf("%s: no_memory prompt leaked another condition's wrapper phrase", id)
+					}
+					if hasRecallMarker {
+						t.Errorf("%s: no_memory prompt unexpectedly contains the recall marker", id)
+					}
+					if hasSourceDump {
+						t.Errorf("%s: no_memory prompt unexpectedly contains the full source dump", id)
+					}
+					if !strings.Contains(prompt, "main.go") {
+						t.Errorf("%s: no_memory prompt missing file listing entry \"main.go\"", id)
+					}
+				case ConditionWithMemory:
+					if !hasWithMemory {
+						t.Errorf("%s: prompt missing with_memory wrapper phrase %q", id, withMemoryWrapper)
+					}
+					if hasNoMemory || hasFullDump {
+						t.Errorf("%s: with_memory prompt leaked another condition's wrapper phrase", id)
+					}
+					if !hasRecallMarker {
+						t.Errorf("%s: with_memory prompt does not contain the real RecallCommand output marker — "+
+							"the with_memory condition is not wired to runRecall's actual output", id)
+					}
+					if hasSourceDump {
+						t.Errorf("%s: with_memory prompt unexpectedly contains the full source dump", id)
+					}
+				case ConditionFullDump:
+					if !hasFullDump {
+						t.Errorf("%s: prompt missing full_dump wrapper phrase %q", id, fullDumpWrapper)
+					}
+					if hasNoMemory || hasWithMemory {
+						t.Errorf("%s: full_dump prompt leaked another condition's wrapper phrase", id)
+					}
+					if hasRecallMarker {
+						t.Errorf("%s: full_dump prompt unexpectedly contains the recall marker", id)
+					}
+					if !hasSourceDump {
+						t.Errorf("%s: full_dump prompt missing the real source dump (%q and %q)", id, sourceHeaderMarker, sourceBodyMarker)
+					}
+				}
+			}
+		})
 	}
 }

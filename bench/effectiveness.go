@@ -100,17 +100,17 @@ func answerStrings(v any) []string {
 
 // CheckAnswer verifies a given answer against the expected answer.
 //
-// A blank givenAnswer (after trimming) never matches, regardless of type —
-// treating "no answer" as correct would let a truncated or errored LLM
-// response accidentally score points. Likewise a blank/empty expected value
-// (a malformed question fixture) never matches: without this guard,
-// strings.Contains(anything, "") is trivially true for "contains", and an
-// empty given set would equal an empty expected set for "exact_set".
+// Blank/misconfigured expected values (a malformed question fixture) never
+// match, regardless of givenAnswer: "exact" and "contains" explicitly reject
+// a blank expected value before comparing, and "exact_set" explicitly
+// rejects an empty expected set. Without these guards, strings.Contains(x,
+// "") is trivially true for "contains", and an empty given set would equal
+// an empty expected set for "exact_set". A blank givenAnswer likewise never
+// matches a non-blank expected value on its own: case-fold equality,
+// substring containment, and set-length comparison all naturally reject an
+// empty given against anything non-empty.
 func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 	given := strings.TrimSpace(givenAnswer)
-	if given == "" {
-		return false
-	}
 	ans := question.Answer
 
 	switch ans.Type {
@@ -131,7 +131,11 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 		return false
 
 	case "exact_set":
-		// Split given answer on commas or newlines, trim and lowercase each element.
+		// Split given answer on commas or newlines, trim and lowercase each
+		// element. Comparison below is multiset (bag) equality, not set
+		// equality: duplicates are kept through the sort and compared
+		// element-wise, so a given answer that repeats an element must
+		// repeat it exactly as many times as the expected value does.
 		givenParts := strings.FieldsFunc(given, func(r rune) bool {
 			return r == ',' || r == '\n'
 		})

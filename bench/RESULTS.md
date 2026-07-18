@@ -106,16 +106,19 @@ Findings (full root-cause analysis recorded on bead `known-syk`):
 
 > **TODO (bead `known-58u`, owner: retrieval-scoring slice): the table below
 > is a PLACEHOLDER, not final data.** It reflects the pre-round suite as
-> committed at `bac1839` (`feat/bench-suite` merge, 2026-07-17), hermetic —
-> no model/API key required (`go test -tags bench ./bench/... -run
-> TestBench`). Every scenario is saturated at 1.000 — a saturated metric has
-> no headroom and cannot detect regressions or prove discriminating power.
-> known-58u is expanding the seed corpus with distractors and adding new
-> scenarios (supersede chains, weighted-expansion ranking, FTS near-miss
-> distractors) specifically to restore headroom. **Do not cite this table as
-> current results** — replace it (scenario table, ablation lifts, and commit
-> hash) with known-58u's final numbers before this document is treated as
-> authoritative.
+> committed at `bac1839` (`feat/bench-suite` merge, 2026-07-17). Running it
+> (`go test -tags bench ./bench/... -run TestBench -v`) requires the real
+> embedder and is gated behind `KNOWN_BENCH_FULL=1` (skipped by default) —
+> it needs live network access for the embedder's model-revision check even
+> with a fully populated local model cache, so it is **not hermetic**, unlike
+> the effectiveness self-tests below. Every scenario is saturated at 1.000 —
+> a saturated metric has no headroom and cannot detect regressions or prove
+> discriminating power. known-58u is expanding the seed corpus with
+> distractors and adding new scenarios (supersede chains, weighted-expansion
+> ranking, FTS near-miss distractors) specifically to restore headroom.
+> **Do not cite this table as current results** — replace it (scenario
+> table, ablation lifts, and commit hash) with known-58u's final numbers
+> before this document is treated as authoritative.
 
 How well does the search pipeline find the right facts?
 
@@ -156,20 +159,25 @@ What happens when individual features are disabled?
 
 ## Reproducing
 
-### Retrieval benchmark (fast, no API key needed)
+### Hermetic effectiveness self-tests (no API key, no network, no model)
 
-```bash
-go test -tags bench ./bench/... -run TestBench -v
-```
-
-### Hermetic effectiveness self-tests (no API key needed)
-
-Proves prompt assembly, all three conditions, scoring, and report generation
-work end to end via a deterministic stub Answerer — no network, no model, no
-`known` binary required:
+Proves prompt assembly (including per-condition content, not just that each
+condition "runs"), all three conditions, scoring, and report generation work
+end to end via a deterministic stub Answerer:
 
 ```bash
 go test -tags bench ./bench/ -run TestEffectivenessRun_StubAnswerer -v
+go test -tags bench ./bench/ -run TestBuildPrompt_ConditionContentDiscrimination -v
+```
+
+### Retrieval benchmark (requires live network — NOT hermetic)
+
+Requires the real embedder and is gated behind `KNOWN_BENCH_FULL=1` (skipped
+by default): it needs live network access for the embedder's model-revision
+check even with a fully populated local model cache (`~/.known/models`).
+
+```bash
+KNOWN_BENCH_FULL=1 go test -tags bench ./bench/... -run TestBench -v
 ```
 
 ### Effectiveness benchmark — live LLM rerun (requires API key)
