@@ -37,6 +37,7 @@ const el = {
   errorClose: document.getElementById("error-banner-close"),
   pathNotice: document.getElementById("path-notice"),
   scopeSelect: document.getElementById("scope-select"),
+  loadedScopes: document.getElementById("loaded-scopes"),
   labelSelect: document.getElementById("label-select"),
   searchInput: document.getElementById("search-input"),
   searchResults: document.getElementById("search-results"),
@@ -165,9 +166,14 @@ function hashHue(str) {
   h = avalanche32(h);
   return Math.floor(((h * 0.6180339887498949) % 1) * 360);
 }
+// First (project-level) segment of a hierarchical scope path, e.g.
+// "webui.explore" -> "webui". Shared by the color helpers, the toolbar's
+// loaded-scopes indicator, and the load-scope gesture's <project> target.
+function scopeSegment(scope) {
+  return (scope || "").split(".")[0] || "(none)";
+}
 function scopeColor(scope) {
-  const first = (scope || "").split(".")[0] || "(none)";
-  return "hsl(" + hashHue(first) + ", 55%, 55%)";
+  return "hsl(" + hashHue(scopeSegment(scope)) + ", 55%, 55%)";
 }
 // Desaturated/darkened variant of scopeColor for external:true ghost nodes
 // -- same hue-hash so a scope is still recognizable at a glance, but
@@ -175,8 +181,7 @@ function scopeColor(scope) {
 // superseded node (which keeps its normal vivid scopeColor, just dimmed
 // by opacity).
 function mutedScopeColor(scope) {
-  const first = (scope || "").split(".")[0] || "(none)";
-  return "hsl(" + hashHue(first) + ", 20%, 38%)";
+  return "hsl(" + hashHue(scopeSegment(scope)) + ", 20%, 38%)";
 }
 
 /* ------------------------------------------------------------------ *
@@ -253,11 +258,9 @@ function nodeToEleData(node) {
     created_at: node.created_at || "",
     updated_at: node.updated_at || "",
     observed_at: node.observed_at || "",
-    // Explicit boolean (never omitted) so every merge -- api/graph,
-    // api/neighbors, api/entry's node field, search/path results -- either
-    // (re)marks this node as a ghost or clears ghost state, per contract:
-    // "a node returned WITHOUT external:true by any later fetch loses
-    // ghost state".
+    // Raw signal from the LATEST payload only; ghost status itself is no
+    // longer derived from this field directly (see everPrimaryIds below)
+    // because round 3 makes ghost state monotonic, not last-write-wins.
     external: !!node.external,
   };
 }
@@ -274,8 +277,28 @@ function edgeToEleData(edge) {
   };
 }
 
-function mergeGraph(graph) {
+// Monotonic ghost bookkeeping (round 3): once a node id is added here it
+// stays here for the life of the current canvas -- a node is a ghost iff
+// its id is NOT in this set. Only /api/graph and /api/neighbors merges
+// add to it (see mergeGraph's trackPrimary param); a later api/graph
+// payload marking an already-tracked id external:true does NOT remove it
+// (see --design for why other endpoints are excluded).
+const everPrimaryIds = new Set();
+
+// trackPrimary is REQUIRED (no default) so every call site states its
+// intent explicitly: true for scope-snapshot endpoints (api/graph via
+// replaceGraph, api/neighbors via Expand) that the contract frames in
+// external/primary terms; false for point lookups (api/entry, api/search,
+// api/path) that never carry the external field and must not affect ghost
+// bookkeeping -- notably so a ghost survives being clicked, keeping its
+// "Load <project> graph" panel action meaningful.
+function mergeGraph(graph, { trackPrimary }) {
   if (!graph) return;
+  if (trackPrimary) {
+    for (const node of graph.nodes || []) {
+      if (!node.external) everPrimaryIds.add(node.id);
+    }
+  }
   cy.batch(() => {
     for (const node of graph.nodes || []) {
       const existing = cy.getElementById(node.id);
@@ -300,21 +323,25 @@ function mergeGraph(graph) {
 
 function replaceGraph(graph) {
   cy.elements().remove();
-  mergeGraph(graph);
+  everPrimaryIds.clear();
+  mergeGraph(graph, { trackPrimary: true });
 }
 
 // Recompute all client-derived visual state over the whole current graph:
 // degree-based size, per-scope color, conflict border, superseded fade,
-// edge width/color/opacity/dash. Cheap at explorer scale; avoids bugs from
+// ghost state, edge width/color/opacity/dash, and the toolbar's
+// loaded-scopes indicator. Cheap at explorer scale; avoids bugs from
 // incremental partial recomputation.
 function recomputeDerived() {
+  const loadedSegments = new Set();
   cy.batch(() => {
     cy.nodes().forEach((n) => {
       const degree = n.connectedEdges().length;
       const size = Math.max(NODE_MIN_SIZE, Math.min(NODE_MAX_SIZE, NODE_MIN_SIZE + degree * NODE_SIZE_PER_DEGREE));
       const hasConflict = n.connectedEdges('[type = "contradicts"]').length > 0;
       const isSuperseded = n.connectedEdges('[type = "supersedes"]').some((e) => e.data("target") === n.id());
-      const isExternal = !!n.data("external");
+      const isExternal = !everPrimaryIds.has(n.id());
+      if (!isExternal) loadedSegments.add(scopeSegment(n.data("scope")));
       const title = n.data("title");
       const content = n.data("content") || "";
       const label = title || (content ? content.slice(0, 40) : "") || "(untitled)";
@@ -345,6 +372,7 @@ function recomputeDerived() {
       });
     });
   });
+  el.loadedScopes.textContent = loadedSegments.size ? Array.from(loadedSegments).sort().join(" + ") : "\u2014";
 }
 
 function runLayout(randomize) {
@@ -503,7 +531,7 @@ function renderSearchResults(results) {
 async function selectSearchResult(node) {
   closeSearchResults();
   el.searchInput.value = "";
-  mergeGraph({ nodes: [node], edges: [], truncated: false });
+  mergeGraph({ nodes: [node], edges: [], truncated: false }, { trackPrimary: false });
   runLayout(false);
   focusNode(node.id);
   try {
@@ -638,6 +666,36 @@ function renderPanel(detail) {
   metaSection.appendChild(dl);
   el.panelBody.appendChild(metaSection);
 
+  if (!everPrimaryIds.has(node.id)) {
+    const project = scopeSegment(node.scope);
+    const ghostSection = document.createElement("div");
+    ghostSection.className = "panel-section";
+    const h3g = document.createElement("h3");
+    h3g.textContent = "external";
+    const note = document.createElement("div");
+    note.className = "empty-note";
+    note.textContent = "This node is outside the loaded scope(s).";
+    const loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.className = "btn";
+    loadBtn.textContent = "Load " + project + " graph";
+    loadBtn.addEventListener("click", async () => {
+      try {
+        const g = await api.graph(project);
+        mergeGraph(g, { trackPrimary: true });
+        runLayout(false);
+        if (g.truncated) showNotice("Loaded scope truncated by server limit.");
+        renderPanel(detail);
+      } catch (_) {
+        // surfaced already
+      }
+    });
+    ghostSection.appendChild(h3g);
+    ghostSection.appendChild(note);
+    ghostSection.appendChild(loadBtn);
+    el.panelBody.appendChild(ghostSection);
+  }
+
   const contentSection = document.createElement("div");
   contentSection.className = "panel-section";
   const h3c = document.createElement("h3");
@@ -737,7 +795,7 @@ function renderPanel(detail) {
   expandBtn.addEventListener("click", async () => {
     try {
       const g = await api.neighbors(node.id, dirSelect.value, depthInput.value);
-      mergeGraph(g);
+      mergeGraph(g, { trackPrimary: true });
       runLayout(false);
       if (g.truncated) showNotice("Neighbor expansion truncated by server limit.");
     } catch (_) {
@@ -757,7 +815,7 @@ function renderPanel(detail) {
 async function openEntry(id) {
   const detail = await api.entry(id);
   currentEntryId = id;
-  mergeGraph({ nodes: [detail.node], edges: [], truncated: false });
+  mergeGraph({ nodes: [detail.node], edges: [], truncated: false }, { trackPrimary: false });
   renderPanel(detail);
 }
 
@@ -816,7 +874,7 @@ async function handlePathClick(node) {
       pathFrom = null;
       return;
     }
-    mergeGraph(result);
+    mergeGraph(result, { trackPrimary: false });
     const pathNodeIds = new Set(result.nodes.map((n) => n.id));
     const pathEdgeIds = new Set(result.edges.map((e) => e.id));
     clearPathHighlight();
