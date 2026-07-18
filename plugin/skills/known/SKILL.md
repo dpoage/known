@@ -55,6 +55,17 @@ hints on how to extend it. Not a failure — the fact is already stored.
 **Link suggestions** (`Link?` lines): accept with `known link accept '<content>' --all`
 or selectively: `known link accept '<content>' 1 2`.
 
+**One-shot correction**: when a fact changes, store the replacement and link it
+to the old entry in a single command — no ULIDs typed:
+
+```bash
+known add 'corrected fact' --supersedes 'old fact content'
+```
+
+The `--supersedes` query resolves by content (exact-match or semantic dominance).
+Ambiguous query? The command aborts before writing anything — refine the query or
+use a ULID directly.
+
 ## Behavior
 
 - **Recall before exploring**: check for stored knowledge before reading source

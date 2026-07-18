@@ -84,6 +84,29 @@ Or link two entries directly by content:
 known link "<text a>" "<text b>" --type related-to
 ```
 
+## One-shot correction (supersede)
+
+When a fact has changed, store the correction and link it to the old entry in
+one command — no ULIDs required:
+
+```bash
+known add 'New fact that replaces the old one' --supersedes 'old fact content'
+```
+
+The `--supersedes` argument is a content query. The resolver uses exact-match or
+semantic dominance to find the old entry; if the query is ambiguous, the command
+aborts before writing anything. On success, the confirmation block shows:
+
+```
+Stored  01KYABC...
+Scope   myproject
+        "New fact that replaces the old one"
+Supersedes 01KYABC... -[supersedes]-> 01KXABC...
+```
+
+This is the one-shot fix for the Mode 4 failure where agents stored a correction
+without linking it because ULID extraction from JSON failed.
+
 ## Batch mode
 
 For many facts at once (much faster — single embedding pass):

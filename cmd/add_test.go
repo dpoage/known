@@ -3,10 +3,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/dpoage/known/model"
+	"github.com/dpoage/known/query"
 	"github.com/dpoage/known/storage"
 )
 
@@ -103,9 +106,11 @@ func (e *stubEmbedder) ModelName() string { return "stub" }
 // newTestApp constructs a minimal App suitable for calling runAdd.
 func newTestApp(repo *stubEntryRepo) *App {
 	return &App{
+		DB:       &stubBackend{},
 		Entries:  repo,
 		Embedder: &stubEmbedder{dims: 3},
 		Printer:  NewPrinter(&bytes.Buffer{}, false, true),
+		Stderr:   &bytes.Buffer{},
 		Config: &AppConfig{
 			DefaultScope:     "root",
 			MaxContentLength: model.MaxContentLength,
@@ -583,5 +588,357 @@ func TestRunAdd_SourceFlag_Suggestion(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "--scope") {
 		t.Errorf("error %q should not suggest --scope for --source", err.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Atomicity and --supersedes tests
+// ---------------------------------------------------------------------------
+
+// failOnNthEdgeRepo wraps a real EdgeRepo and returns an error on the Nth Create call.
+// All other calls are delegated to the real repo.
+type failOnNthEdgeRepo struct {
+	real   storage.EdgeRepo
+	failOn int
+	calls  int
+}
+
+func (f *failOnNthEdgeRepo) Create(ctx context.Context, edge *model.Edge) error {
+	f.calls++
+	if f.calls == f.failOn {
+		return errors.New("injected edge failure")
+	}
+	return f.real.Create(ctx, edge)
+}
+func (f *failOnNthEdgeRepo) Get(ctx context.Context, id model.ID) (*model.Edge, error) {
+	return f.real.Get(ctx, id)
+}
+func (f *failOnNthEdgeRepo) Update(ctx context.Context, edge *model.Edge) error {
+	return f.real.Update(ctx, edge)
+}
+func (f *failOnNthEdgeRepo) Delete(ctx context.Context, id model.ID) error {
+	return f.real.Delete(ctx, id)
+}
+func (f *failOnNthEdgeRepo) EdgesFrom(ctx context.Context, id model.ID, filt storage.EdgeFilter) ([]model.Edge, error) {
+	return f.real.EdgesFrom(ctx, id, filt)
+}
+func (f *failOnNthEdgeRepo) EdgesTo(ctx context.Context, id model.ID, filt storage.EdgeFilter) ([]model.Edge, error) {
+	return f.real.EdgesTo(ctx, id, filt)
+}
+func (f *failOnNthEdgeRepo) EdgesBetween(ctx context.Context, a, b model.ID) ([]model.Edge, error) {
+	return f.real.EdgesBetween(ctx, a, b)
+}
+func (f *failOnNthEdgeRepo) FindConflicts(ctx context.Context, id model.ID) ([]model.Entry, error) {
+	return f.real.FindConflicts(ctx, id)
+}
+
+var _ storage.EdgeRepo = (*failOnNthEdgeRepo)(nil)
+
+// newMigratedDB opens an in-memory SQLite backend and runs migrations.
+func newMigratedDB(t *testing.T) storage.Backend {
+	t.Helper()
+	ctx := context.Background()
+	db, err := newBackend(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("newBackend: %v", err)
+	}
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// makeTestEntry builds a test entry with an embedding.
+func makeTestEntry(content string, vec []float32) model.Entry {
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e := model.NewEntry(content, src)
+	e.Scope = model.RootScope
+	return e.WithEmbedding(vec, "stub")
+}
+
+// TestRunAdd_Atomicity_SecondEdgeFails_NothingPersisted uses a real SQLite
+// backend to verify that when the second edge creation fails inside WithTx,
+// both the entry and all edges are rolled back.
+func TestRunAdd_Atomicity_SecondEdgeFails_NothingPersisted(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	// Pre-seed two link targets.
+	target1 := makeTestEntry("target one atomicity", []float32{0, 0, 1})
+	if _, err := db.Entries().CreateOrUpdate(ctx, &target1); err != nil {
+		t.Fatal(err)
+	}
+	target2 := makeTestEntry("target two atomicity", []float32{0, 1, 0})
+	if _, err := db.Entries().CreateOrUpdate(ctx, &target2); err != nil {
+		t.Fatal(err)
+	}
+
+	// failEdge fails on the 2nd Create call (second link) — the entire tx rolls back.
+	failEdge := &failOnNthEdgeRepo{real: db.Edges(), failOn: 2}
+
+	stub := &stubEmbedder{dims: 3}
+	app := &App{
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    failEdge,
+		Embedder: stub,
+		// No Engine: --link resolution uses raw ULIDs so searchSemanticScored is never called.
+		Printer: NewPrinter(&bytes.Buffer{}, false, true),
+		Stderr:  &bytes.Buffer{},
+		Config:  &AppConfig{DefaultScope: model.RootScope, MaxContentLength: model.MaxContentLength},
+	}
+
+	err := runAdd(ctx, app, []string{
+		"atomicity test entry content",
+		"--link", fmt.Sprintf("elaborates:%s", target1.ID),
+		"--link", fmt.Sprintf("related-to:%s", target2.ID),
+	})
+	if err == nil {
+		t.Fatal("expected error from second-edge failure")
+	}
+	if !strings.Contains(err.Error(), "injected edge failure") {
+		t.Errorf("error %q should mention injected failure", err.Error())
+	}
+
+	// The entry must NOT exist — it was rolled back by WithTx.
+	entries, listErr := db.Entries().List(ctx, storage.EntryFilter{Scope: model.RootScope})
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	for _, e := range entries {
+		if e.Content == "atomicity test entry content" {
+			t.Error("entry should have been rolled back but was found in the store")
+		}
+	}
+}
+
+// newSupersedingApp builds an App for --supersedes tests using a real SQLite
+// backend and the stub embedder. Follows the pattern from link_test.go.
+func newSupersedingApp(t *testing.T, db storage.Backend, out *bytes.Buffer) *App {
+	t.Helper()
+	stub := &stubEmbedder{dims: 3}
+	return &App{
+		DB:       db,
+		Entries:  db.Entries(),
+		Edges:    db.Edges(),
+		Embedder: stub,
+		Engine:   query.New(db.Entries(), db.Edges(), stub),
+		Printer:  NewPrinter(out, false, false),
+		Stderr:   &bytes.Buffer{},
+		Config:   &AppConfig{DefaultScope: model.RootScope, MaxContentLength: model.MaxContentLength},
+	}
+}
+
+// TestRunAdd_Supersedes_HappyPath verifies that --supersedes creates a supersedes edge
+// from the new entry to the resolved target, atomically, and prints confirmation.
+func TestRunAdd_Supersedes_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	old := makeTestEntry("renderer architecture decision original", []float32{1, 0, 0})
+	stored, err := db.Entries().CreateOrUpdate(ctx, &old)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	app := newSupersedingApp(t, db, &buf)
+
+	// Use the exact content as the --supersedes query; the exact-match path fires.
+	if err := runAdd(ctx, app, []string{
+		"renderer architecture decision CORRECTION",
+		"--supersedes", old.Content,
+	}); err != nil {
+		t.Fatalf("runAdd --supersedes: %v", err)
+	}
+
+	// Find the new entry.
+	entries, _ := db.Entries().List(ctx, storage.EntryFilter{Scope: model.RootScope})
+	var newEntry *model.Entry
+	for i, e := range entries {
+		if e.Content == "renderer architecture decision CORRECTION" {
+			newEntry = &entries[i]
+		}
+	}
+	if newEntry == nil {
+		t.Fatal("new entry not found")
+	}
+
+	// Verify supersedes edge: new -[supersedes]-> old.
+	edges, err := db.Edges().EdgesFrom(ctx, newEntry.ID, storage.EdgeFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range edges {
+		if e.Type == model.EdgeSupersedes && e.ToID == stored.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected supersedes edge new→old; edges from new: %+v", edges)
+	}
+
+	// Confirmation output must mention supersedes.
+	if out := buf.String(); !strings.Contains(out, "Supersedes") {
+		t.Errorf("output %q should contain 'Supersedes'", out)
+	}
+}
+
+// TestRunAdd_Supersedes_Ambiguous verifies that an ambiguous --supersedes query
+// aborts before writing anything (consistent with 7dw semantics).
+func TestRunAdd_Supersedes_Ambiguous(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	// Store two entries that both match "renderer design" (neither is an exact match).
+	for _, content := range []string{"renderer design alpha", "renderer design beta"} {
+		e := makeTestEntry(content, []float32{1, 0, 0})
+		if _, err := db.Entries().CreateOrUpdate(ctx, &e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app := newSupersedingApp(t, db, &bytes.Buffer{})
+
+	err := runAdd(ctx, app, []string{
+		"new correction entry",
+		"--supersedes", "renderer design",
+	})
+	if err == nil {
+		t.Fatal("expected error for ambiguous --supersedes query")
+	}
+	if !strings.Contains(err.Error(), "--supersedes") {
+		t.Errorf("error %q should mention --supersedes", err.Error())
+	}
+
+	// No new entry should have been written.
+	entries, _ := db.Entries().List(ctx, storage.EntryFilter{Scope: model.RootScope})
+	for _, e := range entries {
+		if e.Content == "new correction entry" {
+			t.Error("entry must not be persisted after ambiguous --supersedes")
+		}
+	}
+}
+
+// TestRunAdd_Supersedes_NoMatch verifies that a no-match --supersedes query
+// aborts before writing anything.
+func TestRunAdd_Supersedes_NoMatch(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	app := newSupersedingApp(t, db, &bytes.Buffer{})
+
+	err := runAdd(ctx, app, []string{
+		"new correction no match",
+		"--supersedes", "nonexistent content xyz qam",
+	})
+	if err == nil {
+		t.Fatal("expected error for no-match --supersedes query")
+	}
+	if !strings.Contains(err.Error(), "--supersedes") {
+		t.Errorf("error %q should mention --supersedes", err.Error())
+	}
+
+	// No new entry written.
+	entries, _ := db.Entries().List(ctx, storage.EntryFilter{Scope: model.RootScope})
+	for _, e := range entries {
+		if e.Content == "new correction no match" {
+			t.Error("entry must not be persisted on no-match --supersedes")
+		}
+	}
+}
+
+// TestRunAdd_Supersedes_EdgeDirection verifies the direction of the supersedes edge:
+// new_entry -[supersedes]-> old_entry, not the reverse.
+func TestRunAdd_Supersedes_EdgeDirection(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	old := makeTestEntry("old fact to be superseded direction test", []float32{0, 1, 0})
+	storedOld, err := db.Entries().CreateOrUpdate(ctx, &old)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := newSupersedingApp(t, db, &bytes.Buffer{})
+
+	if err := runAdd(ctx, app, []string{
+		"new fact superseding old direction test",
+		"--supersedes", old.Content,
+	}); err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	entries, _ := db.Entries().List(ctx, storage.EntryFilter{Scope: model.RootScope})
+	var newEntry *model.Entry
+	for i, e := range entries {
+		if e.Content == "new fact superseding old direction test" {
+			newEntry = &entries[i]
+		}
+	}
+	if newEntry == nil {
+		t.Fatal("new entry not found")
+	}
+
+	// Direction must be: new -[supersedes]-> old.
+	edgesFrom, err := db.Edges().EdgesFrom(ctx, newEntry.ID, storage.EdgeFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range edgesFrom {
+		if e.Type == model.EdgeSupersedes && e.ToID == storedOld.ID && e.FromID == newEntry.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected new -[supersedes]-> old in EdgesFrom(new); got %+v", edgesFrom)
+	}
+
+	// Verify old does NOT have a supersedes edge FROM it to new (wrong direction).
+	edgesFromOld, _ := db.Edges().EdgesFrom(ctx, storedOld.ID, storage.EdgeFilter{})
+	for _, e := range edgesFromOld {
+		if e.Type == model.EdgeSupersedes {
+			t.Errorf("old entry should not have a supersedes edge FROM it; got %+v", e)
+		}
+	}
+}
+
+// TestRunAdd_Supersedes_SelfSupersede verifies that add 'X' --supersedes 'X'
+// (where X already exists and dedup fires) aborts with a clear error and
+// does not leave any partial state.
+func TestRunAdd_Supersedes_SelfSupersede(t *testing.T) {
+	ctx := context.Background()
+	db := newMigratedDB(t)
+
+	existing := makeTestEntry("fact that already exists", []float32{1, 0, 0})
+	if _, err := db.Entries().CreateOrUpdate(ctx, &existing); err != nil {
+		t.Fatal(err)
+	}
+
+	app := newSupersedingApp(t, db, &bytes.Buffer{})
+
+	// add 'fact that already exists' --supersedes 'fact that already exists':
+	// CreateOrUpdate deduplicates and returns the existing entry ID, which
+	// equals the resolved supersedesID → self-supersede guard fires.
+	err := runAdd(ctx, app, []string{
+		existing.Content,
+		"--supersedes", existing.Content,
+	})
+	if err == nil {
+		t.Fatal("expected error for self-supersede")
+	}
+	if !strings.Contains(err.Error(), "cannot supersede itself") {
+		t.Errorf("error %q should say 'cannot supersede itself'", err.Error())
+	}
+
+	// No new edges should have been created.
+	edges, _ := db.Edges().EdgesFrom(ctx, existing.ID, storage.EdgeFilter{})
+	for _, e := range edges {
+		if e.Type == model.EdgeSupersedes {
+			t.Errorf("no supersedes edge should exist after self-supersede refusal; got %+v", e)
+		}
 	}
 }

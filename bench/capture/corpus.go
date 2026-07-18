@@ -354,6 +354,54 @@ func corpus() []Scenario {
 					"show --json output must contain \"expires_at\" key", pass
 			},
 		},
+
+		// ---- known-qam: One-shot supersede via --supersedes flag ----
+		//
+		// Friction-audit Mode 4 incident (c1f50adc:1057): agent stored a correction
+		// entry without linking it to the superseded original because ULID extraction
+		// with `grep -o '"id":[0-9]*'` failed (ULIDs contain letters, not just digits).
+		//
+		// known-qam contract: `known add '<correction>' --supersedes '<original content>'`
+		// resolves the target by content, stores the correction, and creates the
+		// supersedes edge atomically — zero ULIDs typed.
+		//
+		// Predicate: exit 0 AND stdout contains 'Supersedes' AND edge exists
+		// (verified via `known --json show <new-ulid>` edges-from check is not available
+		// on CLI; we verify edge via the Supersedes line in add output, which only
+		// appears when the edge was successfully created).
+		//
+		// Baseline de676db lacks --supersedes flag → exits non-zero.
+		{
+			ID:                 "Qam-oneshot-supersede",
+			Name:               "add --supersedes: one-shot correction stores entry and edge, zero ULIDs typed",
+			AuditMode:          "known-qam (p2-supersede): Mode 4 one-shot fix (c1f50adc:1057)",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+
+				const (
+					originalContent = "renderer architecture decision SIBLING RendererInterface original"
+					correction      = "CORRECTION renderer architecture decision decoupling"
+				)
+
+				// Store the original entry.
+				firstOut, firstCode := run(bin, env, dir, "add", originalContent)
+				if firstCode != 0 {
+					return firstOut, firstCode, "first add (original) must exit 0", false
+				}
+
+				// One-shot supersede: store correction + create edge in one command.
+				// Use exact original content as --supersedes query so the resolver's
+				// exact-match path fires (no ambiguity).
+				out, code := runArgs(bin, env, dir, []string{
+					"add", correction,
+					"--supersedes", originalContent,
+				})
+				pass := code == 0 && strings.Contains(out, "Supersedes")
+				return out, code, "exit 0 AND stdout contains 'Supersedes'", pass
+			},
+		},
 	}
 }
 

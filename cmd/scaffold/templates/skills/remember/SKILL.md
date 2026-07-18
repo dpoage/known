@@ -87,6 +87,27 @@ Or link two entries directly by content:
 known link "<text a>" "<text b>" --type related-to
 ```
 
+## One-shot correction (supersede)
+
+When a fact has changed, store the replacement and link it to the old entry in
+one command — no ULIDs required:
+
+```bash
+known add 'corrected fact' --supersedes 'old fact content'
+```
+
+The `--supersedes` argument is a content query resolved by exact-match or semantic
+dominance. Ambiguous query? The command aborts before writing anything.
+
+On success:
+
+```
+Stored  01KYABC...
+Scope   myproject
+        "corrected fact"
+Supersedes 01KYABC... -[supersedes]-> 01KXABC...
+```
+
 ## Batch mode
 
 For many facts at once (single embedding pass, much faster):
