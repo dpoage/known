@@ -57,10 +57,6 @@ There are two ways to integrate Known with Claude Code:
 
 Both provide the same skills. The plugin namespaces them as `/known:remember` while standalone uses `/remember`.
 
-If you've installed the plugin, you don't need to run `known init` for Claude Code integration (though `known init` still creates the `.known.yaml` config file, which you may still want).
-
-## How It Works
-
-On session start, a hook runs `known scope tree` to inject available knowledge scopes into context. Root scopes are prefixed with `/` in the tree to mark project boundaries. Use `/known:recall` to retrieve knowledge before exploring the codebase — it's faster than re-reading files.
-
-Knowledge is stored locally in SQLite (`~/.known/known.db` by default) or PostgreSQL for production use. Entries are embedded for semantic search, organized by hierarchical scopes, and linked via graph edges.
+`known init` is optional scaffolding. No `.known.yaml` config file is required — scope is
+auto-derived from the project root. If you've installed the plugin, you don't need to run
+`known init` for Claude Code integration.
