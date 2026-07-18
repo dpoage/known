@@ -693,7 +693,7 @@ func TestRunAdd_Atomicity_SecondEdgeFails_NothingPersisted(t *testing.T) {
 		"atomicity test entry content",
 		"--link", fmt.Sprintf("elaborates:%s", target1.ID),
 		"--link", fmt.Sprintf("related-to:%s", target2.ID),
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error from second-edge failure")
 	}
@@ -749,7 +749,7 @@ func TestRunAdd_Supersedes_HappyPath(t *testing.T) {
 	if err := runAdd(ctx, app, []string{
 		"renderer architecture decision CORRECTION",
 		"--supersedes", old.Content,
-	}); err != nil {
+	}, "add"); err != nil {
 		t.Fatalf("runAdd --supersedes: %v", err)
 	}
 
@@ -805,7 +805,7 @@ func TestRunAdd_Supersedes_Ambiguous(t *testing.T) {
 	err := runAdd(ctx, app, []string{
 		"new correction entry",
 		"--supersedes", "renderer design",
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error for ambiguous --supersedes query")
 	}
@@ -833,7 +833,7 @@ func TestRunAdd_Supersedes_NoMatch(t *testing.T) {
 	err := runAdd(ctx, app, []string{
 		"new correction no match",
 		"--supersedes", "nonexistent content xyz qam",
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error for no-match --supersedes query")
 	}
@@ -867,7 +867,7 @@ func TestRunAdd_Supersedes_EdgeDirection(t *testing.T) {
 	if err := runAdd(ctx, app, []string{
 		"new fact superseding old direction test",
 		"--supersedes", old.Content,
-	}); err != nil {
+	}, "add"); err != nil {
 		t.Fatalf("runAdd: %v", err)
 	}
 
@@ -926,7 +926,7 @@ func TestRunAdd_Supersedes_SelfSupersede(t *testing.T) {
 	err := runAdd(ctx, app, []string{
 		existing.Content,
 		"--supersedes", existing.Content,
-	})
+	}, "add")
 	if err == nil {
 		t.Fatal("expected error for self-supersede")
 	}
