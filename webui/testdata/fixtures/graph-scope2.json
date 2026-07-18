@@ -1,0 +1,129 @@
+{
+  "nodes": [
+    {
+      "id": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "title": "Deprecated auth flow",
+      "content": "Legacy token-based auth, superseded by the session-cookie flow; kept for historical cross-reference.",
+      "scope": "legacy.archive",
+      "source_type": "manual",
+      "created_at": "2025-01-10T08:00:00Z",
+      "updated_at": "2025-01-10T08:00:00Z",
+      "observed_at": "2025-01-10T08:00:00Z"
+    },
+    {
+      "id": "013VESBWW0J7BGS3K3YX967QZB",
+      "title": "Legacy migration notes",
+      "content": "Notes from the pre-ULID id migration; referenced by current schema-convention entries for context.",
+      "scope": "legacy.archive",
+      "source_type": "file",
+      "created_at": "2025-02-14T08:00:00Z",
+      "updated_at": "2025-02-14T08:00:00Z",
+      "observed_at": "2025-02-14T08:00:00Z"
+    },
+    {
+      "id": "01FM6M69EYZKGVAZV4KY30GGKB",
+      "title": "Old auth middleware",
+      "content": "Express-style middleware wrapping the deprecated token auth flow; still imported by two legacy handlers.",
+      "scope": "legacy.archive",
+      "source_type": "file",
+      "created_at": "2025-01-12T08:00:00Z",
+      "updated_at": "2025-01-12T08:00:00Z",
+      "observed_at": "2025-01-12T08:00:00Z"
+    },
+    {
+      "id": "01A6C98JYCA9FYS7GFRZ8ZMJNR",
+      "title": "Session token format",
+      "content": "Opaque 32-byte token, base64url encoded, no embedded claims; superseded by JWT in the current auth flow.",
+      "scope": "legacy.archive",
+      "source_type": "manual",
+      "created_at": "2025-01-15T08:00:00Z",
+      "updated_at": "2025-01-15T08:00:00Z",
+      "observed_at": "2025-01-15T08:00:00Z"
+    },
+    {
+      "id": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "title": "REST endpoint /api/graph",
+      "content": "Whole-graph snapshot; entries via EntryRepo.List with ScopePrefix, optional label, limit default 500.",
+      "scope": "server.api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:35:00Z",
+      "updated_at": "2026-06-01T09:35:00Z",
+      "observed_at": "2026-06-01T09:35:00Z",
+      "labels": [
+        "architecture"
+      ],
+      "external": true
+    },
+    {
+      "id": "01CSB6VGBVYJXJWDRW646FA141",
+      "title": "Cytoscape layout choice",
+      "content": "Use built-in cose force-directed layout; no extra layout extension needed to keep zero new deps.",
+      "scope": "webui.explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:00:00Z",
+      "updated_at": "2026-06-01T09:00:00Z",
+      "observed_at": "2026-06-01T09:00:00Z",
+      "labels": [
+        "architecture"
+      ],
+      "external": true
+    }
+  ],
+  "edges": [
+    {
+      "id": "01B1WSNZ63Z8D8YSYNMJXK909V",
+      "from": "01FM6M69EYZKGVAZV4KY30GGKB",
+      "to": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "type": "elaborates",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2025-01-16T08:00:00Z"
+    },
+    {
+      "id": "01WSDM1BVC895WT0FZ666AF94N",
+      "from": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "to": "01A6C98JYCA9FYS7GFRZ8ZMJNR",
+      "type": "depends-on",
+      "weight": 0.7,
+      "explicit": true,
+      "created_at": "2025-01-16T08:05:00Z"
+    },
+    {
+      "id": "01YXAMBZY2ZK9B3A5S98JPFS2Y",
+      "from": "01A6C98JYCA9FYS7GFRZ8ZMJNR",
+      "to": "013VESBWW0J7BGS3K3YX967QZB",
+      "type": "related-to",
+      "weight": 0.4,
+      "explicit": false,
+      "created_at": "2025-01-16T08:10:00Z"
+    },
+    {
+      "id": "01DJDN2P0T1WT79CR7QFTJPPY8",
+      "from": "013VESBWW0J7BGS3K3YX967QZB",
+      "to": "01FM6M69EYZKGVAZV4KY30GGKB",
+      "type": "supersedes",
+      "weight": 0.55,
+      "explicit": true,
+      "created_at": "2025-01-16T08:15:00Z"
+    },
+    {
+      "id": "0100C67K7KXTE1F3DBCQTKAD0C",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01CS68FN9PPPCCR8XKBGBGF3QZ",
+      "type": "depends-on",
+      "weight": 0.4,
+      "explicit": false,
+      "created_at": "2026-06-02T11:00:00Z"
+    },
+    {
+      "id": "01NN2GM65815WEJX32EWQ27MPQ",
+      "from": "013VESBWW0J7BGS3K3YX967QZB",
+      "to": "01CSB6VGBVYJXJWDRW646FA141",
+      "type": "related-to",
+      "weight": 0.3,
+      "explicit": false,
+      "created_at": "2026-06-02T11:05:00Z"
+    }
+  ],
+  "truncated": false
+}

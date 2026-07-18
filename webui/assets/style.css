@@ -119,6 +119,16 @@ select, input {
   min-width: 140px;
 }
 
+.loaded-scopes-field {
+  justify-content: flex-end;
+}
+
+.loaded-scopes {
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
 .search-field {
   position: relative;
 }
