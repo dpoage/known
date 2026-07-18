@@ -344,13 +344,13 @@ func TestHandleEntry_HappyPath(t *testing.T) {
 	if !in.Edge.Explicit || in.Edge.Weight != 0.9 {
 		t.Errorf("edges_in[0].edge = %+v, want explicit weight 0.9", in.Edge)
 	}
-	if in.Peer.ID != f.oauth.ID.String() || in.Peer.Title != f.oauth.Title {
+	if in.Peer.ID != f.oauth.ID.String() || in.Peer.Title != f.oauth.Title || in.Peer.Content != f.oauth.Content {
 		t.Errorf("edges_in[0].peer = %+v, want oauth entry", in.Peer)
 	}
 
 	// conflicts: contradicts edge to legacy.
-	if len(got.Conflicts) != 1 || got.Conflicts[0].ID != f.legacy.ID.String() {
-		t.Errorf("conflicts = %+v, want [legacy]", got.Conflicts)
+	if len(got.Conflicts) != 1 || got.Conflicts[0].ID != f.legacy.ID.String() || got.Conflicts[0].Content != f.legacy.Content {
+		t.Errorf("conflicts = %+v, want [legacy] with content", got.Conflicts)
 	}
 }
 
@@ -368,6 +368,9 @@ func TestHandleEntry_DanglingPeerFallback(t *testing.T) {
 			found = true
 			if ep.Peer.Title != "(missing)" {
 				t.Errorf("dangling peer title = %q, want %q", ep.Peer.Title, "(missing)")
+			}
+			if ep.Peer.Content != "" {
+				t.Errorf("dangling peer content = %q, want empty", ep.Peer.Content)
 			}
 			if ep.Peer.ID != f.dangling.ToID.String() {
 				t.Errorf("dangling peer id = %q, want %q", ep.Peer.ID, f.dangling.ToID.String())

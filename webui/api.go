@@ -54,11 +54,15 @@ type Graph struct {
 }
 
 // peerRef is a lightweight reference to the other end of an edge, used in
-// /api/entry's edges_out/edges_in/conflicts.
+// /api/entry's edges_out/edges_in/conflicts. Content is included alongside
+// title because untitled entries are the common case (known-621 contract
+// amendment); the UI falls back to a content snippet when title is empty,
+// and to "(missing)" only when the peer entry itself is absent.
 type peerRef struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Scope string `json:"scope"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+	Scope   string `json:"scope"`
 }
 
 // edgeWithPeer pairs an edge with a projection of the entry on the other end.
@@ -381,15 +385,15 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		detail.EdgesIn = append(detail.EdgesIn, edgeWithPeer{Edge: newEdge(edge), Peer: peer})
 	}
 	for _, c := range conflicts {
-		detail.Conflicts = append(detail.Conflicts, peerRef{ID: c.ID.String(), Title: c.Title, Scope: c.Scope})
+		detail.Conflicts = append(detail.Conflicts, peerRef{ID: c.ID.String(), Title: c.Title, Content: c.Content, Scope: c.Scope})
 	}
 
 	writeJSON(w, http.StatusOK, detail)
 }
 
 // peerRef resolves the entry on the other end of an edge into a peerRef.
-// A dangling edge (peer entry deleted) falls back to a "(missing)" title
-// rather than failing the whole /api/entry response.
+// A dangling edge (peer entry deleted) falls back to title "(missing)" and
+// empty content, rather than failing the whole /api/entry response.
 func (s *Server) peerRef(ctx context.Context, id model.ID) (peerRef, error) {
 	peer, err := s.entries.Get(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
@@ -398,7 +402,7 @@ func (s *Server) peerRef(ctx context.Context, id model.ID) (peerRef, error) {
 	if err != nil {
 		return peerRef{}, err
 	}
-	return peerRef{ID: peer.ID.String(), Title: peer.Title, Scope: peer.Scope}, nil
+	return peerRef{ID: peer.ID.String(), Title: peer.Title, Content: peer.Content, Scope: peer.Scope}, nil
 }
 
 // handleNeighbors implements GET /api/neighbors/{id}?direction=&depth=&types=.
