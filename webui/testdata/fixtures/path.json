@@ -1,0 +1,83 @@
+{
+  "nodes": [
+    {
+      "id": "01CSB6VGBVYJXJWDRW646FA141",
+      "title": "Cytoscape layout choice",
+      "content": "Use built-in cose force-directed layout; no extra layout extension needed to keep zero new deps.",
+      "scope": "webui/explore",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:00:00Z",
+      "updated_at": "2026-06-01T09:00:00Z",
+      "observed_at": "2026-06-01T09:00:00Z",
+      "labels": [
+        "architecture"
+      ]
+    },
+    {
+      "id": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "title": "REST endpoint /api/graph",
+      "content": "Whole-graph snapshot; entries via EntryRepo.List with ScopePrefix, optional label, limit default 500.",
+      "scope": "server/api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:35:00Z",
+      "updated_at": "2026-06-01T09:35:00Z",
+      "observed_at": "2026-06-01T09:35:00Z",
+      "labels": [
+        "architecture"
+      ]
+    },
+    {
+      "id": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "title": "Edge weight decay",
+      "content": "Reinforced edges converge toward the neutral default of 0.5 over time via the decay factor.",
+      "scope": "server/api",
+      "source_type": "conversation",
+      "created_at": "2026-06-01T09:50:00Z",
+      "updated_at": "2026-06-01T09:50:00Z",
+      "observed_at": "2026-06-01T09:50:00Z"
+    },
+    {
+      "id": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "title": "FTS search engine",
+      "content": "known explore runs without an embedder; search is FTS text search only via Engine.SearchText.",
+      "scope": "server/api",
+      "source_type": "manual",
+      "created_at": "2026-06-01T09:45:00Z",
+      "updated_at": "2026-06-01T09:45:00Z",
+      "observed_at": "2026-06-01T09:45:00Z",
+      "labels": [
+        "note"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "01E3X2VA0JWVC4YHE58F7KX2NT",
+      "from": "01CSB6VGBVYJXJWDRW646FA141",
+      "to": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "type": "depends-on",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:00:00Z"
+    },
+    {
+      "id": "01Y2F1EP0SY2TCFFF8E340VYHH",
+      "from": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+      "to": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "type": "elaborates",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:06:00Z"
+    },
+    {
+      "id": "01WE6KASKSQRBC3G2WA7VGHRZK",
+      "from": "01N8MGMCXZ541D0MTJDGHYYGYB",
+      "to": "01T1MX7FBGTH8WT6ADP53YA6KS",
+      "type": "supersedes",
+      "weight": 0.6,
+      "explicit": true,
+      "created_at": "2026-06-02T10:12:00Z"
+    }
+  ],
+  "truncated": false
+}

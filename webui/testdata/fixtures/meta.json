@@ -1,0 +1,19 @@
+{
+  "default_scope": "webui/explore",
+  "scopes": [
+    "server/api",
+    "webui/explore"
+  ],
+  "labels": [
+    "architecture",
+    "convention",
+    "note"
+  ],
+  "edge_types": [
+    "depends-on",
+    "contradicts",
+    "supersedes",
+    "elaborates",
+    "related-to"
+  ]
+}

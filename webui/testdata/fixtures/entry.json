@@ -1,0 +1,106 @@
+{
+  "entry": {
+    "id": "01795J4WN7BCRF0XW2YQQEP905",
+    "title": "Path mode UX",
+    "content": "Toggle path mode, click node A then node B, fetch api/path, highlight the path and dim everything else.",
+    "scope": "webui/explore",
+    "source": {
+      "type": "conversation",
+      "reference": "design-review-2026-06-01"
+    },
+    "provenance": {
+      "level": "direct"
+    },
+    "freshness": {
+      "observed_at": "2026-06-01T09:20:00Z"
+    },
+    "version": 1,
+    "created_at": "2026-06-01T09:20:00Z",
+    "updated_at": "2026-06-01T09:20:00Z"
+  },
+  "node": {
+    "id": "01795J4WN7BCRF0XW2YQQEP905",
+    "title": "Path mode UX",
+    "content": "Toggle path mode, click node A then node B, fetch api/path, highlight the path and dim everything else.",
+    "scope": "webui/explore",
+    "source_type": "conversation",
+    "created_at": "2026-06-01T09:20:00Z",
+    "updated_at": "2026-06-01T09:20:00Z",
+    "observed_at": "2026-06-01T09:20:00Z"
+  },
+  "edges_out": [
+    {
+      "edge": {
+        "id": "019ZGEVAZM8D9DZPZEBZT2GAGZ",
+        "from": "01795J4WN7BCRF0XW2YQQEP905",
+        "to": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+        "type": "depends-on",
+        "weight": 0.9,
+        "explicit": true,
+        "created_at": "2026-06-02T10:01:00Z"
+      },
+      "peer": {
+        "id": "01MVJ7P8N9E2MFDRV64VH8W6RM",
+        "title": "REST endpoint /api/graph",
+        "scope": "server/api"
+      }
+    },
+    {
+      "edge": {
+        "id": "01EA9DRP34Q21B5N532CKWG5W2",
+        "from": "01795J4WN7BCRF0XW2YQQEP905",
+        "to": "01WGZDH95VSS1EZ6FRP5FGHA71",
+        "type": "supersedes",
+        "weight": 0.5,
+        "explicit": true,
+        "created_at": "2026-06-02T10:13:00Z"
+      },
+      "peer": {
+        "id": "01WGZDH95VSS1EZ6FRP5FGHA71",
+        "title": "Search debounce interval",
+        "scope": "webui/explore"
+      }
+    }
+  ],
+  "edges_in": [
+    {
+      "edge": {
+        "id": "01NCWBE3VFB4Y0FCTAYH1W3AB6",
+        "from": "01WGZDH95VSS1EZ6FRP5FGHA71",
+        "to": "01795J4WN7BCRF0XW2YQQEP905",
+        "type": "related-to",
+        "weight": 0.45,
+        "explicit": false,
+        "created_at": "2026-06-02T10:09:00Z"
+      },
+      "peer": {
+        "id": "01WGZDH95VSS1EZ6FRP5FGHA71",
+        "title": "Search debounce interval",
+        "scope": "webui/explore"
+      }
+    },
+    {
+      "edge": {
+        "id": "01JRDZFK3RR612TXJYNP35SRP8",
+        "from": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+        "to": "01795J4WN7BCRF0XW2YQQEP905",
+        "type": "contradicts",
+        "weight": 0.55,
+        "explicit": true,
+        "created_at": "2026-06-02T10:14:00Z"
+      },
+      "peer": {
+        "id": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+        "title": "Error banner behavior",
+        "scope": "webui/explore"
+      }
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "0164FAZ2PXWBBKG2SF8Y9BR05Q",
+      "title": "Error banner behavior",
+      "scope": "webui/explore"
+    }
+  ]
+}
