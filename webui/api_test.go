@@ -714,6 +714,7 @@ func TestHandleNeighbors_DirectionAndDepth(t *testing.T) {
 	if code := f.get(t, "/api/neighbors/"+f.schema.ID.String()+"?direction=out&depth=1", &out); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, out)
 	outIDs := map[string]bool{}
 	for _, n := range out.Nodes {
 		outIDs[n.ID] = true
@@ -733,6 +734,7 @@ func TestHandleNeighbors_DirectionAndDepth(t *testing.T) {
 	if code := f.get(t, "/api/neighbors/"+f.schema.ID.String()+"?direction=in&depth=1", &in); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, in)
 	inIDs := map[string]bool{}
 	for _, n := range in.Nodes {
 		inIDs[n.ID] = true
@@ -750,6 +752,7 @@ func TestHandleNeighbors_DirectionAndDepth(t *testing.T) {
 	if code := f.get(t, "/api/neighbors/"+f.oauth.ID.String()+"?direction=both&depth=2", &deep); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, deep)
 	deepIDs := map[string]bool{}
 	for _, n := range deep.Nodes {
 		deepIDs[n.ID] = true
@@ -769,6 +772,7 @@ func TestHandleNeighbors_TypesFilter(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
+	assertUniqueGraphIDs(t, got)
 	ids := map[string]bool{}
 	for _, n := range got.Nodes {
 		ids[n.ID] = true
@@ -778,6 +782,161 @@ func TestHandleNeighbors_TypesFilter(t *testing.T) {
 	}
 	if ids[f.legacy.ID.String()] {
 		t.Errorf("types=depends-on must exclude contradicts-only neighbor legacy")
+	}
+}
+
+// diamondFixture is a small dedicated backend shaped like a diamond: hub
+// depends-on A, hub depends-on B, and A related-to B (the "chord"). A BFS
+// tree rooted at hub can never contain the chord -- Traverse stops
+// expanding a node's own edges once that node is reached at the
+// traversal's max depth, so A's outgoing edges (including the chord to B)
+// are never inspected at depth=1. This is the round-3 mesh-vs-tree
+// regression fixture.
+type diamondFixture struct {
+	server                *Server
+	hub, a, b             model.Entry
+	hubToA, hubToB, chord model.Edge
+}
+
+func newDiamondFixture(t *testing.T) *diamondFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	db, err := sqlite.New(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	entries := db.Entries()
+	edgeRepo := db.Edges()
+
+	mustCreate := func(content string) model.Entry {
+		t.Helper()
+		e := model.NewEntry(content, model.Source{Type: model.SourceManual, Reference: "test"})
+		e.Scope = model.RootScope
+		result, err := entries.CreateOrUpdate(ctx, &e)
+		if err != nil {
+			t.Fatalf("create entry %q: %v", content, err)
+		}
+		return *result
+	}
+	mustLink := func(from, to model.Entry, edgeType model.EdgeType) model.Edge {
+		t.Helper()
+		e := model.NewEdge(from.ID, to.ID, edgeType)
+		if err := edgeRepo.Create(ctx, &e); err != nil {
+			t.Fatalf("create edge %s -[%s]-> %s: %v", from.Content, edgeType, to.Content, err)
+		}
+		return e
+	}
+
+	f := &diamondFixture{}
+	f.hub = mustCreate("Hub")
+	f.a = mustCreate("A")
+	f.b = mustCreate("B")
+	f.hubToA = mustLink(f.hub, f.a, model.EdgeDependsOn)
+	f.hubToB = mustLink(f.hub, f.b, model.EdgeDependsOn)
+	f.chord = mustLink(f.a, f.b, model.EdgeRelatedTo)
+
+	engine := query.New(entries, edgeRepo, nil)
+	f.server = New(entries, edgeRepo, db.Scopes(), db.Labels(), engine, model.RootScope)
+	return f
+}
+
+func (f *diamondFixture) get(t *testing.T, path string, dst any) int {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	f.server.ServeHTTP(rec, req)
+	if dst != nil {
+		if err := json.NewDecoder(rec.Body).Decode(dst); err != nil {
+			t.Fatalf("GET %s: decode response: %v (body: %s)", path, err, rec.Body.String())
+		}
+	}
+	return rec.Code
+}
+
+// TestHandleNeighbors_MeshIncludesChord is the round-3 acceptance-criterion
+// regression test: the old BFS-EdgePath-union implementation structurally
+// could not include the A->B chord (Traverse never re-examines a node's own
+// edges once it's reached at maxDepth), so this proves the mesh rebuild does.
+func TestHandleNeighbors_MeshIncludesChord(t *testing.T) {
+	f := newDiamondFixture(t)
+
+	var got Graph
+	path := "/api/neighbors/" + f.hub.ID.String() + "?direction=both&depth=1"
+	if code := f.get(t, path, &got); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	assertUniqueGraphIDs(t, got)
+
+	nodeIDs := map[string]bool{}
+	for _, n := range got.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	for _, want := range []model.Entry{f.hub, f.a, f.b} {
+		if !nodeIDs[want.ID.String()] {
+			t.Errorf("missing expected node %s", want.ID)
+		}
+	}
+
+	edgeIDs := map[string]bool{}
+	for _, e := range got.Edges {
+		edgeIDs[e.ID] = true
+	}
+	for _, want := range []model.Edge{f.hubToA, f.hubToB, f.chord} {
+		if !edgeIDs[want.ID.String()] {
+			t.Errorf("mesh missing expected edge %s (type %s)", want.ID, want.Type)
+		}
+	}
+	if len(got.Edges) != 3 {
+		t.Errorf("edges = %d, want exactly 3 (hub->A, hub->B, chord A->B)", len(got.Edges))
+	}
+
+	// Round 3: /api/neighbors never introduces external nodes.
+	for _, n := range got.Nodes {
+		if n.External {
+			t.Errorf("node %s: external = true, want false (neighbors never introduces externals)", n.ID)
+		}
+	}
+}
+
+// TestHandleNeighbors_TypesFiltersTraversalNotMesh proves `types` only
+// shapes which nodes Traverse reaches, not the mesh rebuild: both hub->A and
+// hub->B are depends-on (so types=depends-on still reaches all three
+// nodes), but the A->B chord is related-to and must still appear.
+func TestHandleNeighbors_TypesFiltersTraversalNotMesh(t *testing.T) {
+	f := newDiamondFixture(t)
+
+	var got Graph
+	path := "/api/neighbors/" + f.hub.ID.String() + "?direction=both&depth=1&types=depends-on"
+	if code := f.get(t, path, &got); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	assertUniqueGraphIDs(t, got)
+
+	nodeIDs := map[string]bool{}
+	for _, n := range got.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	for _, want := range []model.Entry{f.hub, f.a, f.b} {
+		if !nodeIDs[want.ID.String()] {
+			t.Errorf("types=depends-on missing expected node %s", want.ID)
+		}
+	}
+
+	edgeIDs := map[string]bool{}
+	for _, e := range got.Edges {
+		edgeIDs[e.ID] = true
+	}
+	if !edgeIDs[f.chord.ID.String()] {
+		t.Errorf("types=depends-on: mesh must still include the related-to chord %s (types filters traversal only)", f.chord.ID)
+	}
+	if len(got.Edges) != 3 {
+		t.Errorf("edges = %d, want exactly 3 even with types=depends-on restricting traversal", len(got.Edges))
 	}
 }
 
