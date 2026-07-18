@@ -151,6 +151,134 @@ func TestCheckAnswer_Contains(t *testing.T) {
 	}
 }
 
+// TestCheckAnswer_Adversarial exercises near-miss wrong answers,
+// case/whitespace variants, newline-separated sets, and empty answers across
+// every answer type — including the guards CheckAnswer adds against blank
+// given answers and blank/misconfigured expected values (see CheckAnswer's
+// doc comment for why those matter: without them a truncated LLM response,
+// or a malformed question fixture, could score as "correct").
+func TestCheckAnswer_Adversarial(t *testing.T) {
+	t.Run("exact near-miss and whitespace", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "exact", Value: "config.Load"}}
+		tests := []struct {
+			given string
+			want  bool
+		}{
+			{"config.Load", true},
+			{"CONFIG.LOAD", true},
+			{"\tconfig.Load\n", true}, // tab/newline whitespace, not just spaces
+			{"config.load2", false},   // near miss: extra char
+			{"onfig.Load", false},     // near miss: missing char
+			{"config .Load", false},   // near miss: internal whitespace inserted
+			{"config.Load ", true},    // trailing space trimmed
+			{"", false},               // empty given
+		}
+		for _, tt := range tests {
+			if got := CheckAnswer(q, tt.given); got != tt.want {
+				t.Errorf("CheckAnswer(exact, %q) = %v, want %v", tt.given, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("exact blank expected never matches", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "exact", Value: ""}}
+		if CheckAnswer(q, "anything") {
+			t.Error("exact with blank expected value should never match a non-blank answer")
+		}
+		if CheckAnswer(q, "") {
+			t.Error("exact with blank expected value should never match a blank given answer")
+		}
+	})
+
+	t.Run("one_of near-miss and empty", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "one_of", Value: []any{"csv-transform", "csv"}}}
+		tests := []struct {
+			given string
+			want  bool
+		}{
+			{"csv-transform", true},
+			{"CSV-TRANSFORM", true},
+			{" csv ", true},
+			{"csv-transforms", false}, // near miss: trailing char
+			{"json-transform", false}, // wrong candidate entirely
+			{"", false},
+		}
+		for _, tt := range tests {
+			if got := CheckAnswer(q, tt.given); got != tt.want {
+				t.Errorf("CheckAnswer(one_of, %q) = %v, want %v", tt.given, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("exact_set near-miss, newline-separated, and empty", func(t *testing.T) {
+		q := EffectivenessQuestion{
+			Answer: Answer{Type: "exact_set", Value: []any{"auth", "config", "errors"}},
+		}
+		tests := []struct {
+			given string
+			want  bool
+		}{
+			{"auth, config, errors", true},
+			{"auth\nconfig\nerrors", true},   // pure newline separation
+			{"auth\r\nconfig\r\nerrors", true}, // CRLF line endings
+			{"errors, auth, config", true},   // order independent
+			{"AUTH, Config, ERRORS", true},   // case insensitive
+			{"auth, config", false},          // missing element (near miss: subset)
+			{"auth, config, errors, output", false}, // extra element (near miss: superset)
+			{"auth, config, error", false},   // near miss: singular vs plural
+			{"", false},                      // empty given
+			{",,,", false},                   // punctuation-only given, all tokens empty
+		}
+		for _, tt := range tests {
+			if got := CheckAnswer(q, tt.given); got != tt.want {
+				t.Errorf("CheckAnswer(exact_set, %q) = %v, want %v", tt.given, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("exact_set blank expected never matches", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "exact_set", Value: []any{}}}
+		if CheckAnswer(q, "anything, at, all") {
+			t.Error("exact_set with an empty expected set should never match")
+		}
+	})
+
+	t.Run("contains near-miss and empty", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "contains", Value: "blank import"}}
+		tests := []struct {
+			given string
+			want  bool
+		}{
+			{"uses a blank import to trigger init", true},
+			{"BLANK IMPORT triggers init", true},
+			{"blank imports", true}, // superstring still contains the substring
+			{"blank imp0rt", false}, // near miss: character substitution
+			{"import", false},       // partial word only, not the full substring
+			{"", false},
+		}
+		for _, tt := range tests {
+			if got := CheckAnswer(q, tt.given); got != tt.want {
+				t.Errorf("CheckAnswer(contains, %q) = %v, want %v", tt.given, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("contains blank expected never matches", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "contains", Value: ""}}
+		if CheckAnswer(q, "literally any non-empty answer") {
+			t.Error("contains with a blank expected substring should never match — " +
+				"strings.Contains(x, \"\") is trivially true and must not leak through")
+		}
+	})
+
+	t.Run("unknown type never matches", func(t *testing.T) {
+		q := EffectivenessQuestion{Answer: Answer{Type: "bogus-type", Value: "x"}}
+		if CheckAnswer(q, "x") {
+			t.Error("unrecognized answer type should never match")
+		}
+	})
+}
+
 func TestScoreEffectiveness(t *testing.T) {
 	qs := &QuestionSet{
 		Sessions: []Session{

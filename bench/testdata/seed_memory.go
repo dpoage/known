@@ -224,9 +224,20 @@ func main() {
 		},
 	}
 
+	// Facts are stored under a literal scope path (leading "/") rather than a
+	// bare one. `known`'s scope resolution auto-prefixes bare --scope values
+	// with a project prefix derived from the *current working directory's*
+	// VCS/build-marker root (see cmd/project.go, cmd/scope_resolve.go). That
+	// makes a bare "pipeliner" scope non-deterministic across environments —
+	// it landed as "known.pipeliner" when originally seeded from inside the
+	// main repo checkout, and would land differently from a worktree or CI
+	// runner. The literal-scope escape hatch (leading "/") bypasses
+	// qualification entirely on both write (QualifyScope) and read
+	// (ResolveScope), so the resulting DB and the harness's recall queries
+	// agree regardless of cwd. See bench/runner.go recallCmd for the query side.
 	for _, f := range facts {
 		// Escape single quotes for shell safety: replace ' with '\''
 		escaped := strings.ReplaceAll(f.text, "'", "'\\''")
-		fmt.Printf("known remember '%s' --scope %s\n", escaped, f.scope)
+		fmt.Printf("known remember '%s' --scope /%s\n", escaped, f.scope)
 	}
 }

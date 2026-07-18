@@ -99,18 +99,32 @@ func answerStrings(v any) []string {
 }
 
 // CheckAnswer verifies a given answer against the expected answer.
+//
+// A blank givenAnswer (after trimming) never matches, regardless of type —
+// treating "no answer" as correct would let a truncated or errored LLM
+// response accidentally score points. Likewise a blank/empty expected value
+// (a malformed question fixture) never matches: without this guard,
+// strings.Contains(anything, "") is trivially true for "contains", and an
+// empty given set would equal an empty expected set for "exact_set".
 func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 	given := strings.TrimSpace(givenAnswer)
+	if given == "" {
+		return false
+	}
 	ans := question.Answer
 
 	switch ans.Type {
 	case "exact":
 		expected := strings.TrimSpace(fmt.Sprintf("%v", ans.Value))
+		if expected == "" {
+			return false
+		}
 		return strings.EqualFold(given, expected)
 
 	case "one_of":
 		for _, candidate := range answerStrings(ans.Value) {
-			if strings.EqualFold(given, strings.TrimSpace(candidate)) {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" && strings.EqualFold(given, candidate) {
 				return true
 			}
 		}
@@ -140,7 +154,7 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 		}
 		sort.Strings(expectedSet)
 
-		if len(givenSet) != len(expectedSet) {
+		if len(expectedSet) == 0 || len(givenSet) != len(expectedSet) {
 			return false
 		}
 		for i := range givenSet {
@@ -152,6 +166,9 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 
 	case "contains":
 		expected := strings.TrimSpace(fmt.Sprintf("%v", ans.Value))
+		if expected == "" {
+			return false
+		}
 		return strings.Contains(strings.ToLower(given), strings.ToLower(expected))
 
 	default:

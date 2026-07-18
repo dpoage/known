@@ -1,10 +1,22 @@
 # Benchmark Results
 
-First full run: 2026-03-18
-Model: MiniMax-M2.5 via Anthropic-compatible API
-Questions: 50 across 5 sessions, 3 conditions
+## Provenance
+
+Every table in this document is labeled with the exact binary commit, model,
+and date it was measured against. **Unlabeled numbers are a bug** — if you
+add a table here, add its provenance line with it.
 
 ## Agent Effectiveness
+
+> **Provenance: 2026-03-18, commit `df7bb04`-era binary (pre-#36), model
+> MiniMax-M2.5.**
+> **STALE — CLI surface has since changed (PRs #36-#41: agent-first output,
+> memory-verb triad, recall changes). These numbers are the historical
+> baseline only; they are not valid for the current CLI and a rerun is
+> required before citing them as current state.** See "Reproducing" below
+> for the exact rerun command (gated on `BENCH_API_KEY`/`ANTHROPIC_API_KEY`
+> — no key is available in CI/agent sandboxes, so this table has not been
+> refreshed as part of the 2026-07 bench-suite round).
 
 Does giving an LLM access to `known` (stored knowledge from codebase discovery)
 improve its ability to answer questions about a codebase?
@@ -22,10 +34,10 @@ improve its ability to answer questions about a codebase?
 
 - **No Memory**: LLM receives only a file listing (filenames, no content)
 - **With Memory**: LLM receives `known recall` output per question (from 35
-  discovered facts stored by walking the codebase)
+  discovered facts stored by walking the codebase, March seed)
 - **Full Dump**: LLM receives all source files concatenated (~1800 LOC)
 
-### Key Findings
+### Key Findings (as measured pre-#36 — subject to change on rerun)
 
 1. **Memory more than doubles no-memory performance** (0.54 vs 0.24).
 
@@ -43,7 +55,64 @@ improve its ability to answer questions about a codebase?
 5. **Full dump is the ceiling at 0.80**, not 1.00 — some questions require
    reasoning the model cannot do in a single prompt regardless of context.
 
+### 2026-07 plumbing verification (no rerun — recall path only)
+
+The with_memory condition's plumbing (`bench/runner.go` prompt assembly +
+`known recall` invocation, `bench/testdata/pipeliner_memory.db`) was verified
+against the **current** binary built from commit `bac1839` (`feat/bench-suite`,
+2026-07-17) without an API key — this checks that the recall command still
+runs and returns real results, not that the LLM scores above changed:
+
+```
+$ KNOWN_DSN=bench/testdata/pipeliner_memory.db known recall \
+    "How does config.Load handle overrides vs defaults" \
+    --scope /pipeliner --limit 10 --threshold 0.3
+[pipeliner.config] (inferred, source: cli, fresh) {01KXSSV8P6TANPCPGAB38T04YC}
+BUG: config/loader.go Load() calls loadOverrides THEN loadDefaults — defaults overwrite production overrides
+
+[pipeliner.config] (inferred, source: cli, fresh) {01KXSSVJRNG2JR6HD4XG3QVF77}
+deriveOverridePath in loader.go converts config/default.yaml to config/production.yaml automatically
+...
+```
+
+Findings (full root-cause analysis recorded on bead `known-syk`):
+
+- `known recall`'s flags (`--scope`, `--limit`, `--threshold`) are unchanged
+  by #36-#41 — the CLI surface itself did not break this path.
+- The committed `pipeliner_memory.db` **did** have schema/state drift: its
+  entries were stored under scope `known.pipeliner*` (auto-prefixed from the
+  directory name of wherever `known remember` happened to run in March), plus
+  a stray empty top-level `pipeliner` scope row that shadowed the real data
+  during scope resolution. Querying with the harness's literal `--scope
+  pipeliner` returned "No matching knowledge found" 100% of the time,
+  independent of query — a real, reproducible break.
+- Fixed by regenerating `pipeliner_memory.db` deterministically (see
+  `bench/testdata/seed_memory.go`) using the literal-scope escape hatch
+  (`--scope /pipeliner...`), which is immune to the cwd-dependent scope
+  auto-prefixing that broke the original DB. `bench/runner.go`'s with_memory
+  `RecallCommand` now queries `--scope /pipeliner` for the same reason.
+  Regeneration procedure:
+
+  ```bash
+  # From any directory (literal scope is cwd-independent). Requires the real
+  # MiniLM embedder (model cache at ~/.known/models) — NOT hermetic, run
+  # locally only, never inside `go test -tags bench`.
+  go build -o /tmp/known-bin ./cmd/known
+  go run bench/testdata/seed_memory.go | sed 's#^known #/tmp/known-bin #' \
+    | KNOWN_DSN=bench/testdata/pipeliner_memory.db sh
+  ```
+
 ## Retrieval Quality
+
+> **Provenance: commit `bac1839` (`feat/bench-suite` merge, 2026-07-17),
+> hermetic — no model/API key required (`go test -tags bench ./bench/... -run
+> TestBench`).**
+> **Known limitation: every scenario currently scores a saturated 1.000.** A
+> saturated metric has no headroom and cannot detect regressions or prove
+> discriminating power. Scaling the workload and adding graded (non-binary)
+> metrics to restore headroom is tracked separately in this round (see epic
+> `known-oqa`); the table below reflects the suite as of `bac1839` and will
+> be superseded once that work lands.
 
 How well does the search pipeline find the right facts?
 
@@ -62,6 +131,9 @@ OVERALL: 1.000
 ```
 
 ### Feature Ablation
+
+> **Provenance: commit `bac1839` (`feat/bench-suite` merge, 2026-07-17),
+> hermetic.**
 
 What happens when individual features are disabled?
 
@@ -87,14 +159,28 @@ What happens when individual features are disabled?
 go test -tags bench ./bench/... -run TestBench -v
 ```
 
-### Effectiveness benchmark (requires API key)
+### Hermetic effectiveness self-tests (no API key needed)
+
+Proves prompt assembly, all three conditions, scoring, and report generation
+work end to end via a deterministic stub Answerer — no network, no model, no
+`known` binary required:
+
+```bash
+go test -tags bench ./bench/ -run TestEffectivenessRun_StubAnswerer -v
+```
+
+### Effectiveness benchmark — live LLM rerun (requires API key)
+
+**This is the command to run to refresh the stale March table above against
+the current CLI surface.** Not run as part of this round (no API key
+available in this environment):
 
 ```bash
 ANTHROPIC_API_KEY=<key> \
 BENCH_MODEL=MiniMax-M2.5 \
 BENCH_BASE_URL=https://api.minimax.io/anthropic \
 BENCH_CONCURRENCY=5 \
-  go test -tags bench ./bench/ -run TestEffectivenessRun -v -timeout 30m
+  go test -tags bench ./bench/ -run '^TestEffectivenessRun$' -v -timeout 30m
 ```
 
 Environment variables:
@@ -119,13 +205,14 @@ bench/
   bench_test.go           # Retrieval benchmark harness
   effectiveness.go        # Question loading, answer checking, comparison
   runner.go               # LLM answerer interface + API implementations
-  runner_test.go          # Effectiveness benchmark harness
+  runner_test.go          # Effectiveness benchmark harness + stub Answerer self-tests
   baseline.go             # JSON baseline persistence + regression detection
   cmd/seedgen/main.go     # Deterministic seed DB generator (85 entries, 32 edges)
   testdata/
     seed.db               # Generated retrieval benchmark DB
     pipeliner_memory.db   # Discovered knowledge for with_memory condition
+                           # (regenerate via seed_memory.go — see procedure above)
     questions.yaml         # 50 questions across 5 sessions
-    seed_memory.go         # Alternative: hand-authored memory seed facts
+    seed_memory.go         # `known remember` command generator that seeds pipeliner_memory.db
     codebase/              # Synthetic "pipeliner" Go project (18 files, 3 bugs)
 ```
