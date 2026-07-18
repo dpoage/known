@@ -50,7 +50,8 @@ Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
 IDs are ULIDs (26 alphanumeric chars), never integers.
 
 **Dedup is success:** if content already exists you'll see `Duplicate <ULID>` with
-hints on how to extend it. Not a failure — the fact is already stored.
+hints on how to extend or correct it (`known update`, `--link elaborates:`, or
+`known add '<correction>' --supersedes '<old content>'`). Not a failure — the fact is already stored.
 
 **Link suggestions** (`Link?` lines): accept with `known link accept '<content>' --all`
 or selectively: `known link accept '<content>' 1 2`.

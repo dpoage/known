@@ -521,6 +521,53 @@ func TestExplicitTTLSetsExpiry_Fail(t *testing.T) {
 	}
 }
 
+// ---- Qam-oneshot-supersede ----
+//
+// Stubs three calls: add (original), add --supersedes (correction), show --json.
+// Pass: add --supersedes exits 0 with 'Supersedes' line, show --json has supersedes edge.
+// Fail: baseline binary (no --supersedes flag) exits non-zero on the add.
+
+func TestOneshotSupersede_Pass(t *testing.T) {
+	ulid1 := "01KXSBAZ7HZ71JFM5FGHRHVKMX" // original
+	ulid2 := "01KXSBBCBHP8NB6ZCETENBBSX8" // correction
+
+	// Call 1: add original
+	addOrigOut := fmt.Sprintf("Stored    %s\nScope     known\n          \"renderer architecture decision SIBLING RendererInterface original\"\n", ulid1)
+	// Call 2: add --supersedes (correction)
+	addCorrOut := fmt.Sprintf(
+		"Resolved \"renderer architecture decision SIBLING RendererInterface original\" → %s  renderer...  [known]\nStored    %s\nScope     known\n          \"CORRECTION renderer architecture decision decoupling\"\n\nSupersedes %s -[supersedes]-> %s\n",
+		ulid1, ulid2, ulid2, ulid1,
+	)
+	// Call 3: show --json (new entry has outgoing supersedes edge)
+	showOut := fmt.Sprintf(
+		`{"entry":{"id":%q,"content":"CORRECTION renderer architecture decision decoupling","content_hash":"abc","source":{"type":"manual","reference":"cli"},"provenance":{"level":"inferred"},"freshness":{"observed_at":"2026-07-17T00:00:00Z"},"scope":"known","version":1,"created_at":"2026-07-17T00:00:00Z","updated_at":"2026-07-17T00:00:00Z"},"outgoing_edges":[{"id":"01KXSBBCPN8BM3Q0ESXH57RE6Z","from_id":%q,"to_id":%q,"type":"supersedes","created_at":"2026-07-17T00:00:00Z"}],"incoming_edges":[]}`,
+		ulid2, ulid2, ulid1,
+	) + "\n"
+
+	bin := stubCallN(t, []string{addOrigOut, addCorrOut, showOut}, []int{0, 0, 0})
+	sc := scenarioByID("Qam-oneshot-supersede")
+	r := runScenario(bin, sc)
+	if !r.Pass {
+		t.Errorf("expected PASS; output=%q predicate=%q", r.Output, r.PredicateDesc)
+	}
+}
+
+func TestOneshotSupersede_Fail(t *testing.T) {
+	ulid1 := "01KXSBAZ7HZ71JFM5FGHRHVKMX"
+
+	// Call 1: add original — succeeds.
+	addOrigOut := fmt.Sprintf("Stored    %s\nScope     known\n          \"renderer architecture decision SIBLING RendererInterface original\"\n", ulid1)
+	// Call 2: add --supersedes — baseline exits non-zero (unknown flag --supersedes).
+	addFailOut := "error: unknown flag: --supersedes\n       Usage: known add <content> [flags]\n              known add --help for full flag list\n"
+
+	bin := stubCallN(t, []string{addOrigOut, addFailOut}, []int{0, 1})
+	sc := scenarioByID("Qam-oneshot-supersede")
+	r := runScenario(bin, sc)
+	if r.Pass {
+		t.Errorf("expected FAIL (baseline: --supersedes unknown flag); output=%q", r.Output)
+	}
+}
+
 // scenarioByID finds a scenario by ID; panics if not found.
 func scenarioByID(id string) Scenario {
 	for _, sc := range corpus() {

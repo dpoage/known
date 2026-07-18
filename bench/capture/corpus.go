@@ -365,12 +365,13 @@ func corpus() []Scenario {
 		// resolves the target by content, stores the correction, and creates the
 		// supersedes edge atomically — zero ULIDs typed.
 		//
-		// Predicate: exit 0 AND stdout contains 'Supersedes' AND edge exists
-		// (verified via `known --json show <new-ulid>` edges-from check is not available
-		// on CLI; we verify edge via the Supersedes line in add output, which only
-		// appears when the edge was successfully created).
+		// Predicate (two-stage):
+		//   1. add --supersedes exits 0 AND stdout contains 'Supersedes'.
+		//   2. known --json show <new-ulid> emits outgoing_edges containing a
+		//      supersedes edge — verifies real graph state, not just CLI output.
+		//   `known --json show <ulid>` emits {"entry":{...},"outgoing_edges":[...],...}.
 		//
-		// Baseline de676db lacks --supersedes flag → exits non-zero.
+		// Baseline de676db lacks --supersedes flag → exits non-zero (stage 1 fails).
 		{
 			ID:                 "Qam-oneshot-supersede",
 			Name:               "add --supersedes: one-shot correction stores entry and edge, zero ULIDs typed",
@@ -394,12 +395,37 @@ func corpus() []Scenario {
 				// One-shot supersede: store correction + create edge in one command.
 				// Use exact original content as --supersedes query so the resolver's
 				// exact-match path fires (no ambiguity).
-				out, code := runArgs(bin, env, dir, []string{
+				addOut, addCode := runArgs(bin, env, dir, []string{
 					"add", correction,
 					"--supersedes", originalContent,
 				})
-				pass := code == 0 && strings.Contains(out, "Supersedes")
-				return out, code, "exit 0 AND stdout contains 'Supersedes'", pass
+				if addCode != 0 || !strings.Contains(addOut, "Supersedes") {
+					pred := "exit 0 AND stdout contains 'Supersedes' (stage 1)"
+					return addOut, addCode, pred, false
+				}
+
+				// Extract the new entry's ULID from the "Stored <ULID>" line in add output.
+				// We must not use FindString on the full output — the "Resolved → <oldULID>"
+				// line appears first and would yield the superseded entry's ULID, not the new one.
+				var newULID string
+				for _, line := range strings.Split(addOut, "\n") {
+					if strings.HasPrefix(strings.TrimSpace(line), "Stored") {
+						if m := reULID.FindString(line); m != "" {
+							newULID = m
+							break
+						}
+					}
+				}
+				if newULID == "" {
+					return addOut, 0, "add output must contain a 'Stored <ULID>' line for stage 2 check", false
+				}
+
+				// Stage 2: verify the supersedes edge exists in the graph via show --json.
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", newULID})
+				hasEdge := showCode == 0 && strings.Contains(showOut, `"supersedes"`)
+				combined := addOut + "\n---show--json---\n" + showOut
+				pred := fmt.Sprintf("stage 1: Supersedes in add output; stage 2: show --json contains supersedes edge (showCode=%d)", showCode)
+				return combined, addCode, pred, hasEdge
 			},
 		},
 	}

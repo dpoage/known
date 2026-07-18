@@ -38,6 +38,7 @@ Scope     myproject
           "All new database tables use ULIDs instead of integers"
 Hint      known update 01KXSBAZ7HZ71JFM5FGHRHVKMX --content '...'
           known add '<new fact>' --link elaborates:01KXSBAZ7HZ71JFM5FGHRHVKMX
+          known add '<correction>' --supersedes 'All new database tables use ULIDs instead of integers'
 Link?     related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
 ```
 

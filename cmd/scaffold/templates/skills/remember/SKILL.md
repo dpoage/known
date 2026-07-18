@@ -42,6 +42,7 @@ Scope     myproject
           "All new database tables use ULIDs instead of integers"
 Hint      known update 01KXSBAZ7HZ71JFM5FGHRHVKMX --content '...'
           known add '<new fact>' --link elaborates:01KXSBAZ7HZ71JFM5FGHRHVKMX
+          known add '<correction>' --supersedes 'All new database tables use ULIDs instead of integers'
 ```
 
 The fact is already stored. Use the hints to extend or correct it.
