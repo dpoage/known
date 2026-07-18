@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -144,8 +145,9 @@ func TestReinforce_ActionAfterRecall(t *testing.T) {
 	if got.Weight == nil {
 		t.Fatal("edge weight should not be nil after boost")
 	}
-	want := 0.5 + cfg.BoostAmount
-	if *got.Weight != want {
+	// New formula: weight * decay + showBoost = 0.5 * 0.99 + 0.02 = 0.515
+	want := 0.5*cfg.DecayFactor + cfg.ShowBoost
+	if math.Abs(*got.Weight-want) > 1e-9 {
 		t.Errorf("edge weight = %f, want %f", *got.Weight, want)
 	}
 }
@@ -215,8 +217,9 @@ func TestReinforce_WeightCappedAtMax(t *testing.T) {
 	entryRepo.Create(ctx, &e1)
 	entryRepo.Create(ctx, &e2)
 
-	// Edge already at 0.98 — boost should cap at 1.0.
-	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.98)
+	// Edge at MaxWeight — after decay+boost it would be 1.0*0.99+0.02=1.01,
+	// which must be clamped to MaxWeight (1.0).
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(1.0)
 	edgeRepo.Create(ctx, &edge)
 
 	sessID := model.NewID()
@@ -546,8 +549,9 @@ func TestReinforce_LinkActionBoostsEdge(t *testing.T) {
 	}
 
 	got, _ := edgeRepo.Get(ctx, edge.ID)
-	want := 0.5 + cfg.BoostAmount
-	if *got.Weight != want {
+	// New formula: weight * decay + linkBoost = 0.5 * 0.99 + 0.05 = 0.545
+	want := 0.5*cfg.DecayFactor + cfg.LinkBoost
+	if math.Abs(*got.Weight-want) > 1e-9 {
 		t.Errorf("edge weight = %f, want %f", *got.Weight, want)
 	}
 }

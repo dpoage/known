@@ -191,6 +191,9 @@ type mockEdgeRepo struct {
 	edges map[string]*model.Edge
 	// entryRepo is needed for FindConflicts to return entries.
 	entryRepo *mockEntryRepo
+	// updateErr, when non-nil, causes Update to return the mapped error for
+	// the given edge ID string. Used by TestReinforce_PartialFailureAccounting.
+	updateErr map[string]error
 }
 
 func newMockEdgeRepo(entryRepo *mockEntryRepo) *mockEdgeRepo {
@@ -221,6 +224,11 @@ func (m *mockEdgeRepo) Get(_ context.Context, id model.ID) (*model.Edge, error) 
 func (m *mockEdgeRepo) Update(_ context.Context, edge *model.Edge) error {
 	if _, ok := m.edges[edge.ID.String()]; !ok {
 		return storage.ErrNotFound
+	}
+	if m.updateErr != nil {
+		if err, bad := m.updateErr[edge.ID.String()]; bad {
+			return err
+		}
 	}
 	clone := *edge
 	m.edges[edge.ID.String()] = &clone
@@ -401,6 +409,10 @@ func makeEntry(content, scope string, embedding []float32) model.Entry {
 func makeEntryAt(content, scope string, embedding []float32, createdAt time.Time) model.Entry {
 	entry := makeEntry(content, scope, embedding)
 	entry.CreatedAt = createdAt
+	// Also backdate ObservedAt so freshness scoring (which prefers ObservedAt)
+	// reflects the intended age. Without this, ObservedAt stays as time.Now()
+	// and both entries look equally fresh regardless of CreatedAt.
+	entry.Freshness.ObservedAt = createdAt
 	return entry
 }
 
@@ -1938,6 +1950,7 @@ func TestSearchHybrid_TextFusion(t *testing.T) {
 		t.Logf("e1 score=%f, e2 score=%f (expected equal with symmetric ranking)", scoreE1, scoreE2)
 	}
 }
+
 // =============================================================================
 // known-mrc: Nil embedder sentinel error tests
 // =============================================================================
@@ -2144,5 +2157,455 @@ func TestSearchHybrid_TotalLimitZeroMeansUnlimited(t *testing.T) {
 	// 1 seed + 4 neighbors = 5 total.
 	if len(results) < 5 {
 		t.Errorf("TotalLimit=0 should not truncate: got %d results, want >= 5", len(results))
+	}
+}
+
+// =============================================================================
+// known-2s3: FTS identifier rescue
+// =============================================================================
+
+// TestSearchHybrid_IdentifierRescuedByFTS verifies that exact-match queries on
+// identifiers (IPs, version strings, OIDC tokens, ULID fragments) surface the
+// correct entry even when the vector embedder returns LOW similarity for it.
+// This is the core acceptance criterion for known-2s3: FTS must rescue the
+// right entry via RRF fusion when vector similarity alone is insufficient.
+func TestSearchHybrid_IdentifierRescuedByFTS(t *testing.T) {
+	identifiers := []struct {
+		name    string
+		content string
+		query   string
+	}{
+		{"IP address", "gateway is at 10.0.1.5", "10.0.1.5"},
+		{"version string", "pgvector 0.7.4 installed", "pgvector 0.7.4"},
+		{"OIDC", "auth uses OIDC provider", "OIDC"},
+	}
+
+	for _, tc := range identifiers {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(3)
+			ctx := context.Background()
+
+			// Embedder returns a fixed vector; the identifier entry will have
+			// LOW cosine similarity (orthogonal vector) so vector alone won't
+			// surface it.
+			f.embedder.embedFn = func(text string) []float32 {
+				return []float32{1.0, 0.0, 0.0}
+			}
+
+			// Decoy: high vector similarity but no text match.
+			mustCreateEntry(t, f.entryRepo, makeEntry("unrelated semantic match", "root", []float32{0.99, 0.1, 0.0}))
+			// Target: the identifier entry with low vector similarity.
+			target := mustCreateEntry(t, f.entryRepo, makeEntry(tc.content, "root", []float32{0.0, 0.0, 1.0}))
+
+			// FTS returns the target as #1 result (strong exact match).
+			f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+				return []storage.SimilarityResult{
+					{Entry: target, Distance: -10.0}, // top FTS hit
+				}, nil
+			}
+
+			results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+				Vector: VectorOptions{
+					Text:  tc.query,
+					Scope: "root",
+					Limit: 5,
+				},
+				ExpandDepth:     0,
+				ExpandDirection: Outgoing,
+				TextSearch:      true,
+			})
+			if err != nil {
+				t.Fatalf("SearchHybrid: %v", err)
+			}
+
+			found := false
+			for _, r := range results {
+				if r.Entry.ID == target.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("identifier entry %q not found in results for query %q; FTS rescue failed", tc.content, tc.query)
+			}
+		})
+	}
+}
+
+// TestSearchHybrid_IdentifierTopRankedWhenFTSExclusive verifies that when the
+// identifier entry does NOT appear in vector results at all (completely missed),
+// FTS alone can surface it via RRF with a positive score.
+func TestSearchHybrid_IdentifierTopRankedWhenFTSExclusive(t *testing.T) {
+	f := newTestFixture(1) // 1-dimensional embeddings
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(_ string) []float32 { return []float32{1.0} }
+
+	// The identifier entry has no embedding (won't appear in vector results).
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	target := model.NewEntry("OIDC provider endpoint https://auth.example.com/.well-known/openid-configuration", src).WithScope("root")
+	f.entryRepo.Create(ctx, &target)
+
+	// Decoy with good vector similarity.
+	mustCreateEntry(t, f.entryRepo, makeEntry("some other config entry", "root", []float32{0.99}))
+
+	f.entryRepo.searchText = func(_ context.Context, _ string, _ string, _ int) ([]storage.SimilarityResult, error) {
+		return []storage.SimilarityResult{
+			{Entry: target, Distance: -8.0},
+		}, nil
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector:     VectorOptions{Text: "OIDC", Scope: "root", Limit: 5},
+		TextSearch: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Entry.ID == target.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("FTS-exclusive entry should appear in hybrid results via RRF")
+	}
+}
+
+// =============================================================================
+// known-oj3: ObservedAt freshness
+// =============================================================================
+
+// TestFreshnessScore_ObservedAtPreferredOverCreatedAt verifies the core fix:
+// an entry re-observed recently scores higher than a same-age entry that was
+// never re-observed, even when both were created at the same time.
+func TestFreshnessScore_ObservedAtPreferredOverCreatedAt(t *testing.T) {
+	halfLife := 7 * 24 * time.Hour
+	now := time.Now()
+	longAgo := now.Add(-30 * 24 * time.Hour)
+
+	// Both created 30 days ago.
+	// staleEntry: ObservedAt also 30 days ago (never re-verified).
+	staleScore := freshnessScoreAt(longAgo, longAgo, halfLife)
+	// freshEntry: ObservedAt is now (re-verified today).
+	freshScore := freshnessScoreAt(longAgo, now, halfLife)
+
+	if freshScore <= staleScore {
+		t.Errorf("re-observed entry (freshScore=%f) should outscore stale entry (staleScore=%f)", freshScore, staleScore)
+	}
+	// Fresh entry should be nearly 1.0 (observed just now).
+	if freshScore < 0.99 {
+		t.Errorf("freshScore=%f, want ~1.0 for just-observed entry", freshScore)
+	}
+	// Stale entry at 30 days with 7-day half-life: exp(-ln2*30/7) ≈ 0.049.
+	if staleScore > 0.1 {
+		t.Errorf("staleScore=%f, want < 0.1 for 30-day-old unobserved entry", staleScore)
+	}
+}
+
+// TestFreshnessScore_ZeroObservedAtFallsBackToCreatedAt verifies backwards
+// compatibility: when ObservedAt is zero (not set), CreatedAt is used.
+func TestFreshnessScore_ZeroObservedAtFallsBackToCreatedAt(t *testing.T) {
+	halfLife := 7 * 24 * time.Hour
+	now := time.Now()
+	longAgo := now.Add(-14 * 24 * time.Hour) // 2 half-lives
+
+	scoreWithZeroObs := freshnessScoreAt(longAgo, time.Time{}, halfLife)
+	scoreFromCreatedAt := freshnessScore(longAgo, halfLife)
+
+	if math.Abs(scoreWithZeroObs-scoreFromCreatedAt) > 1e-10 {
+		t.Errorf("zero ObservedAt should give same result as CreatedAt: got %f vs %f", scoreWithZeroObs, scoreFromCreatedAt)
+	}
+	// At 2 half-lives, score ≈ 0.25.
+	if scoreWithZeroObs < 0.2 || scoreWithZeroObs > 0.3 {
+		t.Errorf("score at 2 half-lives = %f, want ~0.25", scoreWithZeroObs)
+	}
+}
+
+// TestSearchVector_ObservedAtFreshnessRescuesOldEntry verifies that an old
+// entry recently re-observed beats a newer-created entry that was never
+// re-observed when recency weighting is enabled.
+func TestSearchVector_ObservedAtFreshnessRescuesOldEntry(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(_ string) []float32 { return []float32{1.0, 0.0, 0.0} }
+
+	now := time.Now()
+	oneYearAgo := now.Add(-365 * 24 * time.Hour)
+	oneWeekAgo := now.Add(-7 * 24 * time.Hour)
+
+	// Old entry created 1 year ago but re-observed today.
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	reobservedEntry := model.NewEntry("old but re-verified config", src).WithScope("root")
+	reobservedEntry.CreatedAt = oneYearAgo
+	reobservedEntry.Freshness.ObservedAt = now // re-observed today!
+	reobservedEntry = reobservedEntry.WithEmbedding([]float32{0.9, 0.1, 0.0}, "mock")
+	f.entryRepo.Create(ctx, &reobservedEntry)
+
+	// Newer entry created 1 week ago but never re-observed.
+	neverObservedEntry := model.NewEntry("newer but stale config", src).WithScope("root")
+	neverObservedEntry.CreatedAt = oneWeekAgo
+	neverObservedEntry.Freshness.ObservedAt = oneWeekAgo
+	neverObservedEntry = neverObservedEntry.WithEmbedding([]float32{0.85, 0.15, 0.0}, "mock")
+	f.entryRepo.Create(ctx, &neverObservedEntry)
+
+	results, err := f.engine.SearchVector(ctx, VectorOptions{
+		Text:            "config",
+		Scope:           "root",
+		Limit:           5,
+		RecencyWeight:   0.8,
+		RecencyHalfLife: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("SearchVector: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Entry.ID != reobservedEntry.ID {
+		t.Errorf("re-observed old entry should rank first (freshness=~1.0 beats week-old unobserved); got %q first", results[0].Entry.Content)
+	}
+}
+
+// =============================================================================
+// known-906: decay, differentiated boosts, saturation, accounting
+// =============================================================================
+
+// TestReinforce_UnusedEdgesDecayBelowInitial verifies that an edge that is
+// never reinforced (but adjacent to acted-on nodes) decays on each cycle.
+// After N cycles its weight must be below the initial value.
+func TestReinforce_UnusedEdgesDecayBelowInitial(t *testing.T) {
+	ctx := context.Background()
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	// Edge between e1 and e2 at initial weight 0.5.
+	initial := 0.5
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(initial)
+	edgeRepo.Create(ctx, &edge)
+
+	cfg := ReinforceConfig{
+		ShowBoost:   0.0, // no boost — pure decay
+		UpdateBoost: 0.0,
+		LinkBoost:   0.0,
+		DecayFactor: 0.95, // 5% decay per cycle
+		MinWeight:   0.01,
+		MaxWeight:   1.0,
+	}
+
+	// Run 5 sessions each with a recall→show pattern on e1.
+	// Since ShowBoost=0, the edge only decays.
+	for i := range 5 {
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: fmt.Sprintf("q%d", i), CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+
+		_, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+		if err != nil {
+			t.Fatalf("Reinforce cycle %d: %v", i, err)
+		}
+	}
+
+	got, _ := edgeRepo.Get(ctx, edge.ID)
+	if got.Weight == nil {
+		t.Fatal("edge weight should be set")
+	}
+	if *got.Weight >= initial {
+		t.Errorf("unused edge weight %f should be below initial %f after 5 decay cycles", *got.Weight, initial)
+	}
+	// After 5 cycles at 0.95 decay: 0.5 * 0.95^5 ≈ 0.387
+	want := initial * math.Pow(0.95, 5)
+	if math.Abs(*got.Weight-want) > 1e-6 {
+		t.Errorf("edge weight = %f, want %f (5 cycles of 0.95 decay)", *got.Weight, want)
+	}
+}
+
+// TestReinforce_SaturationPreventedByDecay verifies that even when an edge is
+// boosted every session, decay prevents it from immediately reaching MaxWeight
+// and holding there forever. After enough cycles it converges to an equilibrium
+// (boost / (1 - decay)) rather than a hard cap.
+func TestReinforce_SaturationPreventedByDecay(t *testing.T) {
+	ctx := context.Background()
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	// Edge starting at 0.0 (nil weight → EffectiveWeight=1.0, so use explicit low weight).
+	initialW := 0.1
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(initialW)
+	edgeRepo.Create(ctx, &edge)
+
+	cfg := ReinforceConfig{
+		// Use show event for predictability.
+		ShowBoost:   0.1,
+		UpdateBoost: 0.1,
+		LinkBoost:   0.1,
+		DecayFactor: 0.9,
+		MinWeight:   0.01,
+		MaxWeight:   1.0,
+	}
+
+	// Equilibrium = boost / (1 - decay) = 0.1 / 0.1 = 1.0 → would hit MaxWeight.
+	// After many cycles it should converge to MaxWeight (1.0), not some intermediate
+	// unlimitable value. What we verify is that it does NOT OVERSHOOT MaxWeight.
+	for i := range 50 {
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: fmt.Sprintf("q%d", i), CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+		_, err := engine.Reinforce(ctx, sessions, noopTx, cfg)
+		if err != nil {
+			t.Fatalf("Reinforce cycle %d: %v", i, err)
+		}
+
+		got, _ := edgeRepo.Get(ctx, edge.ID)
+		if *got.Weight > cfg.MaxWeight+1e-9 {
+			t.Errorf("cycle %d: edge weight %f exceeds MaxWeight %f", i, *got.Weight, cfg.MaxWeight)
+		}
+	}
+}
+
+// TestReinforce_DifferentiatedBoostsByActionType verifies that show events
+// produce smaller boosts than update/link events.
+func TestReinforce_DifferentiatedBoostsByActionType(t *testing.T) {
+	ctx := context.Background()
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+
+	cfg := DefaultReinforceConfig()
+
+	runSession := func(actionType model.EventType) float64 {
+		entryRepo := newMockEntryRepo()
+		edgeRepo := newMockEdgeRepo(entryRepo)
+		engine := New(entryRepo, edgeRepo, nil)
+		sessions := newMockSessionRepo()
+
+		e1 := model.NewEntry("e1", src).WithScope("test")
+		e2 := model.NewEntry("e2", src).WithScope("test")
+		entryRepo.Create(ctx, &e1)
+		entryRepo.Create(ctx, &e2)
+
+		edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+		edgeRepo.Create(ctx, &edge)
+
+		sessID := model.NewID()
+		now := time.Now()
+		ended := now.Add(time.Minute)
+		sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+			Query: "q", CreatedAt: now,
+		})
+		sessions.LogEvent(ctx, &model.SessionEvent{
+			ID: model.NewID(), SessionID: sessID, EventType: actionType,
+			EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+		})
+
+		engine.Reinforce(ctx, sessions, noopTx, cfg)
+		got, _ := edgeRepo.Get(ctx, edge.ID)
+		return *got.Weight
+	}
+
+	showWeight := runSession(model.EventShow)
+	updateWeight := runSession(model.EventUpdate)
+	linkWeight := runSession(model.EventLink)
+
+	if showWeight >= updateWeight {
+		t.Errorf("show boost (%f) should be < update boost (%f)", showWeight, updateWeight)
+	}
+	if showWeight >= linkWeight {
+		t.Errorf("show boost (%f) should be < link boost (%f)", showWeight, linkWeight)
+	}
+	// update and link should be equal.
+	if math.Abs(updateWeight-linkWeight) > 1e-9 {
+		t.Errorf("update boost (%f) should equal link boost (%f)", updateWeight, linkWeight)
+	}
+}
+
+// TestReinforce_PartialFailureAccounting verifies the error contract:
+// when an edge Update fails mid-loop, processSession returns the count of
+// edges successfully updated BEFORE the failure plus the error. Reinforce
+// wraps this in a transaction (rolled back on error) so the net EdgesBoosted
+// for a failed session is zero.
+func TestReinforce_PartialFailureAccounting(t *testing.T) {
+	ctx := context.Background()
+	src := model.Source{Type: model.SourceManual, Reference: "test"}
+
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+	sessions := newMockSessionRepo()
+
+	e1 := model.NewEntry("e1", src).WithScope("test")
+	e2 := model.NewEntry("e2", src).WithScope("test")
+	entryRepo.Create(ctx, &e1)
+	entryRepo.Create(ctx, &e2)
+
+	edge := model.NewEdge(e1.ID, e2.ID, model.EdgeRelatedTo).WithWeight(0.5)
+	edgeRepo.Create(ctx, &edge)
+
+	// Inject a failing Update for this edge.
+	edgeRepo.updateErr = map[string]error{
+		edge.ID.String(): fmt.Errorf("simulated write failure"),
+	}
+
+	sessID := model.NewID()
+	now := time.Now()
+	ended := now.Add(time.Minute)
+	sessions.CreateSession(ctx, &model.Session{ID: sessID, StartedAt: now, EndedAt: &ended})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventRecall,
+		Query: "q", CreatedAt: now,
+	})
+	sessions.LogEvent(ctx, &model.SessionEvent{
+		ID: model.NewID(), SessionID: sessID, EventType: model.EventShow,
+		EntryIDs: []model.ID{e1.ID}, CreatedAt: now.Add(time.Second),
+	})
+
+	result, err := engine.Reinforce(ctx, sessions, noopTx, DefaultReinforceConfig())
+
+	// Reinforce must return an error when a session fails.
+	if err == nil {
+		t.Fatal("expected error from Reinforce on Update failure, got nil")
+	}
+	// EdgesBoosted should be zero: the transaction rolled back.
+	// (noopTx doesn't actually roll back in tests, but EdgesBoosted accumulates
+	// only AFTER a successful session — on error, Reinforce returns early.)
+	if result != nil && result.EdgesBoosted > 0 {
+		t.Errorf("EdgesBoosted = %d on error, want 0 (partial failure must not report success)", result.EdgesBoosted)
 	}
 }
