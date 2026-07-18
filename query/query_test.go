@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -1243,6 +1244,10 @@ func TestSearchHybrid_EdgeTypeFilter(t *testing.T) {
 	}
 }
 
+// TestSearchHybrid_EdgeWeightAffectsScore verifies that expansion scores
+// preserve edge-weight ordering: a higher-weight edge from the same parent
+// must produce a higher score than a lower-weight edge.
+// Score formula: parentScore * edgeWeight * expansionDepthDecay.
 func TestSearchHybrid_EdgeWeightAffectsScore(t *testing.T) {
 	f := newTestFixture(3)
 	ctx := context.Background()
@@ -1283,27 +1288,35 @@ func TestSearchHybrid_EdgeWeightAffectsScore(t *testing.T) {
 		t.Fatalf("SearchHybrid: %v", err)
 	}
 
-	var e2Score, e3Score float64
+	var e1Score, e2Score, e3Score float64
 	for _, r := range results {
-		if r.Entry.ID == e2.ID {
+		switch r.Entry.ID {
+		case e1.ID:
+			e1Score = r.Score
+		case e2.ID:
 			e2Score = r.Score
-		}
-		if r.Entry.ID == e3.ID {
+		case e3.ID:
 			e3Score = r.Score
 		}
 	}
 
-	if e2Score != 0.9 {
-		t.Errorf("strong edge result score = %f, want 0.9", e2Score)
+	// Both expansion scores must use parentScore * edgeWeight * expansionDepthDecay.
+	wantE2 := e1Score * strongWeight * expansionDepthDecay
+	wantE3 := e1Score * weakWeight * expansionDepthDecay
+	if math.Abs(e2Score-wantE2) > 1e-10 {
+		t.Errorf("strong edge score = %f, want %f (parentScore=%f * 0.9 * %f)", e2Score, wantE2, e1Score, expansionDepthDecay)
 	}
-	if e3Score != 0.3 {
-		t.Errorf("weak edge result score = %f, want 0.3", e3Score)
+	if math.Abs(e3Score-wantE3) > 1e-10 {
+		t.Errorf("weak edge score = %f, want %f (parentScore=%f * 0.3 * %f)", e3Score, wantE3, e1Score, expansionDepthDecay)
 	}
 	if e2Score <= e3Score {
 		t.Errorf("strong edge score (%f) should be greater than weak edge score (%f)", e2Score, e3Score)
 	}
 }
 
+// TestSearchHybrid_NilEdgeWeightTreatedAsOne verifies that a nil edge weight
+// is treated as 1.0 (EffectiveWeight default), and the expansion score is
+// parentScore * 1.0 * expansionDepthDecay (not a literal 1.0).
 func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 	f := newTestFixture(3)
 	ctx := context.Background()
@@ -1331,10 +1344,19 @@ func TestSearchHybrid_NilEdgeWeightTreatedAsOne(t *testing.T) {
 		t.Fatalf("SearchHybrid: %v", err)
 	}
 
+	var e1Score float64
+	for _, r := range results {
+		if r.Entry.ID == e1.ID {
+			e1Score = r.Score
+		}
+	}
+
 	for _, r := range results {
 		if r.Entry.ID == e2.ID {
-			if r.Score != 1.0 {
-				t.Errorf("nil weight expansion score = %f, want 1.0", r.Score)
+			// nil weight → EffectiveWeight() == 1.0, so score = parentScore * 1.0 * decay.
+			want := e1Score * 1.0 * expansionDepthDecay
+			if math.Abs(r.Score-want) > 1e-10 {
+				t.Errorf("nil weight expansion score = %f, want %f (parentScore=%f * decay=%f)", r.Score, want, e1Score, expansionDepthDecay)
 			}
 			return
 		}
@@ -1914,5 +1936,213 @@ func TestSearchHybrid_TextFusion(t *testing.T) {
 	}
 	if math.Abs(scoreE1-scoreE2) > 1e-10 {
 		t.Logf("e1 score=%f, e2 score=%f (expected equal with symmetric ranking)", scoreE1, scoreE2)
+	}
+}
+// =============================================================================
+// known-mrc: Nil embedder sentinel error tests
+// =============================================================================
+
+func TestSearchVector_NilEmbedder_ReturnsErrNoEmbedder(t *testing.T) {
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	// Engine with nil embedder.
+	engine := New(entryRepo, edgeRepo, nil)
+
+	_, err := engine.SearchVector(context.Background(), VectorOptions{
+		Text:  "test query",
+		Scope: "root",
+		Limit: 5,
+	})
+	if err == nil {
+		t.Fatal("expected error from SearchVector with nil embedder, got nil")
+	}
+	if !errors.Is(err, ErrNoEmbedder) {
+		t.Errorf("SearchVector nil embedder: got %v, want ErrNoEmbedder", err)
+	}
+}
+
+func TestSearchHybrid_NilEmbedder_ReturnsErrNoEmbedder(t *testing.T) {
+	entryRepo := newMockEntryRepo()
+	edgeRepo := newMockEdgeRepo(entryRepo)
+	engine := New(entryRepo, edgeRepo, nil)
+
+	_, err := engine.SearchHybrid(context.Background(), HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test query",
+			Scope: "root",
+			Limit: 5,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Both,
+	})
+	if err == nil {
+		t.Fatal("expected error from SearchHybrid with nil embedder, got nil")
+	}
+	if !errors.Is(err, ErrNoEmbedder) {
+		t.Errorf("SearchHybrid nil embedder: got %v, want ErrNoEmbedder", err)
+	}
+}
+
+// =============================================================================
+// known-1so: Expansion score inversion test
+// =============================================================================
+
+// TestSearchHybrid_ExpansionScoreInversion is the canonical test from the bead:
+// a weight-1.0 edge from a LOW-relevance parent must NOT outrank a 0.8 edge
+// from a HIGH-relevance parent. Under the old scoring (pure edge weight) this
+// was inverted; the new formula fixes it.
+func TestSearchHybrid_ExpansionScoreInversion(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	// Query vector: {1, 0, 0}.
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	// highParent: very similar to query (high score ~0.997).
+	// lowParent: orthogonal to query (low score ~0.5).
+	highParent := mustCreateEntry(t, f.entryRepo, makeEntry("high relevance", "root", []float32{1.0, 0.05, 0.0}))
+	lowParent := mustCreateEntry(t, f.entryRepo, makeEntry("low relevance", "root", []float32{0.0, 1.0, 0.0}))
+
+	// highChild reached via 0.8 edge from highParent.
+	// lowChild reached via 1.0 edge from lowParent.
+	highChild := mustCreateEntry(t, f.entryRepo, makeEntry("high-parent child", "root", nil))
+	lowChild := mustCreateEntry(t, f.entryRepo, makeEntry("low-parent child", "root", nil))
+
+	highEdgeW := 0.8
+	highEdge := model.NewEdge(highParent.ID, highChild.ID, model.EdgeElaborates)
+	highEdge.Weight = &highEdgeW
+	if err := f.edgeRepo.Create(ctx, &highEdge); err != nil {
+		t.Fatalf("create high-parent edge: %v", err)
+	}
+
+	lowEdgeW := 1.0
+	lowEdge := model.NewEdge(lowParent.ID, lowChild.ID, model.EdgeElaborates)
+	lowEdge.Weight = &lowEdgeW
+	if err := f.edgeRepo.Create(ctx, &lowEdge); err != nil {
+		t.Fatalf("create low-parent edge: %v", err)
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test",
+			Scope: "root",
+			Limit: 10,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+
+	var highChildScore, lowChildScore float64
+	for _, r := range results {
+		switch r.Entry.ID {
+		case highChild.ID:
+			highChildScore = r.Score
+		case lowChild.ID:
+			lowChildScore = r.Score
+		}
+	}
+
+	if highChildScore == 0 {
+		t.Fatal("highChild not found in results")
+	}
+	if lowChildScore == 0 {
+		t.Fatal("lowChild not found in results")
+	}
+	// The critical invariant: highChild (0.8 edge, high-relevance parent) must
+	// beat lowChild (1.0 edge, low-relevance parent). Old scoring inverted this.
+	if highChildScore <= lowChildScore {
+		t.Errorf("inversion bug: highChild score (%f) <= lowChild score (%f); "+
+			"a 0.8 edge from a high-relevance parent must outrank a 1.0 edge from a low-relevance parent",
+			highChildScore, lowChildScore)
+	}
+}
+
+// =============================================================================
+// known-6hj: TotalLimit truncation and sort-order tests
+// =============================================================================
+
+// TestSearchHybrid_TotalLimit verifies that TotalLimit caps and sorts the
+// combined (vector + expansion) result set.
+func TestSearchHybrid_TotalLimit(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	// Create a seed entry and many neighbors to ensure > 3 total results.
+	seed := mustCreateEntry(t, f.entryRepo, makeEntry("seed", "root", []float32{0.99, 0.1, 0.0}))
+	for i := 0; i < 5; i++ {
+		neighbor := mustCreateEntry(t, f.entryRepo, makeEntry(fmt.Sprintf("neighbor-%d", i), "root", nil))
+		mustCreateEdge(t, f.edgeRepo, seed.ID, neighbor.ID, model.EdgeElaborates)
+	}
+
+	limit := 3
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test",
+			Scope: "root",
+			Limit: 10,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+		TotalLimit:      limit,
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid with TotalLimit: %v", err)
+	}
+
+	if len(results) != limit {
+		t.Errorf("TotalLimit=%d: got %d results, want %d", limit, len(results), limit)
+	}
+
+	// Verify results are sorted by score descending.
+	for i := 1; i < len(results); i++ {
+		if results[i].Score > results[i-1].Score {
+			t.Errorf("results not sorted: results[%d].Score=%f > results[%d].Score=%f",
+				i, results[i].Score, i-1, results[i-1].Score)
+		}
+	}
+}
+
+// TestSearchHybrid_TotalLimitZeroMeansUnlimited verifies that TotalLimit=0
+// does not truncate results.
+func TestSearchHybrid_TotalLimitZeroMeansUnlimited(t *testing.T) {
+	f := newTestFixture(3)
+	ctx := context.Background()
+
+	f.embedder.embedFn = func(text string) []float32 {
+		return []float32{1.0, 0.0, 0.0}
+	}
+
+	seed := mustCreateEntry(t, f.entryRepo, makeEntry("seed", "root", []float32{0.99, 0.1, 0.0}))
+	for i := 0; i < 4; i++ {
+		neighbor := mustCreateEntry(t, f.entryRepo, makeEntry(fmt.Sprintf("neighbor-%d", i), "root", nil))
+		mustCreateEdge(t, f.edgeRepo, seed.ID, neighbor.ID, model.EdgeElaborates)
+	}
+
+	results, err := f.engine.SearchHybrid(ctx, HybridOptions{
+		Vector: VectorOptions{
+			Text:  "test",
+			Scope: "root",
+			Limit: 10,
+		},
+		ExpandDepth:     1,
+		ExpandDirection: Outgoing,
+		TotalLimit:      0, // unlimited
+	})
+	if err != nil {
+		t.Fatalf("SearchHybrid unlimited: %v", err)
+	}
+
+	// 1 seed + 4 neighbors = 5 total.
+	if len(results) < 5 {
+		t.Errorf("TotalLimit=0 should not truncate: got %d results, want >= 5", len(results))
 	}
 }
