@@ -99,6 +99,16 @@ func answerStrings(v any) []string {
 }
 
 // CheckAnswer verifies a given answer against the expected answer.
+//
+// Blank/misconfigured expected values (a malformed question fixture) never
+// match, regardless of givenAnswer: "exact" and "contains" explicitly reject
+// a blank expected value before comparing, and "exact_set" explicitly
+// rejects an empty expected set. Without these guards, strings.Contains(x,
+// "") is trivially true for "contains", and an empty given set would equal
+// an empty expected set for "exact_set". A blank givenAnswer likewise never
+// matches a non-blank expected value on its own: case-fold equality,
+// substring containment, and set-length comparison all naturally reject an
+// empty given against anything non-empty.
 func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 	given := strings.TrimSpace(givenAnswer)
 	ans := question.Answer
@@ -106,18 +116,26 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 	switch ans.Type {
 	case "exact":
 		expected := strings.TrimSpace(fmt.Sprintf("%v", ans.Value))
+		if expected == "" {
+			return false
+		}
 		return strings.EqualFold(given, expected)
 
 	case "one_of":
 		for _, candidate := range answerStrings(ans.Value) {
-			if strings.EqualFold(given, strings.TrimSpace(candidate)) {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" && strings.EqualFold(given, candidate) {
 				return true
 			}
 		}
 		return false
 
 	case "exact_set":
-		// Split given answer on commas or newlines, trim and lowercase each element.
+		// Split given answer on commas or newlines, trim and lowercase each
+		// element. Comparison below is multiset (bag) equality, not set
+		// equality: duplicates are kept through the sort and compared
+		// element-wise, so a given answer that repeats an element must
+		// repeat it exactly as many times as the expected value does.
 		givenParts := strings.FieldsFunc(given, func(r rune) bool {
 			return r == ',' || r == '\n'
 		})
@@ -140,7 +158,7 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 		}
 		sort.Strings(expectedSet)
 
-		if len(givenSet) != len(expectedSet) {
+		if len(expectedSet) == 0 || len(givenSet) != len(expectedSet) {
 			return false
 		}
 		for i := range givenSet {
@@ -152,6 +170,9 @@ func CheckAnswer(question EffectivenessQuestion, givenAnswer string) bool {
 
 	case "contains":
 		expected := strings.TrimSpace(fmt.Sprintf("%v", ans.Value))
+		if expected == "" {
+			return false
+		}
 		return strings.Contains(strings.ToLower(given), strings.ToLower(expected))
 
 	default:

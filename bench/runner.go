@@ -45,7 +45,7 @@ type RunnerConfig struct {
 	CodebasePath string
 
 	// RecallCommand is the command template for `known recall`.
-	// The recall query replaces {query}. Example: "known recall '{query}' --scope pipeliner"
+	// The recall query replaces {query}. Example: "known recall '{query}' --scope /pipeliner"
 	// If empty, the with_memory condition is skipped.
 	RecallCommand string
 
