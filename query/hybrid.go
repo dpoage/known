@@ -69,6 +69,7 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 		expanded, err := e.expandFromEntry(
 			ctx,
 			vectorResult.Entry.ID,
+			vectorResult.Score,
 			opts.ExpandDepth,
 			opts.ExpandDirection,
 			edgeFilter,
@@ -87,6 +88,15 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 		return nil, fmt.Errorf("enrich conflicts: %w", err)
 	}
 
+	// Sort by unified score (now meaningful: vector scores and expansion
+	// scores are commensurable after known-1so rescoring).
+	sortResultsByScore(allResults)
+
+	// Apply TotalLimit to the combined result set.
+	if opts.TotalLimit > 0 && len(allResults) > opts.TotalLimit {
+		allResults = allResults[:opts.TotalLimit]
+	}
+
 	return allResults, nil
 }
 
@@ -95,6 +105,7 @@ func (e *Engine) SearchHybrid(ctx context.Context, opts HybridOptions) ([]Result
 func (e *Engine) expandFromEntry(
 	ctx context.Context,
 	startID model.ID,
+	startScore float64,
 	maxDepth int,
 	direction GraphDirection,
 	edgeFilter storage.EdgeFilter,
@@ -103,13 +114,14 @@ func (e *Engine) expandFromEntry(
 ) ([]Result, error) {
 
 	type bfsItem struct {
-		entryID model.ID
-		depth   int
+		entryID     model.ID
+		depth       int
+		parentScore float64 // score of the node from which this item was reached
 	}
 
 	var results []Result
 
-	queue := []bfsItem{{entryID: startID, depth: 0}}
+	queue := []bfsItem{{entryID: startID, depth: 0, parentScore: startScore}}
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -160,17 +172,23 @@ func (e *Engine) expandFromEntry(
 				return nil, fmt.Errorf("get entry %s: %w", neighborID, err)
 			}
 
+			// Score = parentScore * edgeWeight * depthDecay.
+			// This keeps expansion scores on the same 0-1 scale as vector
+			// scores, so the combined result set can be sorted uniformly.
+			neighborScore := current.parentScore * edge.EffectiveWeight() * expansionDepthDecay
+
 			results = append(results, Result{
 				Entry:    *neighborEntry,
-				Score:    edge.EffectiveWeight(),
+				Score:    neighborScore,
 				Reach:    ReachExpansion,
 				Depth:    current.depth + 1,
 				EdgePath: []model.Edge{edge},
 			})
 
 			queue = append(queue, bfsItem{
-				entryID: neighborID,
-				depth:   current.depth + 1,
+				entryID:     neighborID,
+				depth:       current.depth + 1,
+				parentScore: neighborScore,
 			})
 		}
 	}
