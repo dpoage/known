@@ -196,9 +196,9 @@ func TestFormatReport_WithFailures(t *testing.T) {
 	report := BenchmarkReport{
 		Scenarios: []ScenarioScore{
 			{
-				Name: "B: Fail",
-				Average: 0.5,
-				PassCount: 0,
+				Name:       "B: Fail",
+				Average:    0.5,
+				PassCount:  0,
 				TotalCount: 1,
 				Queries: []QueryScore{
 					{QueryText: "bad query", Failures: []string{"missing: x"}},
@@ -230,4 +230,93 @@ func TestFormatReport_WithAblation(t *testing.T) {
 	require.Contains(t, out, "FEATURE ABLATION")
 	require.Contains(t, out, "Graph Expansion")
 	require.Contains(t, out, "+0.100")
+}
+
+// --- Paired _Pass/_Fail discrimination self-tests, one pair per predicate
+// class (known-58u). Each pair proves the predicate can both pass and fail
+// on synthetic results: a scoring dimension that always returns 1.0
+// regardless of input isn't testing anything. TestScoreQuery_RankAbove_Fail
+// specifically uses a shuffled (reversed) ordering of a passing result set,
+// per the "shuffled results" falsification technique.
+
+func TestScoreQuery_Inclusion_Pass(t *testing.T) {
+	expect := QueryExpectation{MustInclude: []string{"a", "b"}}
+	actual := QueryResult{ReturnedIDs: []string{"a", "b", "c"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 1.0, score.Inclusion)
+	assert.Empty(t, score.Failures)
+}
+
+func TestScoreQuery_Inclusion_Fail(t *testing.T) {
+	expect := QueryExpectation{MustInclude: []string{"a", "b"}}
+	actual := QueryResult{ReturnedIDs: []string{"c"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 0.0, score.Inclusion)
+	assert.NotEmpty(t, score.Failures)
+}
+
+func TestScoreQuery_Exclusion_Pass(t *testing.T) {
+	expect := QueryExpectation{MustExclude: []string{"bad"}}
+	actual := QueryResult{ReturnedIDs: []string{"good"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 1.0, score.Exclusion)
+	assert.Empty(t, score.Failures)
+}
+
+func TestScoreQuery_Exclusion_Fail(t *testing.T) {
+	expect := QueryExpectation{MustExclude: []string{"bad"}}
+	actual := QueryResult{ReturnedIDs: []string{"bad"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 0.0, score.Exclusion)
+	assert.NotEmpty(t, score.Failures)
+}
+
+func TestScoreQuery_RankAbove_Pass(t *testing.T) {
+	expect := QueryExpectation{MustRankAbove: map[string]string{"a": "b"}}
+	actual := QueryResult{ReturnedIDs: []string{"a", "b"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 1.0, score.Ranking)
+	assert.Empty(t, score.Failures)
+}
+
+func TestScoreQuery_RankAbove_Fail(t *testing.T) {
+	// Shuffled: the same two IDs as the _Pass case, reversed. Proves the
+	// ranking predicate is sensitive to order, not just presence.
+	expect := QueryExpectation{MustRankAbove: map[string]string{"a": "b"}}
+	actual := QueryResult{ReturnedIDs: []string{"b", "a"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 0.0, score.Ranking)
+	assert.NotEmpty(t, score.Failures)
+}
+
+func TestScoreQuery_ConflictFlag_Pass(t *testing.T) {
+	expect := QueryExpectation{MustFlagConflict: []string{"a"}}
+	actual := QueryResult{ReturnedIDs: []string{"a"}, HasConflict: map[string]bool{"a": true}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 1.0, score.Conflict)
+	assert.Empty(t, score.Failures)
+}
+
+func TestScoreQuery_ConflictFlag_Fail(t *testing.T) {
+	expect := QueryExpectation{MustFlagConflict: []string{"a"}}
+	actual := QueryResult{ReturnedIDs: []string{"a"}, HasConflict: map[string]bool{"a": false}, ReachMethod: map[string]string{}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 0.0, score.Conflict)
+	assert.NotEmpty(t, score.Failures)
+}
+
+func TestScoreQuery_ReachMethod_Pass(t *testing.T) {
+	expect := QueryExpectation{ExpectReach: map[string]string{"a": "expansion"}}
+	actual := QueryResult{ReturnedIDs: []string{"a"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{"a": "expansion"}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 1.0, score.Reach)
+	assert.Empty(t, score.Failures)
+}
+
+func TestScoreQuery_ReachMethod_Fail(t *testing.T) {
+	expect := QueryExpectation{ExpectReach: map[string]string{"a": "expansion"}}
+	actual := QueryResult{ReturnedIDs: []string{"a"}, HasConflict: map[string]bool{}, ReachMethod: map[string]string{"a": "direct"}}
+	score := ScoreQuery(expect, actual)
+	assert.Equal(t, 0.0, score.Reach)
+	assert.NotEmpty(t, score.Failures)
 }

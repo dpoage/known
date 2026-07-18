@@ -22,12 +22,17 @@ type ScenarioQuery struct {
 	TextSearch  bool
 	Provenance  string // empty = all, or "verified"/"inferred"/"uncertain"
 
+	// IncludeSuperseded disables the demotion of superseded entries
+	// (known-5oq: normally Score*0.1 for entries with an incoming
+	// supersedes edge). Used to falsify that the demotion is load-bearing.
+	IncludeSuperseded bool
+
 	// Expected outcomes — content substrings to identify entries
 	MustIncludeContent      []string          // Content substrings that MUST appear in results
 	MustExcludeContent      []string          // Content substrings that MUST NOT appear
-	MustRankAboveContent    map[string]string  // content_higher -> content_lower
-	MustFlagConflictContent []string           // Content substrings that must have HasConflict=true
-	ExpectReachContent      map[string]string  // Content substring -> expected ReachMethod
+	MustRankAboveContent    map[string]string // content_higher -> content_lower
+	MustFlagConflictContent []string          // Content substrings that must have HasConflict=true
+	ExpectReachContent      map[string]string // Content substring -> expected ReachMethod
 }
 
 // AblationConfig controls which features are disabled for an ablation run.
@@ -60,6 +65,9 @@ func AllScenarios() []Scenario {
 		scenarioE(),
 		scenarioF(),
 		scenarioG(),
+		scenarioH(),
+		scenarioI(),
+		scenarioJ(),
 	}
 }
 
@@ -117,18 +125,20 @@ func scenarioA() Scenario {
 }
 
 // scenarioB: Contradiction Resolution — conflict detection with contradicting pairs.
-// Tests that contradicts edges cause HasConflict=true on results. Ranking by
-// recency is tested separately in the freshness ablation; here we only check
-// that both entries appear and both are flagged.
+// Tests that contradicts edges cause HasConflict=true on results, AND that
+// the current entry outranks the stale one (known-5oq: superseded entries
+// are demoted Score*0.1 after enrichSuperseded — each pair here also carries
+// a supersedes edge, new -> old, per seedgen buildEdges).
 func scenarioB() Scenario {
 	return Scenario{
 		Name: "B: Contradiction Resolution",
 		Queries: []ScenarioQuery{
 			{
-				Text:      "What rate limiting algorithm does the API use?",
-				Scope:     "project-alpha",
-				Limit:     10,
-				Threshold: 0.0,
+				Text:        "What rate limiting algorithm does the API use?",
+				Scope:       "project-alpha",
+				Limit:       10,
+				Threshold:   0.0,
+				ExpandDepth: 1,
 				MustIncludeContent: []string{
 					"fixed-window algorithm with 60-second windows",
 					"changed from fixed-window to token-bucket in v2.1",
@@ -137,12 +147,16 @@ func scenarioB() Scenario {
 					"fixed-window algorithm with 60-second windows",
 					"changed from fixed-window to token-bucket in v2.1",
 				},
+				MustRankAboveContent: map[string]string{
+					"changed from fixed-window to token-bucket in v2.1": "fixed-window algorithm with 60-second windows",
+				},
 			},
 			{
-				Text:      "What format are authentication tokens?",
-				Scope:     "project-alpha",
-				Limit:     10,
-				Threshold: 0.0,
+				Text:        "What format are authentication tokens?",
+				Scope:       "project-alpha",
+				Limit:       10,
+				Threshold:   0.0,
+				ExpandDepth: 1,
 				MustIncludeContent: []string{
 					"opaque session IDs stored in Redis",
 					"migrated from opaque session tokens to stateless JWTs",
@@ -151,12 +165,16 @@ func scenarioB() Scenario {
 					"opaque session IDs stored in Redis",
 					"migrated from opaque session tokens to stateless JWTs",
 				},
+				MustRankAboveContent: map[string]string{
+					"migrated from opaque session tokens to stateless JWTs": "opaque session IDs stored in Redis",
+				},
 			},
 			{
-				Text:      "What is the primary storage backend?",
-				Scope:     "project-alpha",
-				Limit:     10,
-				Threshold: 0.0,
+				Text:        "What is the primary storage backend?",
+				Scope:       "project-alpha",
+				Limit:       10,
+				Threshold:   0.0,
+				ExpandDepth: 1,
 				MustIncludeContent: []string{
 					"PostgreSQL with pgvector for similarity search",
 					"migrated from PostgreSQL to SQLite",
@@ -164,6 +182,9 @@ func scenarioB() Scenario {
 				MustFlagConflictContent: []string{
 					"PostgreSQL with pgvector for similarity search",
 					"migrated from PostgreSQL to SQLite",
+				},
+				MustRankAboveContent: map[string]string{
+					"migrated from PostgreSQL to SQLite": "PostgreSQL with pgvector for similarity search",
 				},
 			},
 		},
@@ -270,13 +291,18 @@ func scenarioE() Scenario {
 		Name: "E: FTS Rescue",
 		Queries: []ScenarioQuery{
 			{
-				// With FTS enabled (hybrid), the correct entry should be found.
+				// With FTS enabled (hybrid), the correct entry should be found,
+				// AND rank above at least one near-miss code that vector-only
+				// search prefers over the true match.
 				Text:       "ALPHA-4091",
 				Scope:      "project-alpha",
 				Limit:      5,
 				TextSearch: true,
 				MustIncludeContent: []string{
 					"ALPHA-4091 indicates embedding dimension mismatch",
+				},
+				MustRankAboveContent: map[string]string{
+					"ALPHA-4091 indicates embedding dimension mismatch": "ALPHA-5002 means the scope path contains invalid characters",
 				},
 			},
 			{
@@ -306,6 +332,40 @@ func scenarioE() Scenario {
 				TextSearch: true,
 				MustIncludeContent: []string{
 					"embed.cache.maxsize controls the maximum number of cached",
+				},
+			},
+			{
+				// Distractor rescue: vector-only search for "ALPHA-4092" ranks
+				// it 3rd behind two other near-miss codes (known-58u
+				// distractor). FTS pinpoints the exact numeric token match and
+				// puts it in a tight top-2, so the vector-only ablation both
+				// misses it (Inclusion) and can't satisfy the rank-above
+				// (Ranking) — a sharper degradation than a generous Limit.
+				Text:       "ALPHA-4092",
+				Scope:      "project-alpha",
+				Limit:      5,
+				TextSearch: true,
+				MustIncludeContent: []string{
+					"ALPHA-4092 indicates the embedding cache was evicted mid-request",
+				},
+				MustRankAboveContent: map[string]string{
+					"ALPHA-4092 indicates the embedding cache was evicted mid-request": "ALPHA-4090 indicates a missing scope header on the request",
+				},
+			},
+			{
+				// Same pattern as query 1 (ALPHA-4091): vector-only search
+				// for "ALPHA-4093" doesn't even surface it in the top 5 —
+				// three other error codes and two architecture entries win on
+				// raw similarity. Only the exact numeric FTS token rescues it.
+				Text:       "ALPHA-4093",
+				Scope:      "project-alpha",
+				Limit:      5,
+				TextSearch: true,
+				MustIncludeContent: []string{
+					"ALPHA-4093 indicates the tokenizer vocabulary file failed checksum validation",
+				},
+				MustRankAboveContent: map[string]string{
+					"ALPHA-4093 indicates the tokenizer vocabulary file failed checksum validation": "ALPHA-5002 means the scope path contains invalid characters",
 				},
 			},
 		},
@@ -403,6 +463,120 @@ func scenarioG() Scenario {
 					"Rate limiting on the API uses a token bucket algorithm allowing 100 requests",
 					// Index 30: "CORS is configured to allow origins" — inferred
 					"CORS is configured to allow origins from localhost",
+				},
+			},
+		},
+	}
+}
+
+// scenarioH: Supersede Chains — a superseded entry must never outrank its
+// successor, even transitively through a multi-hop chain (known-5oq demotes
+// Score*0.1 for any entry with an incoming supersedes edge; known-qam is the
+// CLI-side one-shot --supersedes flag that produces these edges in practice).
+// Corpus: notification service polling -> long-polling -> SSE, two
+// supersedes edges (v2->v1, v3->v2), so v1 is only demoted directly (no edge
+// v3->v1) — this scenario proves the direct-chain demotion holds regardless.
+// The bypass case (IncludeSuperseded=true, proving the demotion is load-
+// bearing rather than accidental) is covered by the pipeline-level
+// falsification test TestSupersedeDemotion_Falsification in bench_test.go.
+func scenarioH() Scenario {
+	return Scenario{
+		Name: "H: Supersede Chains",
+		Queries: []ScenarioQuery{
+			{
+				Text:        "How does the notification service deliver events?",
+				Scope:       "project-alpha",
+				Limit:       10,
+				Threshold:   0.0,
+				ExpandDepth: 1,
+				MustIncludeContent: []string{
+					"Server-Sent Events (SSE) for real-time push instead of polling",
+				},
+				MustRankAboveContent: map[string]string{
+					"Server-Sent Events (SSE) for real-time push instead of polling": "used polling every 30 seconds to check for new events",
+				},
+			},
+			{
+				Text:        "How does the notification service deliver events?",
+				Scope:       "project-alpha",
+				Limit:       10,
+				Threshold:   0.0,
+				ExpandDepth: 1,
+				MustIncludeContent: []string{
+					"Server-Sent Events (SSE) for real-time push instead of polling",
+				},
+				MustRankAboveContent: map[string]string{
+					"Server-Sent Events (SSE) for real-time push instead of polling": "changed to long-polling with a 25 second timeout",
+				},
+			},
+		},
+	}
+}
+
+// scenarioI: Weighted Expansion Ranking — an expansion result reached via a
+// LOW-weight edge from a HIGH vector-relevance parent must still outrank one
+// reached via a HIGH-weight edge from a LOW vector-relevance parent, because
+// known-1so replaced raw edge.EffectiveWeight() with
+// parentScore*edgeWeight*expansionDepthDecay. Under the old (pre-#39) weight-
+// only formula this scenario inverts: the 1.0-weight edge from the weak
+// parent (idx38, "Labels are stored...", weight 1.0) would outrank the
+// 0.8-weight edge from the strong parent (idx24, rate limiting, weight 0.8) —
+// the exact bug reported in known-1so. Probed against the real embedder
+// (bench/cmd/seedgen): parent scores ~0.87 vs ~0.61 for this query, so
+// 0.87*0.8 > 0.61*1.0 even though 0.8 < 1.0.
+func scenarioI() Scenario {
+	return Scenario{
+		Name: "I: Weighted Expansion Ranking",
+		Queries: []ScenarioQuery{
+			{
+				Text:        "What rate limiting algorithm does the API use?",
+				Scope:       "project-alpha",
+				Limit:       20,
+				Threshold:   0.0,
+				ExpandDepth: 1,
+				MustIncludeContent: []string{
+					"Office plants on the third floor are watered",
+					"team lunch order rotation moves to a new restaurant",
+				},
+				MustRankAboveContent: map[string]string{
+					"Office plants on the third floor are watered": "team lunch order rotation moves to a new restaurant",
+				},
+				ExpectReachContent: map[string]string{
+					"Office plants on the third floor are watered":        "expansion",
+					"team lunch order rotation moves to a new restaurant": "expansion",
+				},
+			},
+		},
+	}
+}
+
+// scenarioJ: Freshness / ObservedAt Preference — known-oj3 made freshness
+// scoring prefer Freshness.ObservedAt over CreatedAt. The corpus pairs two
+// near-duplicate facts (freshness-probe category) where raw vector
+// similarity favors the STALE entry (spelled-out "six hours", observed 90
+// days ago) over the CURRENT one (numeral "6 hours", observed 2 days ago).
+// Only a nonzero RecencyWeight — driven by ObservedAt, not the uniform
+// CreatedAt every seed entry gets at generation time — flips the ranking to
+// favor the current fact. This is exactly what the "Freshness Weighting"
+// ablation (DefaultAblations, forces Recency=0) is meant to catch, and
+// previously had no query in the whole suite that exercised RecencyWeight>0.
+func scenarioJ() Scenario {
+	return Scenario{
+		Name: "J: Freshness / ObservedAt Preference",
+		Queries: []ScenarioQuery{
+			{
+				Text:        "How often are backups taken?",
+				Scope:       "project-alpha.deploy",
+				Limit:       10,
+				Threshold:   0.0,
+				Recency:     0.3,
+				ExpandDepth: 1,
+				MustIncludeContent: []string{
+					"Backups run every six hours to S3",
+					"Backups run every 6 hours to S3",
+				},
+				MustRankAboveContent: map[string]string{
+					"Backups run every 6 hours to S3": "Backups run every six hours to S3",
 				},
 			},
 		},
