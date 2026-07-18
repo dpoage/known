@@ -81,6 +81,12 @@ func runUpdate(ctx context.Context, app *App, args []string) error {
 	if *observedBy != "" {
 		entry.Freshness.ObservedBy = *observedBy
 	}
+	// Updating an entry is an act of re-verification: the agent has read and
+	// modified it, confirming the knowledge is still current. Advance ObservedAt
+	// so freshness scoring treats this entry as recently observed. No new flag
+	// needed — update IS observation (KISS). ObservedBy and SourceHash are
+	// supplementary; they are not cleared here.
+	entry.Freshness.ObservedAt = time.Now()
 
 	if *scope != "" {
 		entry.Scope = app.Config.QualifyScope(*scope)

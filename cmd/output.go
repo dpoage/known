@@ -40,7 +40,7 @@ func (p *Printer) PrintEntry(e model.Entry) {
 		fmt.Fprintf(p.w, "Labels:     %s\n", strings.Join(e.Labels, ", "))
 	}
 	fmt.Fprintf(p.w, "Provenance: %s\n", e.Provenance.Level)
-	fmt.Fprintf(p.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel())
+	fmt.Fprintf(p.w, "Freshness:  %s\n", e.Freshness.FreshnessLabel(e.CreatedAt))
 	fmt.Fprintf(p.w, "Version:    %d\n", e.Version)
 	fmt.Fprintf(p.w, "Created:    %s\n", e.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(p.w, "Updated:    %s\n", e.UpdatedAt.Format(time.RFC3339))
@@ -172,10 +172,10 @@ func (p *Printer) PrintRecallResults(results []query.Result) {
 		var meta string
 		if r.Entry.Title != "" {
 			meta = fmt.Sprintf("[%s: %s] (%s, source: %s, %s) {%s}",
-				r.Entry.Scope, r.Entry.Title, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(), r.Entry.ID)
+				r.Entry.Scope, r.Entry.Title, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(r.Entry.CreatedAt), r.Entry.ID)
 		} else {
 			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
-				r.Entry.Scope, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(), r.Entry.ID)
+				r.Entry.Scope, r.Entry.Provenance.Level, r.Entry.Source.Reference, r.Entry.Freshness.FreshnessLabel(r.Entry.CreatedAt), r.Entry.ID)
 		}
 		if len(r.Entry.Labels) > 0 {
 			meta += fmt.Sprintf(" [labels: %s]", strings.Join(r.Entry.Labels, ", "))
@@ -279,6 +279,7 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 			hints = []string{
 				"known update " + idStr + " --content '...'",
 				"known add '<new fact>' --link elaborates:" + idStr,
+				"known add '<correction>' --supersedes '" + truncate(e.Content, 60) + "'",
 			}
 		}
 		p.printJSON(addResult{
@@ -302,6 +303,7 @@ func (p *Printer) PrintAddResult(e model.Entry, deduped bool, suggestions []quer
 	if deduped {
 		fmt.Fprintf(p.w, "%-9s known update %s --content '...'\n", "Hint", e.ID)
 		fmt.Fprintf(p.w, "          known add '<new fact>' --link elaborates:%s\n", e.ID)
+		fmt.Fprintf(p.w, "          known add '<correction>' --supersedes '%s'\n", truncate(e.Content, 60))
 	}
 	for _, s := range suggestions {
 		title := s.Entry.Title

@@ -354,6 +354,80 @@ func corpus() []Scenario {
 					"show --json output must contain \"expires_at\" key", pass
 			},
 		},
+
+		// ---- known-qam: One-shot supersede via --supersedes flag ----
+		//
+		// Friction-audit Mode 4 incident (c1f50adc:1057): agent stored a correction
+		// entry without linking it to the superseded original because ULID extraction
+		// with `grep -o '"id":[0-9]*'` failed (ULIDs contain letters, not just digits).
+		//
+		// known-qam contract: `known add '<correction>' --supersedes '<original content>'`
+		// resolves the target by content, stores the correction, and creates the
+		// supersedes edge atomically — zero ULIDs typed.
+		//
+		// Predicate (two-stage):
+		//   1. add --supersedes exits 0 AND stdout contains 'Supersedes'.
+		//   2. known --json show <new-ulid> emits outgoing_edges containing a
+		//      supersedes edge — verifies real graph state, not just CLI output.
+		//   `known --json show <ulid>` emits {"entry":{...},"outgoing_edges":[...],...}.
+		//
+		// Baseline de676db lacks --supersedes flag → exits non-zero (stage 1 fails).
+		{
+			ID:                 "Qam-oneshot-supersede",
+			Name:               "add --supersedes: one-shot correction stores entry and edge, zero ULIDs typed",
+			AuditMode:          "known-qam (p2-supersede): Mode 4 one-shot fix (c1f50adc:1057)",
+			ExpectFailBaseline: true,
+			Run: func(bin string) (string, int, string, bool) {
+				env, dir, cleanup := isolatedEnv()
+				defer cleanup()
+
+				const (
+					originalContent = "renderer architecture decision SIBLING RendererInterface original"
+					correction      = "CORRECTION renderer architecture decision decoupling"
+				)
+
+				// Store the original entry.
+				firstOut, firstCode := run(bin, env, dir, "add", originalContent)
+				if firstCode != 0 {
+					return firstOut, firstCode, "first add (original) must exit 0", false
+				}
+
+				// One-shot supersede: store correction + create edge in one command.
+				// Use exact original content as --supersedes query so the resolver's
+				// exact-match path fires (no ambiguity).
+				addOut, addCode := runArgs(bin, env, dir, []string{
+					"add", correction,
+					"--supersedes", originalContent,
+				})
+				if addCode != 0 || !strings.Contains(addOut, "Supersedes") {
+					pred := "exit 0 AND stdout contains 'Supersedes' (stage 1)"
+					return addOut, addCode, pred, false
+				}
+
+				// Extract the new entry's ULID from the "Stored <ULID>" line in add output.
+				// We must not use FindString on the full output — the "Resolved → <oldULID>"
+				// line appears first and would yield the superseded entry's ULID, not the new one.
+				var newULID string
+				for _, line := range strings.Split(addOut, "\n") {
+					if strings.HasPrefix(strings.TrimSpace(line), "Stored") {
+						if m := reULID.FindString(line); m != "" {
+							newULID = m
+							break
+						}
+					}
+				}
+				if newULID == "" {
+					return addOut, 0, "add output must contain a 'Stored <ULID>' line for stage 2 check", false
+				}
+
+				// Stage 2: verify the supersedes edge exists in the graph via show --json.
+				showOut, showCode := runArgs(bin, env, dir, []string{"--json", "show", newULID})
+				hasEdge := showCode == 0 && strings.Contains(showOut, `"supersedes"`)
+				combined := addOut + "\n---show--json---\n" + showOut
+				pred := fmt.Sprintf("stage 1: Supersedes in add output; stage 2: show --json contains supersedes edge (showCode=%d)", showCode)
+				return combined, addCode, pred, hasEdge
+			},
+		},
 	}
 }
 

@@ -65,7 +65,7 @@ func (e *Engine) SearchVector(ctx context.Context, opts VectorOptions) ([]Result
 		// Apply recency weighting if configured.
 		score := similarity
 		if opts.RecencyWeight > 0 {
-			freshness := freshnessScore(sr.Entry.CreatedAt, halfLife)
+			freshness := freshnessScoreAt(sr.Entry.CreatedAt, sr.Entry.Freshness.ObservedAt, halfLife)
 			score = blendScore(similarity, freshness, opts.RecencyWeight)
 		}
 

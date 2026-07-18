@@ -42,3 +42,4 @@ Thumbs.db
 *.db
 .beads-credential-key
 .beads/proxieddb/
+/capture

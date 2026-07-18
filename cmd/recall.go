@@ -190,10 +190,10 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int, label
 		var meta string
 		if e.Title != "" {
 			meta = fmt.Sprintf("[%s: %s] (%s, source: %s, %s) {%s}",
-				e.Scope, e.Title, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(), e.ID)
+				e.Scope, e.Title, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(e.CreatedAt), e.ID)
 		} else {
 			meta = fmt.Sprintf("[%s] (%s, source: %s, %s) {%s}",
-				e.Scope, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(), e.ID)
+				e.Scope, e.Provenance.Level, e.Source.Reference, e.Freshness.FreshnessLabel(e.CreatedAt), e.ID)
 		}
 		if len(e.Labels) > 0 {
 			meta += fmt.Sprintf(" [labels: %s]", strings.Join(e.Labels, ", "))

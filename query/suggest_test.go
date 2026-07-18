@@ -10,10 +10,10 @@ import (
 
 // unit vectors for deterministic cosine distances (reuse makeEntry from query_test.go).
 var (
-	sugVecA = []float32{1, 0, 0, 0}            // entry A direction
-	sugVecB = []float32{0, 1, 0, 0}            // orthogonal to A
-	sugVecC = []float32{0.9, 0.436, 0, 0}      // close to A
-	sugVecD = []float32{0, 0, 1, 0}            // unrelated
+	sugVecA = []float32{1, 0, 0, 0}       // entry A direction
+	sugVecB = []float32{0, 1, 0, 0}       // orthogonal to A
+	sugVecC = []float32{0.9, 0.436, 0, 0} // close to A
+	sugVecD = []float32{0, 0, 1, 0}       // unrelated
 )
 
 func TestSuggestLinks_TopK(t *testing.T) {

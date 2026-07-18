@@ -143,6 +143,10 @@ func TestContract(t *testing.T) {
 				t.Run("CreateAndList", func(t *testing.T) { contractEdgeCreateList(t, ctx, be) })
 			})
 
+			t.Run("WithTx", func(t *testing.T) {
+				t.Run("Atomicity", func(t *testing.T) { contractWithTxAtomicity(t, ctx, be) })
+			})
+
 			t.Run("ScopeRepo", func(t *testing.T) {
 				t.Run("Upsert", func(t *testing.T) { contractScopeUpsert(t, ctx, be) })
 				t.Run("EnsureHierarchy", func(t *testing.T) { contractScopeEnsureHierarchy(t, ctx, be) })
@@ -437,6 +441,52 @@ func contractEdgeCreateList(t *testing.T, ctx context.Context, be storage.Backen
 	}
 	if len(toEdges) != 1 {
 		t.Fatalf("EdgesTo: got %d edges want 1", len(toEdges))
+	}
+}
+
+// ----------------------------------------------------------------------------
+// WithTx contract test
+// ----------------------------------------------------------------------------
+
+// contractWithTxAtomicity verifies that a failure inside WithTx rolls back
+// all writes made during the transaction — both entry and edge creation.
+func contractWithTxAtomicity(t *testing.T, ctx context.Context, be storage.Backend) {
+	mustEnsureScope(t, ctx, be, "contract.tx")
+
+	// Pre-seed a link target (outside the tx being tested).
+	target := newTestEntry(fmt.Sprintf("tx atomicity target %d", time.Now().UnixNano()), "contract.tx")
+	if err := be.Entries().Create(ctx, &target); err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+
+	uniqueContent := fmt.Sprintf("tx atomicity new entry %d", time.Now().UnixNano())
+
+	// Run a tx that writes an entry + one edge, then returns an error to force rollback.
+	txErr := be.WithTx(ctx, func(txCtx context.Context) error {
+		newEntry := newTestEntry(uniqueContent, "contract.tx")
+		if _, err := be.Entries().CreateOrUpdate(txCtx, &newEntry); err != nil {
+			return fmt.Errorf("create entry in tx: %w", err)
+		}
+		edge := model.NewEdge(newEntry.ID, target.ID, model.EdgeRelatedTo)
+		if err := be.Edges().Create(txCtx, &edge); err != nil {
+			return fmt.Errorf("create edge in tx: %w", err)
+		}
+		// Force rollback.
+		return errors.New("forced rollback")
+	})
+	if txErr == nil {
+		t.Fatal("expected tx error but got nil")
+	}
+
+	// The entry must not exist after rollback.
+	entries, err := be.Entries().List(ctx, storage.EntryFilter{Scope: "contract.tx"})
+	if err != nil {
+		t.Fatalf("List after rollback: %v", err)
+	}
+	for _, e := range entries {
+		if e.Content == uniqueContent {
+			t.Error("entry should have been rolled back but was found in the store")
+		}
 	}
 }
 

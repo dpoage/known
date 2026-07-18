@@ -42,6 +42,7 @@ Scope     myproject
           "All new database tables use ULIDs instead of integers"
 Hint      known update 01KXSBAZ7HZ71JFM5FGHRHVKMX --content '...'
           known add '<new fact>' --link elaborates:01KXSBAZ7HZ71JFM5FGHRHVKMX
+          known add '<correction>' --supersedes 'All new database tables use ULIDs instead of integers'
 ```
 
 The fact is already stored. Use the hints to extend or correct it.
@@ -85,6 +86,27 @@ Or link two entries directly by content:
 
 ```bash
 known link "<text a>" "<text b>" --type related-to
+```
+
+## One-shot correction (supersede)
+
+When a fact has changed, store the replacement and link it to the old entry in
+one command — no ULIDs required:
+
+```bash
+known add 'corrected fact' --supersedes 'old fact content'
+```
+
+The `--supersedes` argument is a content query resolved by exact-match or semantic
+dominance. Ambiguous query? The command aborts before writing anything.
+
+On success:
+
+```
+Stored  01KYABC...
+Scope   myproject
+        "corrected fact"
+Supersedes 01KYABC... -[supersedes]-> 01KXABC...
 ```
 
 ## Batch mode

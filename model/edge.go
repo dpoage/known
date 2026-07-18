@@ -91,10 +91,23 @@ func (e Edge) Validate() error {
 	return nil
 }
 
-// EffectiveWeight returns the edge's weight, defaulting to 1.0 if unset.
+// DefaultEdgeWeight is the neutral weight assigned to edges that have never
+// been explicitly set or reinforced. It equals the reinforcement equilibrium
+// (UpdateBoost / (1 - DecayFactor) = 0.05 / 0.10 = 0.5) so that:
+//   - unrated edges (nil weight) score at neutral 0.5
+//   - decayed-unused reinforced edges drift BELOW 0.5 (signal: less valuable)
+//   - freshly-boosted edges rise ABOVE 0.5 (signal: recently confirmed useful)
+//
+// This prevents the inversion where a never-touched sibling (nil→1.0) would
+// propagate more than a frequently-reinforced edge converging toward 0.5.
+// Legacy rows with no weight column get the same neutral default on read.
+const DefaultEdgeWeight = 0.5
+
+// EffectiveWeight returns the edge's weight, defaulting to DefaultEdgeWeight
+// (0.5, neutral) if the weight has never been explicitly set.
 func (e Edge) EffectiveWeight() float64 {
 	if e.Weight == nil {
-		return 1.0
+		return DefaultEdgeWeight
 	}
 	return *e.Weight
 }

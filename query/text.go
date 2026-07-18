@@ -52,7 +52,7 @@ func (e *Engine) SearchText(ctx context.Context, opts VectorOptions) ([]Result, 
 
 		// Apply recency weighting if configured.
 		if opts.RecencyWeight > 0 {
-			freshness := freshnessScore(sr.Entry.CreatedAt, halfLife)
+			freshness := freshnessScoreAt(sr.Entry.CreatedAt, sr.Entry.Freshness.ObservedAt, halfLife)
 			score = blendScore(score, freshness, opts.RecencyWeight)
 		}
 

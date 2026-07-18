@@ -225,11 +225,24 @@ func bm25ToScore(rank float64) float64 {
 
 // freshnessScore computes a time-decay freshness value between 0 and 1.
 // It uses exponential decay: freshness = exp(-ln(2) * age / halfLife).
+// Prefer observedAt (re-verification time) over createdAt when non-zero.
 func freshnessScore(createdAt time.Time, halfLife time.Duration) float64 {
+	return freshnessScoreAt(createdAt, time.Time{}, halfLife)
+}
+
+// freshnessScoreAt is like freshnessScore but uses observedAt when non-zero,
+// falling back to createdAt. This is the canonical freshness calculation:
+// an entry re-verified yesterday should be treated as fresh regardless of
+// when it was first created.
+func freshnessScoreAt(createdAt, observedAt time.Time, halfLife time.Duration) float64 {
 	if halfLife <= 0 {
 		halfLife = 7 * 24 * time.Hour // default 7 days
 	}
-	age := time.Since(createdAt)
+	ref := createdAt
+	if !observedAt.IsZero() {
+		ref = observedAt
+	}
+	age := time.Since(ref)
 	if age < 0 {
 		return 1.0
 	}

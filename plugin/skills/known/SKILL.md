@@ -50,10 +50,22 @@ Link?   related-to:01KXSBBCBHP8NB6ZCETENBBSX8 "Schema conventions"
 IDs are ULIDs (26 alphanumeric chars), never integers.
 
 **Dedup is success:** if content already exists you'll see `Duplicate <ULID>` with
-hints on how to extend it. Not a failure — the fact is already stored.
+hints on how to extend or correct it (`known update`, `--link elaborates:`, or
+`known add '<correction>' --supersedes '<old content>'`). Not a failure — the fact is already stored.
 
 **Link suggestions** (`Link?` lines): accept with `known link accept '<content>' --all`
 or selectively: `known link accept '<content>' 1 2`.
+
+**One-shot correction**: when a fact changes, store the replacement and link it
+to the old entry in a single command — no ULIDs typed:
+
+```bash
+known add 'corrected fact' --supersedes 'old fact content'
+```
+
+The `--supersedes` query resolves by content (exact-match or semantic dominance).
+Ambiguous query? The command aborts before writing anything — refine the query or
+use a ULID directly.
 
 ## Behavior
 
