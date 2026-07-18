@@ -157,22 +157,25 @@ func executeQuery(ctx context.Context, eng *query.Engine, sq ScenarioQuery, ci *
 	case sq.TextSearch && sq.ExpandDepth > 0:
 		// Hybrid with text search and graph expansion.
 		results, err = eng.SearchHybrid(ctx, query.HybridOptions{
-			Vector:      vecOpts,
-			ExpandDepth: sq.ExpandDepth,
-			TextSearch:  true,
+			Vector:            vecOpts,
+			ExpandDepth:       sq.ExpandDepth,
+			TextSearch:        true,
+			IncludeSuperseded: sq.IncludeSuperseded,
 		})
 	case sq.TextSearch:
 		// Hybrid with text search, no expansion (still uses RRF fusion).
 		results, err = eng.SearchHybrid(ctx, query.HybridOptions{
-			Vector:      vecOpts,
-			ExpandDepth: 1,
-			TextSearch:  true,
+			Vector:            vecOpts,
+			ExpandDepth:       1,
+			TextSearch:        true,
+			IncludeSuperseded: sq.IncludeSuperseded,
 		})
 	case sq.ExpandDepth > 0:
 		// Hybrid with graph expansion, no text search.
 		results, err = eng.SearchHybrid(ctx, query.HybridOptions{
-			Vector:      vecOpts,
-			ExpandDepth: sq.ExpandDepth,
+			Vector:            vecOpts,
+			ExpandDepth:       sq.ExpandDepth,
+			IncludeSuperseded: sq.IncludeSuperseded,
 		})
 	default:
 		// Pure vector search.
@@ -270,10 +273,26 @@ func toQueryResult(results []query.Result) QueryResult {
 	return qr
 }
 
-func TestBench(t *testing.T) {
+// requireBenchFull skips t unless KNOWN_BENCH_FULL=1 is set. Hermetic
+// contract: plain `go test -tags bench ./bench/...` (no network, no model
+// cache, no API keys) must pass. Any test needing the real hugot embedder or
+// a generated seed DB must call this first, so it skips by default and only
+// runs when a human/CI opts in with KNOWN_BENCH_FULL=1.
+func requireBenchFull(t *testing.T) {
+	t.Helper()
+	if os.Getenv("KNOWN_BENCH_FULL") != "1" {
+		t.Skip("requires the real hugot embedder and a generated seed DB; set KNOWN_BENCH_FULL=1 to run")
+	}
+}
+
+// openBenchEngine generates the seed database if it doesn't exist, opens a
+// scratch copy (so SQLite WAL side files never touch the checked-in seed),
+// and returns a ready query engine plus its content index. Callers must call
+// requireBenchFull first.
+func openBenchEngine(t *testing.T) (*query.Engine, *contentIndex) {
+	t.Helper()
 	ctx := context.Background()
 
-	// 1. Generate seed database if it does not already exist.
 	dbPath := filepath.Join(benchDir(), "testdata", "seed.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Logf("Seed database not found at %s — generating...", dbPath)
@@ -282,9 +301,6 @@ func TestBench(t *testing.T) {
 		}
 	}
 
-	// 2. Open a read-only copy to avoid mutating the seed.
-	// Copy the seed DB to a temp file so SQLite WAL mode doesn't create
-	// side files next to the original.
 	tmpDir := t.TempDir()
 	tmpDB := filepath.Join(tmpDir, "seed.db")
 	seedBytes, err := os.ReadFile(dbPath)
@@ -299,9 +315,8 @@ func TestBench(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open seed DB: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { db.Close() })
 
-	// 3. Create the hugot embedder (same model as seedgen).
 	cfg := embed.Config{
 		Embedder:     "hugot",
 		Model:        "sentence-transformers/all-MiniLM-L6-v2",
@@ -312,19 +327,23 @@ func TestBench(t *testing.T) {
 		t.Fatalf("Create embedder: %v", err)
 	}
 
-	// 4. Create query engine.
 	eng := query.New(db.Entries(), db.Edges(), embedder)
 
-	// 5. Load all entries and build content index.
 	allEntries, err := db.Entries().List(ctx, storage.EntryFilter{Limit: 1000})
 	if err != nil {
 		t.Fatalf("List entries: %v", err)
 	}
 	t.Logf("Loaded %d entries from seed database", len(allEntries))
 
-	ci := &contentIndex{entries: allEntries}
+	return eng, &contentIndex{entries: allEntries}
+}
 
-	// 6. Run all scenarios (full run).
+func TestBench(t *testing.T) {
+	requireBenchFull(t)
+	ctx := context.Background()
+	eng, ci := openBenchEngine(t)
+
+	// Run all scenarios (full run).
 	scenarios := AllScenarios()
 	var scenarioScores []ScenarioScore
 
@@ -332,7 +351,7 @@ func TestBench(t *testing.T) {
 		scenarioScores = runScenarios(ctx, t, eng, ci, scenarios, nil)
 	})
 
-	// 7. Run ablation tests — rerun each scenario with one feature disabled.
+	// Run ablation tests — rerun each scenario with one feature disabled.
 	fullOverall := ComputeOverall(scenarioScores)
 	ablationResults := make(map[string]AblationResult, len(DefaultAblations()))
 
@@ -351,7 +370,7 @@ func TestBench(t *testing.T) {
 		})
 	}
 
-	// 8. Compute overall score and format report.
+	// Compute overall score and format report.
 	report := BenchmarkReport{
 		Scenarios: scenarioScores,
 		Overall:   fullOverall,
@@ -362,9 +381,138 @@ func TestBench(t *testing.T) {
 	FormatReport(report, &buf)
 	t.Logf("\n%s", buf.String())
 
-	// 9. Fail if overall is below minimum threshold.
+	// Fail if overall is below minimum threshold.
 	const minThreshold = 0.5
 	if fullOverall < minThreshold {
 		t.Errorf("Overall score %.3f is below minimum threshold %.3f", fullOverall, minThreshold)
 	}
+}
+
+// TestBenchFalsification_AblationLiftsAreLoadBearing is the pipeline-level
+// falsification companion to the predicate self-tests in scoring_test.go: it
+// runs the real engine (not synthetic results) against a deliberately
+// degraded config — ExpandDepth forced to 0, or TextSearch turned off — and
+// asserts the overall score measurably drops. This is a regression guard on
+// the corpus itself: the pre-known-58u suite measured Graph Expansion and
+// FTS5 lifts of only ~0.013-0.018 (a saturated corpus barely notices either
+// feature going away). The distractor-expanded corpus must do better.
+func TestBenchFalsification_AblationLiftsAreLoadBearing(t *testing.T) {
+	requireBenchFull(t)
+	ctx := context.Background()
+	eng, ci := openBenchEngine(t)
+
+	scenarios := AllScenarios()
+	full := runScenarios(ctx, t, eng, ci, scenarios, nil)
+	fullOverall := ComputeOverall(full)
+
+	const minLift = 0.02 // pre-known-58u baseline was ~0.013 (FTS5) / ~0.018 (Graph Expansion)
+	for _, cfg := range DefaultAblations() {
+		if cfg.Name == "Freshness Weighting" {
+			continue // covered by TestBenchFalsification_FreshnessAblationFlipsRanking
+		}
+		cfg := cfg
+		without := runScenarios(ctx, t, eng, ci, scenarios, &cfg)
+		lift := fullOverall - ComputeOverall(without)
+		if lift < minLift {
+			t.Errorf("ablation %q lift=%.3f is not measurably load-bearing (want >= %.3f)", cfg.Name, lift, minLift)
+		} else {
+			t.Logf("ablation %q lift=%.3f >= %.3f (load-bearing)", cfg.Name, lift, minLift)
+		}
+	}
+}
+
+// TestBenchFalsification_FreshnessAblationFlipsRanking proves scenario J's
+// ranking assertion is load-bearing rather than accidental: the corpus pairs
+// a stale entry with higher raw vector similarity against a current entry
+// with lower raw similarity (see scenarioJ doc comment). With RecencyWeight
+// forced to 0 (DefaultAblations' "Freshness Weighting" config), the ranking
+// predicate must actually fail — proving known-oj3's ObservedAt-based
+// freshness, not raw similarity, is what makes the full-config ranking
+// correct.
+func TestBenchFalsification_FreshnessAblationFlipsRanking(t *testing.T) {
+	requireBenchFull(t)
+	ctx := context.Background()
+	eng, ci := openBenchEngine(t)
+
+	scenarios := []Scenario{scenarioJ()}
+	full := runScenarios(ctx, t, eng, ci, scenarios, nil)
+	ablated := runScenarios(ctx, t, eng, ci, scenarios,
+		&AblationConfig{Name: "Freshness Weighting", DisableFreshness: true})
+
+	if full[0].Average != 1.0 {
+		t.Fatalf("full scenario J average = %.3f, want 1.0 (freshness-driven ranking should hold)", full[0].Average)
+	}
+	if ablated[0].Average >= full[0].Average {
+		t.Errorf("ablated (Recency=0) scenario J average = %.3f did not drop below full %.3f — freshness ranking is not load-bearing",
+			ablated[0].Average, full[0].Average)
+	} else {
+		t.Logf("freshness ranking falsified as expected: full=%.3f ablated=%.3f", full[0].Average, ablated[0].Average)
+	}
+}
+
+// TestSupersedeDemotion_Falsification proves the known-5oq demotion is
+// exercised by scenario H's config (ExpandDepth>0, so SearchHybrid runs
+// enrichSuperseded): bypassing it via IncludeSuperseded=true must not
+// increase the rank-above/inclusion score relative to the default (demoted)
+// run. Combined with the doc comment on scenarioH, this documents exactly
+// how much headroom the demotion buys on this corpus.
+func TestSupersedeDemotion_Falsification(t *testing.T) {
+	requireBenchFull(t)
+	ctx := context.Background()
+	eng, ci := openBenchEngine(t)
+
+	base := scenarioH().Queries[0]
+	bypass := base
+	bypass.IncludeSuperseded = true
+
+	baseResult, err := executeQuery(ctx, eng, base, ci)
+	if err != nil {
+		t.Fatalf("executeQuery (default): %v", err)
+	}
+	bypassResult, err := executeQuery(ctx, eng, bypass, ci)
+	if err != nil {
+		t.Fatalf("executeQuery (bypass): %v", err)
+	}
+
+	baseScore := ScoreQuery(resolveExpectation(base, ci, t), baseResult)
+	bypassScore := ScoreQuery(resolveExpectation(bypass, ci, t), bypassResult)
+
+	if baseScore.Total != 1.0 {
+		t.Fatalf("default (demoted) total score = %.3f, want 1.0", baseScore.Total)
+	}
+	t.Logf("default total=%.3f bypass total=%.3f", baseScore.Total, bypassScore.Total)
+
+	// The bypass must not silently keep the successor ranked first for free:
+	// find the successor and the superseded predecessor and confirm the
+	// predecessor's rank climbs measurably once demotion is disabled.
+	successorIdx := indexOfContent(baseResult.ReturnedIDs, bypassResult.ReturnedIDs, ci, "Server-Sent Events (SSE)")
+	predecessorBaseIdx := indexOfContent(baseResult.ReturnedIDs, baseResult.ReturnedIDs, ci, "used polling every 30 seconds")
+	predecessorBypassIdx := indexOfContent(bypassResult.ReturnedIDs, bypassResult.ReturnedIDs, ci, "used polling every 30 seconds")
+	if successorIdx < 0 || predecessorBaseIdx < 0 || predecessorBypassIdx < 0 {
+		t.Fatalf("expected entries not found in results (successor=%d base-pred=%d bypass-pred=%d)",
+			successorIdx, predecessorBaseIdx, predecessorBypassIdx)
+	}
+	if predecessorBypassIdx >= predecessorBaseIdx {
+		t.Errorf("IncludeSuperseded=true predecessor rank %d did not climb above the demoted rank %d — demotion is not load-bearing",
+			predecessorBypassIdx, predecessorBaseIdx)
+	} else {
+		t.Logf("demotion falsified as expected: predecessor rank %d (demoted) -> %d (bypassed)", predecessorBaseIdx, predecessorBypassIdx)
+	}
+}
+
+// indexOfContent returns the position of the first ID in ids whose entry
+// content contains substr, using ci to resolve content. The unused first
+// parameter keeps call sites self-documenting about which result set the
+// caller intended; only the third positional slice is actually searched.
+func indexOfContent(_ []string, ids []string, ci *contentIndex, substr string) int {
+	targetID := ci.findID(substr)
+	if targetID == "" {
+		return -1
+	}
+	for i, id := range ids {
+		if id == targetID {
+			return i
+		}
+	}
+	return -1
 }

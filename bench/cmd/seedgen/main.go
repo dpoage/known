@@ -23,8 +23,17 @@ import (
 	"github.com/dpoage/known/storage/sqlite"
 )
 
-// referenceTime is the fixed point all entry timestamps are relative to.
-var referenceTime = time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+// referenceTime is the point all entry timestamps are relative to. It is
+// anchored to generation time (not a fixed calendar date) because the query
+// engine's freshness formula (query.freshnessScoreAt, known-oj3) computes
+// age as time.Since(ObservedAt) against the REAL wall clock. A fixed historical
+// referenceTime drifts further into the past every day the suite isn't
+// regenerated, so halfLife-scale freshness contrasts (default 7 days) silently
+// collapse to ~0 for the whole corpus once real "now" is more than a few
+// half-lives past the frozen date — masking the freshness/recency signal
+// entirely regardless of RecencyWeight. Anchoring to time.Now() keeps the
+// daysAgo-relative freshness contrasts meaningful no matter when this is run.
+var referenceTime = time.Now().UTC().Truncate(24 * time.Hour)
 
 // day returns a time that is d days before referenceTime (positive d = past).
 func day(d int) time.Time {
@@ -43,11 +52,17 @@ type entrySpec struct {
 }
 
 // edgeSpec describes one edge to be created (indexes into the entries slice).
+// weight is nil for the default (0.5 EffectiveWeight); non-nil pins an
+// explicit strength, used by the known-1so weighted-expansion scenario.
 type edgeSpec struct {
 	fromIdx int
 	toIdx   int
 	typ     model.EdgeType
+	weight  *float64
 }
+
+// wPtr returns a pointer to a float64 literal, for edgeSpec.weight.
+func wPtr(w float64) *float64 { return &w }
 
 func main() {
 	ctx := context.Background()
@@ -163,6 +178,9 @@ func main() {
 	edges := buildEdges()
 	for i, spec := range edges {
 		edge := model.NewEdge(createdEntries[spec.fromIdx].ID, createdEntries[spec.toIdx].ID, spec.typ)
+		if spec.weight != nil {
+			edge = edge.WithWeight(*spec.weight)
+		}
 		if err := db.Edges().Create(ctx, &edge); err != nil {
 			log.Fatalf("create edge %d (%s %d->%d): %v", i, spec.typ, spec.fromIdx, spec.toIdx, err)
 		}
@@ -337,6 +355,47 @@ func buildEntries() []entrySpec {
 		{content: "The fuzzy scope resolver uses Levenshtein distance to suggest corrections for mistyped scope paths", scope: "project-alpha.cli", daysAgo: 4, source: conv("feature-review"), provenance: model.ProvenanceVerified, category: "implementation"},
 	}...)
 
+	// --- Near-miss distractors (14) — indices 85..98 ---
+	// Same-domain-different-component, stale-nuance, and cross-scope near
+	// misses that compete with the correct answers in vector-similarity
+	// space without being semantically identical to them (known-58u).
+	e = append(e, []entrySpec{
+		{content: "Session cookies for the internal admin dashboard use SameSite=Lax with a 30 minute idle timeout", scope: "project-alpha.auth", daysAgo: 20, source: conv("admin-dashboard-review"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "The auth module's password reset flow sends a time-limited link valid for 15 minutes", scope: "project-alpha.auth", daysAgo: 18, source: file("auth/reset.go"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "Service-to-service calls authenticate via mutual TLS client certificates, not JWTs", scope: "project-alpha.auth", daysAgo: 22, source: file("auth/mtls.go"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "The staging database uses a separate SQLite file mounted from a tmpfs volume for speed", scope: "project-alpha.storage", daysAgo: 14, source: conv("staging-setup"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "Backup retention policy keeps daily snapshots for 30 days and weekly snapshots for 1 year", scope: "project-alpha.storage", daysAgo: 11, source: conv("ops-channel"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "The read replica for reporting queries lags the primary by up to 5 seconds", scope: "project-alpha.storage", daysAgo: 17, source: conv("infra-review"), provenance: model.ProvenanceUncertain, category: "distractor-near"},
+		{content: "Error code ALPHA-4090 indicates a missing scope header on the request", scope: "project-alpha", daysAgo: 9, source: conv("support-ticket-4090"), provenance: model.ProvenanceVerified, labels: []string{"error-code"}, category: "distractor-near"},
+		{content: "Error code ALPHA-4092 indicates the embedding cache was evicted mid-request", scope: "project-alpha", daysAgo: 7, source: conv("support-ticket-4092"), provenance: model.ProvenanceVerified, labels: []string{"error-code"}, category: "distractor-near"},
+		{content: "Configuration key embed.cache.ttl controls how long cached embeddings remain valid before re-computation", scope: "project-alpha.cli", daysAgo: 9, source: file("embed/cache.go"), provenance: model.ProvenanceVerified, labels: []string{"config-key"}, category: "distractor-near"},
+		{content: "Configuration key embed.batch.maxsize controls the maximum batch size sent to the embedding provider", scope: "project-alpha.cli", daysAgo: 9, source: file("embed/batch.go"), provenance: model.ProvenanceVerified, labels: []string{"config-key"}, category: "distractor-near"},
+		{content: "The API gateway in front of project-alpha enforces its own independent rate limit of 1000 requests per minute per IP", scope: "project-alpha.api", daysAgo: 12, source: file("infra/gateway.yaml"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "project-alpha's gRPC service was deprecated in v3.0 in favor of REST-only; the .proto files remain for compatibility", scope: "project-alpha.api", daysAgo: 4, source: conv("v3-migration-notes"), provenance: model.ProvenanceUncertain, category: "distractor-near"},
+		{content: "The staging CI pipeline skips the race detector to cut build time roughly in half", scope: "project-alpha.deploy", daysAgo: 6, source: file(".github/workflows/staging-ci.yaml"), provenance: model.ProvenanceVerified, category: "distractor-near"},
+		{content: "project-beta's admin dashboard reuses project-alpha's session cookie format for cross-property SSO", scope: "project-beta", daysAgo: 15, source: conv("sso-design"), provenance: model.ProvenanceUncertain, category: "distractor-near"},
+	}...)
+
+	// --- Contract-probe entries (7) — indices 99..105 ---
+	// Ground truth for scenarios added against #39-#41 (known-58u):
+	//   99-100: known-1so weighted-expansion decay (edges added in buildEdges)
+	//   101-103: known-5oq/known-qam supersede chain (edges in buildEdges)
+	//   104-105: known-oj3 ObservedAt-based freshness (raw similarity favors
+	//            the STALE entry; only RecencyWeight fixes the ranking)
+	e = append(e, []entrySpec{
+		{content: "Office plants on the third floor are watered every Tuesday and Friday by the facilities team", scope: "project-alpha.deploy", daysAgo: 9, source: manual, provenance: model.ProvenanceVerified, category: "expansion-weight-probe"},
+		{content: "The team lunch order rotation moves to a new restaurant every other Wednesday", scope: "project-alpha.cli", daysAgo: 9, source: manual, provenance: model.ProvenanceVerified, category: "expansion-weight-probe"},
+		{content: "The notification service used polling every 30 seconds to check for new events", scope: "project-alpha.api", daysAgo: 90, source: conv("design-review-v1"), provenance: model.ProvenanceVerified, labels: []string{"stale"}, category: "supersede-chain"},
+		{content: "The notification service was changed to long-polling with a 25 second timeout to reduce load", scope: "project-alpha.api", daysAgo: 40, source: conv("migration-notes-v2"), provenance: model.ProvenanceVerified, labels: []string{"stale"}, category: "supersede-chain"},
+		{content: "The notification service now uses Server-Sent Events (SSE) for real-time push instead of polling", scope: "project-alpha.api", daysAgo: 3, source: conv("migration-notes-v3"), provenance: model.ProvenanceVerified, labels: []string{"current"}, category: "supersede-chain"},
+		{content: "Backups run every six hours to S3", scope: "project-alpha.deploy", daysAgo: 90, source: conv("design-review-v1"), provenance: model.ProvenanceVerified, labels: []string{"stale"}, category: "freshness-probe"},
+		{content: "Backups run every 6 hours to S3", scope: "project-alpha.deploy", daysAgo: 2, source: conv("migration-notes"), provenance: model.ProvenanceVerified, labels: []string{"current"}, category: "freshness-probe"},
+		// idx106: a third near-miss error code, entirely absent from vector-only
+		// top-5 for its own query (same pattern as ALPHA-4091) — widens the
+		// FTS5 ablation's real degradation surface (known-58u).
+		{content: "Error code ALPHA-4093 indicates the tokenizer vocabulary file failed checksum validation", scope: "project-alpha", daysAgo: 5, source: conv("support-ticket-4093"), provenance: model.ProvenanceVerified, labels: []string{"error-code"}, category: "distractor-near"},
+	}...)
+
 	return e
 }
 
@@ -377,20 +436,32 @@ func buildEdges() []edgeSpec {
 
 		// --- depends-on (8) ---
 		{fromIdx: 1, toIdx: 0, typ: model.EdgeDependsOn},   // auth depends on API layer
-		{fromIdx: 6, toIdx: 3, typ: model.EdgeDependsOn},    // embeddings depend on SQLite
-		{fromIdx: 7, toIdx: 2, typ: model.EdgeDependsOn},    // edges depend on storage pattern
-		{fromIdx: 10, toIdx: 9, typ: model.EdgeDependsOn},   // router depends on RBAC
-		{fromIdx: 16, toIdx: 3, typ: model.EdgeDependsOn},   // FTS depends on SQLite
-		{fromIdx: 13, toIdx: 3, typ: model.EdgeDependsOn},   // deploy depends on SQLite (DB path)
-		{fromIdx: 24, toIdx: 10, typ: model.EdgeDependsOn},  // rate limiter depends on router
-		{fromIdx: 17, toIdx: 0, typ: model.EdgeDependsOn},   // gRPC/REST depends on hex architecture
+		{fromIdx: 6, toIdx: 3, typ: model.EdgeDependsOn},   // embeddings depend on SQLite
+		{fromIdx: 7, toIdx: 2, typ: model.EdgeDependsOn},   // edges depend on storage pattern
+		{fromIdx: 10, toIdx: 9, typ: model.EdgeDependsOn},  // router depends on RBAC
+		{fromIdx: 16, toIdx: 3, typ: model.EdgeDependsOn},  // FTS depends on SQLite
+		{fromIdx: 13, toIdx: 3, typ: model.EdgeDependsOn},  // deploy depends on SQLite (DB path)
+		{fromIdx: 24, toIdx: 10, typ: model.EdgeDependsOn}, // rate limiter depends on router
+		{fromIdx: 17, toIdx: 0, typ: model.EdgeDependsOn},  // gRPC/REST depends on hex architecture
 
 		// --- related-to (6) ---
-		{fromIdx: 4, toIdx: 37, typ: model.EdgeRelatedTo},   // CLI architecture related to viper config
-		{fromIdx: 14, toIdx: 11, typ: model.EdgeRelatedTo},  // OCC related to content hash dedup
-		{fromIdx: 40, toIdx: 13, typ: model.EdgeRelatedTo},  // deploy env vars related to deploy pipeline
-		{fromIdx: 46, toIdx: 17, typ: model.EdgeRelatedTo},  // metrics related to API endpoints
-		{fromIdx: 76, toIdx: 6, typ: model.EdgeRelatedTo},   // error ALPHA-4091 related to embeddings
-		{fromIdx: 77, toIdx: 25, typ: model.EdgeRelatedTo},  // error ALPHA-5002 related to scope regex
+		{fromIdx: 4, toIdx: 37, typ: model.EdgeRelatedTo},  // CLI architecture related to viper config
+		{fromIdx: 14, toIdx: 11, typ: model.EdgeRelatedTo}, // OCC related to content hash dedup
+		{fromIdx: 40, toIdx: 13, typ: model.EdgeRelatedTo}, // deploy env vars related to deploy pipeline
+		{fromIdx: 46, toIdx: 17, typ: model.EdgeRelatedTo}, // metrics related to API endpoints
+		{fromIdx: 76, toIdx: 6, typ: model.EdgeRelatedTo},  // error ALPHA-4091 related to embeddings
+		{fromIdx: 77, toIdx: 25, typ: model.EdgeRelatedTo}, // error ALPHA-5002 related to scope regex
+
+		// --- weighted expansion (known-1so exact-inversion regression guard) ---
+		// Low-weight edge from a HIGH vector-relevance parent (idx24, rate
+		// limiting) must still outrank a high-weight edge from a LOW
+		// vector-relevance parent (idx38, labels), because the neighbor score
+		// is parentScore*edgeWeight*decay, not edgeWeight alone.
+		{fromIdx: 24, toIdx: 99, typ: model.EdgeRelatedTo, weight: wPtr(0.8)},  // strong parent, low weight
+		{fromIdx: 38, toIdx: 100, typ: model.EdgeRelatedTo, weight: wPtr(1.0)}, // weak parent, high weight
+
+		// --- supersede chain (known-5oq/known-qam demotion regression guard) ---
+		{fromIdx: 102, toIdx: 101, typ: model.EdgeSupersedes}, // long-polling supersedes polling
+		{fromIdx: 103, toIdx: 102, typ: model.EdgeSupersedes}, // SSE supersedes long-polling
 	}
 }
