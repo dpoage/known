@@ -30,6 +30,7 @@ var commands = []cmdDef{
 		{name: "force"},
 		{name: "no-scaffold"},
 	}},
+	{name: "prime", desc: "Print agent guidance and live graph status"},
 	{name: "add", desc: "Add a new knowledge entry", flags: []flagDef{
 		{name: "title"},
 		{name: "scope", dynamic: "scopes"},

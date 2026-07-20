@@ -74,5 +74,6 @@ use a ULID directly.
 - **Store proactively**: facts learned mid-task should be stored immediately, not
   after the task completes. One entry per atomic fact.
 - **Don't duplicate**: skip ephemeral state, info already in code/docs, and speculation.
+- **Re-prime anytime**: `known prime` reprints CLI guidance with live graph status.
 - **If `known` is unavailable** (commands fail): ignore these instructions and
   proceed normally.

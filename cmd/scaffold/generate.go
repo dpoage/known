@@ -2,10 +2,11 @@
 
 // Generate standalone templates from plugin sources.
 //
-// This tool generates two kinds of output:
+// This tool generates three kinds of output:
 //
 //  1. Per-skill SKILL.md files from plugin/commands/*.md → cmd/scaffold/templates/skills/
 //  2. CLAUDE.md from plugin/skills/known/SKILL.md → cmd/scaffold/templates/CLAUDE.md
+//  3. prime.md from plugin/skills/known/SKILL.md → cmd/prime.md (embedded by `known prime`)
 //
 // Both apply the same substitutions: strip YAML frontmatter, replace /known:
 // prefixed references with standalone names.
@@ -70,6 +71,14 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("generated %s\n", claudeDst)
+
+	// Generate prime.md (the `known prime` output) from the master SKILL.md.
+	primeDst := filepath.Join(root, "cmd", "prime.md")
+	if err := generatePrime(skillSrc, primeDst); err != nil {
+		fmt.Fprintf(os.Stderr, "error generating prime.md: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("generated %s\n", primeDst)
 }
 
 // stripFrontmatter reads a markdown file, strips YAML frontmatter and the
@@ -211,6 +220,66 @@ func generateCLAUDE(srcPath, dstPath string) error {
 			line = strings.ReplaceAll(line, "|---------|", "|-------|")
 		}
 
+		out.WriteString(line)
+		out.WriteString("\n")
+	}
+
+	return writeFile(dstPath, out.String())
+}
+
+// primeCommandTable is the CLI-first command table injected into prime.md in
+// place of the slash-command table from the master SKILL.md. `known prime`
+// targets agents driving the bare CLI, where slash commands may not exist.
+var primeCommandTable = []string{
+	"| Command | Purpose |",
+	"|---------|---------|",
+	"| `known add <fact>` | Store a fact (alias: `known remember`) |",
+	"| `known recall '<query>'` | Retrieve knowledge — hybrid vector + text + graph search |",
+	"| `known recall --scope <path>` | List all entries in a scope |",
+	"| `known forget '<content or ULID>' --force` | Delete an entry (alias: `known delete`) |",
+	"| `known search '<query>'` | Scored results with IDs (`known --json search` for JSON) |",
+	"| `known show <id>` | Full entry details with relationships |",
+	"| `known scope tree` | Show the scope hierarchy |",
+	"| `known stats` | Entry, edge, and scope counts |",
+}
+
+// generatePrime transforms the master plugin SKILL.md into the prime.md
+// document printed by `known prime`. It strips frontmatter and replaces the
+// "## Commands" slash-command table with the CLI-first primeCommandTable.
+// No /known: substitutions are applied: outside the replaced table the master
+// SKILL.md speaks CLI already, and slash references must not leak into prime.
+func generatePrime(srcPath, dstPath string) error {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	lines, _, err := stripFrontmatter(f)
+	if err != nil {
+		return err
+	}
+
+	var out strings.Builder
+	skipping := false
+	for _, line := range lines {
+		if line == "## Commands" {
+			out.WriteString("## Commands\n\n")
+			for _, row := range primeCommandTable {
+				out.WriteString(row)
+				out.WriteString("\n")
+			}
+			skipping = true
+			continue
+		}
+		if skipping {
+			// Skip the original section body until the next section heading.
+			if !strings.HasPrefix(line, "## ") {
+				continue
+			}
+			skipping = false
+			out.WriteString("\n")
+		}
 		out.WriteString(line)
 		out.WriteString("\n")
 	}
