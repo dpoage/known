@@ -63,6 +63,7 @@ known recall 'API contract' --provenance verified
 | `--recency` | 0.1 | Recency weight (0=pure similarity, 1=pure recency) |
 | `--expand-depth` | 0 | Graph expansion hops from each result |
 | `--text` | false | Use FTS5 full-text search instead of vector search |
+| `--include-superseded` | false | Include superseded entries at full score (demoted by default) |
 | `--provenance` | all | Filter: `verified`, `inferred`, or `uncertain` |
 | `--source` | all | Filter: `file`, `url`, `conversation`, or `manual` |
 | `--label` | all | Filter by label (repeatable) |

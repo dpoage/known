@@ -134,9 +134,8 @@ DSN in its `.known.yaml`, its knowledge is isolated to that database.
 
 ## TTL Guidance
 
-- Conversation facts: default TTL applies (see `.known.yaml`)
-- Stable architecture decisions: omit TTL (permanent)
-- Temporary workarounds: set short TTL (e.g., `168h` = 1 week)
+- Entries are permanent by default — TTL is strictly opt-in via `--ttl`
+- Temporary workarounds: set short TTL (e.g., `--ttl 168h` = 1 week)
 
 ## Recall vs Search
 
@@ -156,6 +155,7 @@ These are available directly (not as plugin commands):
 | `known add '...' --link type:id` | Create entry + edge atomically |
 | `known conflicts` | Detect contradictory entries |
 | `known stats` | Knowledge graph statistics |
+| `known prime` | Reprint agent guidance with live graph status |
 
 ## Global Flags
 
