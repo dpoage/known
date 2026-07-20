@@ -34,7 +34,7 @@ var validSourceTypes = map[model.SourceType]bool{
 // Usage:
 //
 //	known recall <query> [--scope <path>]       — semantic search
-//	known recall --scope <path>                 — list all entries in scope
+//	known recall --scope <path>                 — list a scope's entries (recent first, up to --limit)
 //
 // Flags allow tuning the search parameters while preserving LLM-friendly output.
 // Entry IDs are always included so agents can act on results (link, update, delete).
@@ -165,7 +165,8 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	return nil
 }
 
-// recallByScope lists all entries in the given scope using the recall plain-text format.
+// recallByScope lists a scope's entries (most recent first, capped at limit) in
+// the recall plain-text format, printing a truncation note when more exist.
 func recallByScope(ctx context.Context, app *App, scope string, limit int, labels []string,
 	provenance model.ProvenanceLevel, source model.SourceType) error {
 
