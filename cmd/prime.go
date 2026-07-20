@@ -65,6 +65,22 @@ func printPrimeStatus(ctx context.Context, app *App) {
 
 	w := app.Printer.w
 	fmt.Fprintf(w, "\n## Status\n\n")
-	fmt.Fprintf(w, "Scope  %s — %d entries (auto-derived from cwd)\n", scope, len(scoped))
-	fmt.Fprintf(w, "Graph  %d entries across %d scopes\n", len(total), len(scopes))
+	fmt.Fprintf(w, "Scope  %s — %s (auto-derived from cwd)\n", scope, countEntries(len(scoped)))
+	fmt.Fprintf(w, "Graph  %s across %s\n", countEntries(len(total)), countScopes(len(scopes)))
+}
+
+// countEntries renders an entry count with correct singular/plural grammar.
+func countEntries(n int) string {
+	if n == 1 {
+		return "1 entry"
+	}
+	return fmt.Sprintf("%d entries", n)
+}
+
+// countScopes renders a scope count with correct singular/plural grammar.
+func countScopes(n int) string {
+	if n == 1 {
+		return "1 scope"
+	}
+	return fmt.Sprintf("%d scopes", n)
 }

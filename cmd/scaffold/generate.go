@@ -235,7 +235,7 @@ var primeCommandTable = []string{
 	"|---------|---------|",
 	"| `known add <fact>` | Store a fact (alias: `known remember`) |",
 	"| `known recall '<query>'` | Retrieve knowledge — hybrid vector + text + graph search |",
-	"| `known recall --scope <path>` | List all entries in a scope |",
+	"| `known recall --scope <path>` | List a scope's entries, most recent first, up to --limit |",
 	"| `known forget '<content or ULID>' --force` | Delete an entry (alias: `known delete`) |",
 	"| `known search '<query>'` | Scored results with IDs (`known --json search` for JSON) |",
 	"| `known show <id>` | Full entry details with relationships |",

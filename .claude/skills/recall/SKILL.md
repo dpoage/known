@@ -27,7 +27,7 @@ known recall '<query>'
 ## Modes
 
 - **Query mode** (default): `known recall '<query>'` — semantic + text + graph search.
-- **Scope listing**: `known recall --scope <path>` (no query) — lists all entries in a scope.
+- **Scope listing**: `known recall --scope <path>` (no query) — lists a scope's entries, most recent first, up to `--limit` (default 5). Raise `--limit` for the full set; a truncation note is printed when more exist.
 
 ## Tuning Recall
 
