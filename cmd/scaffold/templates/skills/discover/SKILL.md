@@ -7,7 +7,7 @@ focus on facts that save future sessions from re-exploration.
 ## Usage
 
 ```
-/discover [path] [--scope <prefix>] [--depth <shallow|standard|deep>]
+/discover "[path] [--scope <prefix>] [--depth <shallow|standard|deep>]"
 ```
 
 ## Arguments

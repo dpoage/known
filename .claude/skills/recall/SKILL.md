@@ -1,63 +1,91 @@
 # /recall — Retrieve knowledge from known
 
-Retrieve knowledge relevant to a query, optimized for LLM context.
+Retrieve stored knowledge. Recall uses hybrid search (vector + full-text + graph
+expansion) by default — it is the most comprehensive retrieval mode.
 
 ## Usage
 
 ```
-/recall <query>
+/recall <query> [--scope <scope>]
 ```
-
-Use this **before exploring the codebase** when working in an area where knowledge may
-already exist. Recalling stored decisions, conventions, and environment facts is faster
-than re-reading source files.
-
-## When to Use
-
-- About to work on a subsystem — recall architecture decisions first
-- User asks about conventions, config, or prior decisions
-- Starting a new session in a familiar project — recall what's already known
-- Before suggesting an approach — check if a decision was already recorded
 
 ## Instructions
 
-1. Run the recall command with the user's query:
+1. Run recall with a natural language query:
 
 ```bash
 known recall '<query>'
 ```
 
-2. Use the results to inform your work. If the user asked a question, answer it using the recalled knowledge. If you're performing a task, apply the recalled facts (conventions, decisions, environment details) to what you're doing.
+2. Synthesize the results into your response. Apply recalled facts (conventions,
+   decisions, environment details) to your current work.
 
-3. Briefly tell the user what you found, but don't just dump raw output — synthesize it into your response.
+3. If no results are returned, proceed normally — the knowledge graph may not
+   have entries in this area yet. Optionally try `--text '<exact phrase>'` for
+   keyword matching or `--threshold 0.2` to broaden similarity.
 
-4. If no results are returned, tell the user no matching knowledge was found. Suggest `/known-search` with a lower `--threshold` to broaden the search.
+## Modes
 
-## Scope
+- **Query mode** (default): `known recall '<query>'` — semantic + text + graph search.
+- **Scope listing**: `known recall --scope <path>` (no query) — lists a scope's entries, most recent first, up to `--limit` (default 5). Raise `--limit` for the full set; a truncation note is printed when more exist.
 
-The scope is auto-derived from the current working directory. To search a different scope, pass `--scope`:
+## Tuning Recall
 
-```bash
-known recall '<query>' --scope backend.api
-```
+The defaults work well for most cases. Add flags only when tuning results.
 
-In `known scope tree` output, root scopes show a `/` prefix (e.g., `/myproject`).
-Within your own project, use bare names. Use the `/` prefix only for cross-project
-access (e.g., `--scope /otherproject`).
-
-Scope search is hierarchical: searching `backend` includes `backend.api` and all
-other `backend.*` descendants.
-
-## Examples
+**Raise `--threshold`** when recall returns too many loosely-related results:
 
 ```bash
-known recall 'database connection pooling config'
-known recall 'authentication flow' --scope backend
-known recall 'deployment process'
-known recall 'API conventions and patterns' --scope backend.api
+known recall 'auth flow' --threshold 0.5
 ```
 
-## Recall vs Search
+**Raise `--recency`** when you need the most recently observed knowledge:
 
-- **`/recall`** — Quick retrieval, plain text output tuned for LLM context. Use by default.
-- **`/known-search`** — Full control: `--limit`, `--threshold`, `--hybrid`, `--json`. Use when you need entry IDs (for show/update/delete) or fine-grained results.
+```bash
+known recall 'deployment config' --recency 0.4
+```
+
+**Use `--text`** for exact keyword or phrase matching (FTS5):
+
+```bash
+known recall --text 'rate-limit'
+```
+
+**Use `--provenance verified`** when you need only confirmed facts:
+
+```bash
+known recall 'API contract' --provenance verified
+```
+
+## Flag Reference
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--scope` | auto (from cwd) | Scope to search within |
+| `--threshold` | 0.4 | Minimum similarity (raise for precision, lower for recall) |
+| `--recency` | 0.1 | Recency weight (0=pure similarity, 1=pure recency) |
+| `--expand-depth` | 0 | Graph expansion hops from each result |
+| `--text` | false | Use FTS5 full-text search instead of vector search |
+| `--include-superseded` | false | Include superseded entries at full score (demoted by default) |
+| `--provenance` | all | Filter: `verified`, `inferred`, or `uncertain` |
+| `--source` | all | Filter: `file`, `url`, `conversation`, or `manual` |
+| `--label` | all | Filter by label (repeatable) |
+| `--limit` | 5 | Maximum results |
+
+## Scopes
+
+Scope is auto-derived from your working directory. Override with `--scope`:
+
+```bash
+known recall 'query' --scope backend.api
+```
+
+Scope search is hierarchical: `backend` includes all `backend.*` descendants.
+
+If the project has a `scope_prefix` in `.known.yaml`, `--scope` values are
+automatically qualified (e.g., `--scope cmd` becomes `myproject.cmd`).
+To access another project's knowledge, prefix with `/` to bypass qualification:
+
+```bash
+known recall 'auth tokens' --scope /otherproject.api
+```

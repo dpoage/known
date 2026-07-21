@@ -17,7 +17,7 @@ known add <fact as plain words>
 
 No quotes needed. Multi-word content is captured exactly as typed.
 
-Example output:
+Example output after a successful store:
 
 ```
 Stored  01KXSBAZ7HZ71JFM5FGHRHVKMX
@@ -29,12 +29,11 @@ Link?   related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
 
 - `Stored` + ULID confirms success. IDs are ULIDs (26 alphanumeric chars), never integers.
 - `Scope` is auto-derived from your working directory — no setup required.
-- `Link?` lines are suggestions. Accept with `known link accept '<content>' --all`
-  or selectively: `known link accept '<content>' 1 2`.
+- `Link?` lines are suggestions from the existing graph. Use `known link accept` to accept them (see Linking section).
 
 ## Dedup is success, not failure
 
-If the content already exists:
+If the content already exists, you'll see:
 
 ```
 Duplicate 01KXSBAZ7HZ71JFM5FGHRHVKMX
@@ -43,9 +42,10 @@ Scope     myproject
 Hint      known update 01KXSBAZ7HZ71JFM5FGHRHVKMX --content '...'
           known add '<new fact>' --link elaborates:01KXSBAZ7HZ71JFM5FGHRHVKMX
           known add '<correction>' --supersedes 'All new database tables use ULIDs instead of integers'
+Link?     related-to:01KXSBBCPN8BM3Q0ESXH57RE6Z "Migration tooling"
 ```
 
-The fact is already stored. Use the hints to extend or correct it.
+This is correct behavior. The fact is already stored. Use the hints to extend or correct it.
 
 ## Optional enrichment flags
 
@@ -55,22 +55,22 @@ All flags are optional. Defaults are applied automatically.
 |------|---------|----------------|
 | `--scope <path>` | auto from cwd | Storing to a specific module scope |
 | `--provenance <level>` | `inferred` | Use `verified` when the user stated the fact directly |
-| `--source-type <type>` | `manual` | Use `file` when derived from a source file |
-| `--source-ref <ref>` | `cli` | Path to the source (with `--source-type file`) |
+| `--source-type <type>` | `manual` | Use `file` when derived from a specific source file |
+| `--source-ref <ref>` | `cli` | Path or reference to the source (with `--source-type file`) |
 | `--ttl <duration>` | permanent (no expiry) | Opt-in for ephemera: `--ttl 24h`, `--ttl 168h`; `--ttl 0` is a no-op (explicit permanent) |
 | `--label <tag>` | none | Categorical tag, repeatable |
-| `--link <type:id>` | none | Inline edge using a ULID from prior output |
+| `--link <type:id>` | none | Inline edge: `--link related-to:01KJ...` (ULID, not integer) |
 
-When the user states a decision directly:
+When the user states a decision directly, add `--provenance verified`:
 
 ```bash
 known add All new database tables use ULIDs --provenance verified
 ```
 
-When deriving a fact from a file:
+When deriving a fact from a file you read:
 
 ```bash
-known add API routes defined in cmd/api/routes.go --source-type file --source-ref cmd/api/routes.go
+known add API route definitions live in cmd/api/routes.go --source-type file --source-ref cmd/api/routes.go
 ```
 
 ## Accepting link suggestions
@@ -90,28 +90,30 @@ known link "<text a>" "<text b>" --type related-to
 
 ## One-shot correction (supersede)
 
-When a fact has changed, store the replacement and link it to the old entry in
+When a fact has changed, store the correction and link it to the old entry in
 one command — no ULIDs required:
 
 ```bash
-known add 'corrected fact' --supersedes 'old fact content'
+known add 'New fact that replaces the old one' --supersedes 'old fact content'
 ```
 
-The `--supersedes` argument is a content query resolved by exact-match or semantic
-dominance. Ambiguous query? The command aborts before writing anything.
-
-On success:
+The `--supersedes` argument is a content query. The resolver uses exact-match or
+semantic dominance to find the old entry; if the query is ambiguous, the command
+aborts before writing anything. On success, the confirmation block shows:
 
 ```
 Stored  01KYABC...
 Scope   myproject
-        "corrected fact"
+        "New fact that replaces the old one"
 Supersedes 01KYABC... -[supersedes]-> 01KXABC...
 ```
 
+This is the one-shot fix for the Mode 4 failure where agents stored a correction
+without linking it because ULID extraction from JSON failed.
+
 ## Batch mode
 
-For many facts at once (single embedding pass, much faster):
+For many facts at once (much faster — single embedding pass):
 
 ```bash
 cat <<'JSONL' | known add --batch

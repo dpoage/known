@@ -34,7 +34,7 @@ var validSourceTypes = map[model.SourceType]bool{
 // Usage:
 //
 //	known recall <query> [--scope <path>]       — semantic search
-//	known recall --scope <path>                 — list all entries in scope
+//	known recall --scope <path>                 — list a scope's entries (recent first, up to --limit)
 //
 // Flags allow tuning the search parameters while preserving LLM-friendly output.
 // Entry IDs are always included so agents can act on results (link, update, delete).
@@ -165,21 +165,35 @@ func runRecall(ctx context.Context, app *App, args []string) error {
 	return nil
 }
 
-// recallByScope lists all entries in the given scope using the recall plain-text format.
+// recallByScope lists a scope's entries (most recent first, capped at limit) in
+// the recall plain-text format, printing a truncation note when more exist.
 func recallByScope(ctx context.Context, app *App, scope string, limit int, labels []string,
 	provenance model.ProvenanceLevel, source model.SourceType) error {
+
+	// Fetch one extra entry beyond the display limit so we can tell the agent
+	// more exist rather than silently presenting a capped list as the full
+	// scope inventory. Limit 0 means unlimited (List omits the LIMIT clause).
+	fetchLimit := limit
+	if limit > 0 {
+		fetchLimit = limit + 1
+	}
 
 	filter := storage.EntryFilter{
 		ScopePrefix:     scope,
 		Labels:          labels,
 		ProvenanceLevel: provenance,
 		SourceType:      source,
-		Limit:           limit,
+		Limit:           fetchLimit,
 	}
 
 	entries, err := app.Entries.List(ctx, filter)
 	if err != nil {
 		return fmt.Errorf("recall: %w", err)
+	}
+
+	truncated := limit > 0 && len(entries) > limit
+	if truncated {
+		entries = entries[:limit]
 	}
 
 	if len(entries) == 0 {
@@ -204,6 +218,11 @@ func recallByScope(ctx context.Context, app *App, scope string, limit int, label
 		}
 		fmt.Fprintln(app.Printer.w, meta)
 		fmt.Fprintln(app.Printer.w, e.Content)
+	}
+
+	if truncated {
+		fmt.Fprintf(app.Printer.w,
+			"\n(showing %d most recent; more entries exist in this scope — raise --limit for the full set)\n", limit)
 	}
 
 	return nil

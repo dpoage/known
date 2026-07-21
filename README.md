@@ -142,6 +142,7 @@ by specifying the other project's scope: `known recall 'auth' --scope otherproje
 
 ```
 known init          Optional: install Claude Code skills and write .known.yaml override template
+known prime         Print agent guidance and live graph status
 known add           Store a knowledge entry
 known update        Modify an existing entry
 known delete        Delete an entry

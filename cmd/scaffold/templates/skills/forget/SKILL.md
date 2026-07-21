@@ -16,7 +16,7 @@ Delete a knowledge entry in one shot using `known forget`.
 known forget "<exact content of the entry>" --force
 ```
 
-2. If the CLI reports ambiguity, it lists candidates automatically:
+2. If the exact content is ambiguous or unknown, the command will list candidates:
 
 ```
 Multiple entries match "staging API":
@@ -25,25 +25,22 @@ Multiple entries match "staging API":
 Use a more specific query or provide the full ID.
 ```
 
-Retry with the full exact content or the ULID shown:
+Retry with the full exact content or the ULID:
 
 ```bash
 known forget 01J5X... --force
 ```
 
-3. Confirm success — the CLI echoes what was deleted:
-
-```
-Deleted 01J5X...: Staging API endpoint is api.staging.example.com
-```
+3. Report the deleted content back to the user so they can verify what was removed.
 
 ## Important
 
-- `known forget` resolves to a **single confident match** before deleting — it refuses
-  with candidates on any ambiguity. No silent wrong-target deletion.
+- `known forget` resolves the query to a **single confident match** before deleting.
+  It refuses with candidates on any ambiguity — no silent wrong-target deletion.
 - Provide exact content (quoted, full string) for reliable one-shot deletion.
-- Use the ULID when content is ambiguous or you only have a paraphrase.
+- Use the ULID when content is ambiguous or the entry has been truncated/paraphrased.
 - Multi-word queries work unquoted: `known forget the staging API endpoint --force`
+  resolves the full phrase, not just the first word.
 
 ## Example
 
@@ -51,4 +48,9 @@ User says: "/forget the staging API endpoint"
 
 ```bash
 known forget "Staging API endpoint is api.staging.example.com" --force
+```
+
+Output:
+```
+Deleted 01J5X...: Staging API endpoint is api.staging.example.com
 ```

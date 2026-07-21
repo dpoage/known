@@ -138,6 +138,7 @@ Global Flags:
 
 Commands:
   init       Optional scaffolding: install Claude Code skills and write a .known.yaml override template
+  prime      Print agent guidance and live graph status
   add        Add a new knowledge entry (use --batch for bulk JSONL from stdin)
   remember   Alias for add
   update     Update an existing entry
@@ -238,6 +239,16 @@ func Run(ctx context.Context, args []string) int {
 			return 1
 		}
 		return 0
+	}
+
+	if subcmd == "prime" {
+		for _, a := range subArgs {
+			if a == "--help" || a == "-h" {
+				fmt.Fprint(os.Stderr, "usage: known prime\n\nPrint agent guidance (embedded in the binary) and live graph status.\n")
+				return 0
+			}
+		}
+		return runPrime(ctx, gf)
 	}
 
 	if subcmd == "__complete" {

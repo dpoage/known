@@ -9,15 +9,18 @@ details, user preferences, non-obvious architecture. The biggest reason agents
 get no value from known is never invoking it. Don't ask permission; store and
 tell the user what you remembered.
 
-## Skills
+## Commands
 
-| Skill | Purpose |
-|-------|---------|
-| `/remember` | Store a fact from the conversation |
-| `/recall` | Retrieve knowledge relevant to a query |
-| `/forget` | Find and delete an entry |
-| `/known-search` | Search with full control over flags |
-| `/discover` | Walk a codebase and store architectural knowledge |
+| Command | Purpose |
+|---------|---------|
+| `known add <fact>` | Store a fact (alias: `known remember`) |
+| `known recall '<query>'` | Retrieve knowledge — hybrid vector + text + graph search |
+| `known recall --scope <path>` | List a scope's entries, most recent first, up to --limit |
+| `known forget '<content or ULID>' --force` | Delete an entry (alias: `known delete`) |
+| `known search '<query>'` | Scored results with IDs (`known --json search` for JSON) |
+| `known show <id>` | Full entry details with relationships |
+| `known scope tree` | Show the scope hierarchy |
+| `known stats` | Entry, edge, and scope counts |
 
 ## Capture — one-shot, no ceremony
 
